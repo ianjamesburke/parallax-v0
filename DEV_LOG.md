@@ -2,6 +2,13 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-18 — [CHANGED] v0.1.2 patch: curl-pipe-sh installer (tag v0.1.2)
+`scripts/install.sh` is the one-liner install story: bootstraps `uv` if missing, runs `uv tool install`, prompts once for `FAL_KEY` via `/dev/tty` (works through curl | sh), persists it to `~/.zshrc` between idempotent marker comments, warns if the `claude` CLI isn't installed (non-fatal — client can fall back to `--backend anthropic-api`), runs a `PARALLAX_TEST_MODE=1` smoke test. README now leads with the curl one-liner; the manual `uv tool install` path stays as a fallback for devs who already have uv.
+
+Rejected: keychain integration (overkill for v0, adds a code path in parallax to read from `security` when env is unset); a Python-based installer (couldn't bootstrap itself before Python is set up); prompting for `ANTHROPIC_API_KEY` (only needed for the non-default backend — let clients opt in rather than prompting for a key most won't use).
+
+**Breaks if:** `curl -LsSf .../main/scripts/install.sh | sh` on a fresh Mac doesn't land a working `parallax` on PATH, the FAL_KEY prompt hangs or silently eats input when piped through curl (the `/dev/tty` read is what prevents this — if it regresses, users type a key and the script appears frozen), re-running the installer appends a second `# >>> parallax env >>>` block instead of skipping, or the script's `set -eu` trips over the optional `read` failing when no TTY is attached (CI contexts).
+
 ## 2026-04-18 — [CHANGED] v0.1.1 patch: public repo, sonnet default, `parallax update` (tag v0.1.1)
 Three small ships bundled into a patch:
 - Repo flipped to public so `uv tool install git+<url>` is a true one-liner. v0 has no secrets in-repo (keys all come from the client's env), and "easy install on any Mac" is an explicit VISION principle — private + easy-install don't compose.

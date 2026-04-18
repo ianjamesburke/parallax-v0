@@ -6,11 +6,19 @@ See `VISION.md` for scope and non-goals.
 
 ## Install
 
+One-liner — installs `uv` if missing, installs parallax, prompts for `FAL_KEY`, runs a smoke test:
+
+```sh
+curl -LsSf https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/scripts/install.sh | sh
+```
+
+Manual, if you already have `uv`:
+
 ```sh
 uv tool install --python 3.11 git+https://github.com/ianjamesburke/parallax-v0
 ```
 
-Or from a local checkout:
+From a local checkout:
 
 ```sh
 uv tool install --python 3.11 --from /path/to/parallax-v0 parallax
