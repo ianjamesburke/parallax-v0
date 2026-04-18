@@ -10,7 +10,9 @@ from __future__ import annotations
 import os
 from typing import Any, Protocol
 
+from ..context import current_backend, current_session_id
 from ..log import get_logger
+from ..pricing import alias_guidance
 from ..sessions import Session
 from ..tools import TOOL_SCHEMAS, dispatch_tool
 
@@ -24,9 +26,8 @@ MAX_OUTPUT_TOKENS = 4096
 SYSTEM_PROMPT = (
     "You are Parallax, an agentic creative production assistant. "
     "Your job is to take a creative brief and produce image assets by calling the generate_image tool. "
-    "For each image the user requests, call generate_image with a concrete prompt and the FAL model they specified. "
-    "Report back concisely with the file paths you generated. "
-    "If the user has not specified a model, ask — never guess."
+    "Report back concisely with the file paths you generated.\n\n"
+    + alias_guidance()
 )
 
 
@@ -64,6 +65,8 @@ def run(
     session = Session.resume(session_id) if session_id else Session.create()
     log.info("session: %s (%s)", session.session_id, "resumed" if session_id else "new")
     log.info("session log: %s", session.path)
+    current_backend.set(NAME)
+    current_session_id.set(session.session_id)
     session.add_user_message(brief)
 
     final_text_parts: list[str] = []

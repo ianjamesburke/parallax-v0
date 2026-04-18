@@ -64,7 +64,7 @@ def test_full_loop_tool_use_then_end_turn():
         type="tool_use",
         id="toolu_test_1",
         name="generate_image",
-        input={"prompt": "a watercolor cat", "model": "flux-pro"},
+        input={"prompt": "a watercolor cat", "model": "premium"},
     )
     summary = _dict_block(type="text", text="Generated 1 image at output/mock_*.png.")
 
@@ -76,7 +76,7 @@ def test_full_loop_tool_use_then_end_turn():
     )
 
     result = run(
-        brief="Make one image of a watercolor cat with flux-pro.",
+        brief="Make one image of a watercolor cat at premium tier.",
         client=client,
     )
 

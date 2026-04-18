@@ -15,7 +15,9 @@ import shutil
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
+from ..context import current_backend, current_session_id
 from ..log import get_logger
+from ..pricing import alias_guidance
 from ..tools import dispatch_tool
 
 log = get_logger("backends.claude_code")
@@ -26,9 +28,8 @@ MAX_TURNS = 20
 SYSTEM_PROMPT = (
     "You are Parallax, an agentic creative production assistant. "
     "Your job is to take a creative brief and produce image assets by calling the generate_image tool. "
-    "For each image the user requests, call generate_image with a concrete prompt and the FAL model they specified. "
-    "Report back concisely with the file paths you generated. "
-    "If the user has not specified a model, ask — never guess."
+    "Report back concisely with the file paths you generated.\n\n"
+    + alias_guidance()
 )
 
 
@@ -55,6 +56,9 @@ def run(
     production to use the real SDK.
     """
     log.info("session: %s", "resuming " + session_id if session_id else "new")
+    current_backend.set(NAME)
+    if session_id:
+        current_session_id.set(session_id)
     result = asyncio.run(_run_async(brief, session_id, query_fn=query_fn, max_turns=max_turns))
     if result.get("session_id"):
         transcript = _transcript_path_hint(result["session_id"])
@@ -92,6 +96,12 @@ async def _run_async(
         tool,
     )
 
+    # The SDK runs the MCP tool handler in a separate task context from this
+    # coroutine, so ContextVars set on the outer loop do NOT propagate in.
+    # Use a mutable holder the closure can read, and re-set the ContextVar
+    # inside the handler so usage records carry the right session_id.
+    sid_holder: dict[str, str | None] = {"sid": session_id}
+
     @tool(
         "generate_image",
         "Generate an image from a text prompt via FAL. Returns the filesystem path to the generated PNG. "
@@ -99,6 +109,8 @@ async def _run_async(
         {"prompt": str, "model": str},
     )
     async def _generate_image(args: dict[str, Any]) -> dict[str, Any]:
+        current_backend.set(NAME)
+        current_session_id.set(sid_holder["sid"])
         try:
             path = dispatch_tool("generate_image", args)
             return {"content": [{"type": "text", "text": path}]}
@@ -133,6 +145,8 @@ async def _run_async(
             sid = data.get("session_id") if isinstance(data, dict) else None
             if sid:
                 captured_session_id = sid
+                sid_holder["sid"] = sid
+                current_session_id.set(sid)
                 log.debug("sdk session_id captured: %s", sid)
         elif isinstance(message, AssistantMessage):
             for block in getattr(message, "content", []) or []:

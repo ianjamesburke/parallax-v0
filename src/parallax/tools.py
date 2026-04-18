@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
+from . import usage
+from .context import current_backend, current_session_id
 from .log import get_logger
+from .pricing import ALIASES, resolve
 from .shim import is_test_mode, render_mock_image
 
 log = get_logger("tools")
@@ -13,7 +17,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "description": (
             "Generate an image from a text prompt via FAL. "
             "Returns the filesystem path to the generated PNG. "
-            "Never guess model IDs — only pass models explicitly requested by the user."
+            "Pass `model` as exactly one of: draft, mid, premium, nano-banana, grok. "
+            "Never pass raw FAL model IDs."
         ),
         "input_schema": {
             "type": "object",
@@ -24,7 +29,11 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
                 "model": {
                     "type": "string",
-                    "description": "FAL model ID (e.g. flux-schnell, flux-dev, flux-pro).",
+                    "enum": list(ALIASES),
+                    "description": (
+                        "Agent-facing model alias. 'mid' is the default if the user did not "
+                        "specify a tier."
+                    ),
                 },
             },
             "required": ["prompt", "model"],
@@ -49,12 +58,40 @@ def dispatch_tool(name: str, args: dict[str, Any]) -> str:
 
 
 def generate_image(prompt: str, model: str) -> str:
-    if is_test_mode():
-        path = render_mock_image(prompt=prompt, model=model)
-        return str(path)
-    raise NotImplementedError(
-        "Real FAL integration lands in commit 2. Set PARALLAX_TEST_MODE=1 to run the shim."
+    spec = resolve(model)  # fails fast on unknown alias
+    test_mode = is_test_mode()
+
+    t0 = time.monotonic()
+    if test_mode:
+        output_path = str(render_mock_image(prompt=prompt, model=spec.alias))
+    else:
+        raise NotImplementedError(
+            "Real FAL integration lands in the next commit. "
+            "Set PARALLAX_TEST_MODE=1 to run against the shim."
+        )
+    duration_ms = int((time.monotonic() - t0) * 1000)
+    cost_usd = 0.0 if test_mode else spec.price_usd_per_image
+
+    rec = usage.record(
+        session_id=current_session_id.get(),
+        backend=current_backend.get(),
+        alias=spec.alias,
+        fal_id=spec.fal_id,
+        tier=spec.tier,
+        prompt=prompt,
+        output_path=output_path,
+        duration_ms=duration_ms,
+        cost_usd=cost_usd,
+        test_mode=test_mode,
     )
+    log.info(
+        "usage: alias=%s duration=%dms cost=$%.4f%s",
+        rec.alias,
+        rec.duration_ms,
+        rec.cost_usd,
+        " [test]" if test_mode else "",
+    )
+    return output_path
 
 
 def _summarize_args(args: dict[str, Any]) -> str:

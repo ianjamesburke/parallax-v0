@@ -2,6 +2,13 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-18 — [CHANGED] Model alias ladder + per-call cost/time tracking
+Five-alias ladder (`draft`, `mid`, `premium`, `nano-banana`, `grok`) defined in `src/parallax/pricing.py`, verified against fal.ai on 2026-04-17. Agent-facing tool schema constrains `model` to `enum: list(ALIASES)`; unknown alias raises `ValueError`. System prompt carries `alias_guidance()` so the model sees descriptions + prices and knows to default to `mid`. Every `generate_image` call appends one NDJSON line to `~/.parallax/usage.ndjson` with `{ts, session_id, backend, alias, fal_id, tier, prompt_preview, output_path, duration_ms, cost_usd, test_mode}`. New `parallax usage [--include-test]` subcommand aggregates by alias and session. Test-mode records land with `cost_usd=0.0` and `test_mode=true` so you can see what a dry run would have cost without polluting real-spend totals.
+
+Live verify caught a real bug: the MCP tool handler on the claude-code backend runs in a separate task context from the SDK message loop, so `current_session_id.set(sid)` on the outer loop did not propagate in — usage records landed with `session_id=None` on that backend. Fixed by capturing a mutable `sid_holder` dict in the tool closure and re-setting the ContextVar inside the handler. Anthropic-api backend was unaffected (single task). Lesson reinforced: ContextVars are per-task; closures over SDK-owned tasks must re-set at the boundary.
+
+**Breaks if:** `parallax usage --include-test` after a `PARALLAX_TEST_MODE=1 parallax run` shows `0 sessions` or a `None` session_id when inspecting `~/.parallax/usage.ndjson` directly. Also breaks if passing an unknown alias (e.g. `"flux-pro"`) in a brief succeeds instead of erroring at the tool boundary.
+
 ## 2026-04-17 — [CHANGED] Runtime logging wired; default WARNING, -v INFO, -vv DEBUG
 Added `src/parallax/log.py` and a `-v/-vv` flag on the CLI (also `PARALLAX_LOG_LEVEL` env). At INFO you see: backend selected, session id + session-log path, each tool call with a truncated args summary, each tool result, and — on the claude-code path — the SDK's jsonl transcript path so you know exactly where to grep when behavior is off. DEBUG adds full args, full raw results, and per-SDK-message type.
 
