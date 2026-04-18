@@ -26,12 +26,14 @@ uv tool install --python 3.11 --from /path/to/parallax-v0 parallax
 
 ## Setup
 
-One of:
+Parallax auto-selects whichever backend is available — you only need one:
 
-- **Claude subscription (default):** have the `claude` CLI installed and logged in.
-- **Anthropic API key:** `export ANTHROPIC_API_KEY=...`, then pass `--backend anthropic-api`.
+- **Claude subscription (preferred):** have the `claude` CLI installed and logged in.
+- **Anthropic API key:** `export ANTHROPIC_API_KEY=...`. Used automatically if the `claude` CLI isn't on PATH, or when you pass `--backend anthropic-api` explicitly.
 
 For real image generation: `export FAL_KEY=...` (get one from fal.ai). Without it, set `PARALLAX_TEST_MODE=1` to use the Pillow shim — no network, no spend, images still land in `output/` for flow verification.
+
+The install one-liner above prompts you for these keys and persists them to `~/.zshrc`.
 
 ## Use
 

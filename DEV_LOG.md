@@ -2,6 +2,17 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-18 — [CHANGED] v0.1.3 patch: backend auto-fallback + installer prompts ANTHROPIC_API_KEY (tag v0.1.3)
+Two related fixes so "install on any Mac" actually works without Claude Code.
+
+Backend dispatcher now auto-falls-back. Previously, default = `claude-code` and the call hard-failed if the `claude` CLI wasn't on PATH — even when `ANTHROPIC_API_KEY` was set and the anthropic-api backend would have worked. New behavior: when the user hasn't passed `--backend` or set `PARALLAX_BACKEND`, probe for `claude` CLI; if missing, fall back to `anthropic-api` iff `ANTHROPIC_API_KEY` is set; otherwise raise a message listing both setup paths. Explicit picks (CLI flag or env var) still hard-fail on missing prereq — we never silently override what the caller asked for.
+
+Installer (`scripts/install.sh`) now prompts for `ANTHROPIC_API_KEY` when the `claude` CLI is absent. When `claude` is present, skip the prompt entirely — they're already set. Both keys (plus FAL_KEY) get written into a single `# >>> parallax env >>>` marker block so re-running the installer sees it and skips re-prompting (idempotent at the block level, not the per-key level — editing keys is a manual zshrc edit).
+
+Rejected: prompting for `ANTHROPIC_API_KEY` unconditionally. Most users who install Claude Code don't want a second Anthropic key lying around — it'd bill separately and creates two auth paths to reason about.
+
+**Breaks if:** `parallax run` with `claude` CLI absent and `ANTHROPIC_API_KEY` set still raises "claude\` CLI required" instead of routing to anthropic-api; `parallax run --backend claude-code` silently downgrades to anthropic-api when the CLI is missing (it must hard-fail — explicit picks are not overridable); re-running `scripts/install.sh` on a machine that already has the parallax env block appends a second one (the marker-block check should skip entirely); smoke test runs when no backend is configured.
+
 ## 2026-04-18 — [CHANGED] v0.1.2 patch: curl-pipe-sh installer (tag v0.1.2)
 `scripts/install.sh` is the one-liner install story: bootstraps `uv` if missing, runs `uv tool install`, prompts once for `FAL_KEY` via `/dev/tty` (works through curl | sh), persists it to `~/.zshrc` between idempotent marker comments, warns if the `claude` CLI isn't installed (non-fatal — client can fall back to `--backend anthropic-api`), runs a `PARALLAX_TEST_MODE=1` smoke test. README now leads with the curl one-liner; the manual `uv tool install` path stays as a fallback for devs who already have uv.
 

@@ -33,39 +33,72 @@ fi
 info "Installing parallax from $REPO_URL..."
 uv tool install --python 3.11 --force "git+$REPO_URL"
 
-# 3. FAL_KEY — prompt once, persist to zshrc, skip if already set
-if [ -z "${FAL_KEY:-}" ] && ! grep -qF "$MARKER_START" "$RC" 2>/dev/null; then
-  info "Parallax needs a FAL_KEY to generate real images."
-  info "Get one at: https://fal.ai/dashboard/keys"
-  printf "Paste your FAL_KEY (or press Enter to skip and use test mode): "
-  # Read from the controlling TTY so this works when piped via curl | sh.
-  FAL_KEY_INPUT=""
+# Prompt helper — reads from controlling TTY so curl | sh works, returns "" on skip.
+prompt_tty() {
+  _prompt="$1"
+  _reply=""
+  printf '%s' "$_prompt"
   if [ -r /dev/tty ]; then
-    read -r FAL_KEY_INPUT < /dev/tty || true
+    read -r _reply < /dev/tty || true
   fi
-  if [ -n "$FAL_KEY_INPUT" ]; then
+  printf '%s' "$_reply"
+}
+
+# 3. Collect env additions — skip wholesale if parallax markers already present.
+ENV_ADDS=""
+
+if grep -qF "$MARKER_START" "$RC" 2>/dev/null; then
+  info "Parallax env block already present in $RC — not re-prompting. Edit the file directly to update keys."
+else
+  # FAL_KEY (required for real image gen)
+  if [ -z "${FAL_KEY:-}" ]; then
+    info "Parallax needs a FAL_KEY to generate real images."
+    info "Get one at: https://fal.ai/dashboard/keys"
+    FAL_KEY_INPUT=$(prompt_tty "Paste your FAL_KEY (or press Enter to skip and use test mode): ")
+    if [ -n "$FAL_KEY_INPUT" ]; then
+      ENV_ADDS="${ENV_ADDS}export FAL_KEY=${FAL_KEY_INPUT}
+"
+      export FAL_KEY="$FAL_KEY_INPUT"
+    else
+      warn "No FAL_KEY entered — real image generation will fail until you set one."
+    fi
+  fi
+
+  # Backend auth — if claude CLI is present, you're set. If not, prompt for ANTHROPIC_API_KEY
+  # so parallax's auto-fallback can route through the raw API backend.
+  if command -v claude >/dev/null 2>&1; then
+    info "Claude Code CLI detected — parallax will use your Claude subscription by default."
+  else
+    if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+      info "The 'claude' CLI is not installed."
+      info "Parallax can fall back to the raw Anthropic API if you provide an API key."
+      info "Get one at: https://console.anthropic.com/settings/keys"
+      info "(Alternatively, install Claude Code: https://claude.com/claude-code)"
+      ANTHROPIC_KEY_INPUT=$(prompt_tty "Paste your ANTHROPIC_API_KEY (or press Enter to skip): ")
+      if [ -n "$ANTHROPIC_KEY_INPUT" ]; then
+        ENV_ADDS="${ENV_ADDS}export ANTHROPIC_API_KEY=${ANTHROPIC_KEY_INPUT}
+"
+        export ANTHROPIC_API_KEY="$ANTHROPIC_KEY_INPUT"
+      else
+        warn "No ANTHROPIC_API_KEY entered and no 'claude' CLI — parallax will not be able to run until you set up one of the two."
+      fi
+    fi
+  fi
+
+  # Persist everything we collected in a single marker block so the whole set is idempotent.
+  if [ -n "$ENV_ADDS" ]; then
     {
       printf '\n%s\n' "$MARKER_START"
-      printf 'export FAL_KEY=%s\n' "$FAL_KEY_INPUT"
+      printf '%s' "$ENV_ADDS"
       printf '%s\n' "$MARKER_END"
     } >> "$RC"
-    export FAL_KEY="$FAL_KEY_INPUT"
-    info "Saved FAL_KEY to $RC"
-  else
-    warn "No FAL_KEY entered — real image generation will fail until you set one."
-    warn "Add it later: echo 'export FAL_KEY=...' >> $RC"
+    info "Saved env vars to $RC"
   fi
 fi
 
-# 4. Claude CLI check (default backend). Non-fatal — they can use --backend anthropic-api instead.
-if ! command -v claude >/dev/null 2>&1; then
-  warn "The 'claude' CLI is not installed — the default backend won't work."
-  warn "Install Claude Code (https://claude.com/claude-code) or run parallax with --backend anthropic-api and ANTHROPIC_API_KEY set."
-fi
-
-# 5. Smoke test — test mode, no FAL spend, no Claude login required (anthropic-api path skipped).
+# 4. Smoke test — test mode, no FAL spend. Auto-selects whichever backend is available.
 info "Running smoke test (PARALLAX_TEST_MODE=1, no spend)..."
-if command -v claude >/dev/null 2>&1; then
+if command -v claude >/dev/null 2>&1 || [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   if PARALLAX_TEST_MODE=1 parallax run --brief "install smoke test: one small red cube" >/dev/null 2>&1; then
     info "Smoke test passed."
   else
@@ -73,7 +106,7 @@ if command -v claude >/dev/null 2>&1; then
     warn "  PARALLAX_TEST_MODE=1 parallax run --brief 'hello'"
   fi
 else
-  info "Skipping smoke test (requires 'claude' CLI for the default backend)."
+  info "Skipping smoke test (no backend configured yet — install Claude Code or set ANTHROPIC_API_KEY)."
 fi
 
 info "Done. Open a new terminal (or run: source $RC), then try:"

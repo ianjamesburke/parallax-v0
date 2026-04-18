@@ -48,11 +48,42 @@ def test_claude_code_fails_fast_without_cli(monkeypatch):
         backends.select("claude-code")
 
 
-def test_default_is_claude_code(monkeypatch):
-    """Default backend (no args, no env) resolves to claude-code — even if the
-    CLI isn't present, the resolution must attempt claude-code first."""
+def test_auto_selects_claude_code_when_cli_present(monkeypatch):
+    """No explicit pick, claude CLI present → prefer claude-code over anthropic-api."""
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/claude" if name == "claude" else None)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")  # both are set; claude-code wins
+    selected = backends.select()
+    assert selected.NAME == "claude-code"
+
+
+def test_auto_falls_back_to_anthropic_api_when_no_claude_cli(monkeypatch):
+    """No explicit pick, no claude CLI, but ANTHROPIC_API_KEY is set → anthropic-api."""
     import shutil
 
     monkeypatch.setattr(shutil, "which", lambda _name: None)
-    with pytest.raises(RuntimeError, match="claude` CLI"):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    selected = backends.select()
+    assert selected.NAME == "anthropic-api"
+
+
+def test_auto_fails_with_helpful_message_when_neither_available(monkeypatch):
+    """No claude CLI AND no ANTHROPIC_API_KEY → raise listing both setup paths."""
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="No backend available"):
         backends.select()
+
+
+def test_explicit_claude_code_does_not_auto_fall_back(monkeypatch):
+    """--backend claude-code must hard-fail if the CLI is missing, even if
+    ANTHROPIC_API_KEY is set. Never silently override an explicit choice."""
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    with pytest.raises(RuntimeError, match="claude` CLI"):
+        backends.select("claude-code")
