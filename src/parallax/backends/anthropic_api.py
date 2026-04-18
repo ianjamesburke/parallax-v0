@@ -1,10 +1,19 @@
+"""Anthropic API backend — uses raw Messages API with an explicit tool_use loop.
+
+Billed against an ANTHROPIC_API_KEY (separate from any Claude subscription).
+Session state is persisted as append-only NDJSON under sessions_dir().
+Opt in via --backend anthropic-api or PARALLAX_BACKEND=anthropic-api.
+"""
+
 from __future__ import annotations
 
+import os
 from typing import Any, Protocol
 
-from .sessions import Session
-from .tools import TOOL_SCHEMAS, dispatch_tool
+from ..sessions import Session
+from ..tools import TOOL_SCHEMAS, dispatch_tool
 
+NAME = "anthropic-api"
 DEFAULT_MODEL = "claude-sonnet-4-6"
 MAX_TURNS = 20
 MAX_OUTPUT_TOKENS = 4096
@@ -20,6 +29,15 @@ SYSTEM_PROMPT = (
 
 class _MessagesClient(Protocol):
     messages: Any
+
+
+def check_available() -> None:
+    """Fail fast if ANTHROPIC_API_KEY is not set. No silent fallback."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise RuntimeError(
+            "anthropic-api backend requires ANTHROPIC_API_KEY to be set. "
+            "Either export the key, or switch to --backend claude-code to use your Claude subscription."
+        )
 
 
 def run(

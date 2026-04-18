@@ -2,6 +2,13 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-17 — [CHANGED] Two backends behind a dispatcher; default = Claude subscription
+Added the `claude-code` backend (default) via `claude-agent-sdk`, which routes through the user's `claude` CLI and uses their subscription — no API key, no extra billing. The existing anthropic-api backend is still selectable via `--backend anthropic-api` or `PARALLAX_BACKEND=anthropic-api` for CI / non-subscription use. Dispatcher lives in `src/parallax/backends/__init__.py`; selection is explicit-arg > env > default, with fail-fast `check_available()` on the selected backend (claude CLI on PATH / ANTHROPIC_API_KEY set). No silent fallback.
+
+The two backends have distinct session models: claude-code uses the SDK's native session resume (stored under `~/.claude/projects/`); anthropic-api uses our NDJSON store at `~/.parallax/sessions/`. Session IDs are opaque strings round-tripped by the CLI — they never mix. Rejected: unified `Backend` protocol with a single `run_turn()` method — the SDKs' loop shapes are too different (stateless `messages.create` vs. stateful async iterator over SDK events) for the abstraction to earn its keep. Two explicit backend modules + a tiny dispatcher beats a leaky interface.
+
+The `generate_image` tool is exposed to claude-code via an in-process MCP server (`create_sdk_mcp_server`); both backends ultimately call the same `tools.dispatch_tool()`, so the Pillow test shim works identically on both paths.
+
 ## 2026-04-17 — [DECISION] Flat single-agent architecture wrapping anthropic SDK
 Rejected orchestrator+subagents (Anthropic Agent SDK) for v0 — ~15x token cost per equivalent task and zero benefit until the pipeline branches or images exceed a single context window. Rejected literal `claude -p` subprocess wrapping — would require standing up an MCP server just to expose one tool, which defeats the "smallest possible" scope. The anthropic SDK's native tool_use + `cache_control` primitives give the same capability in ~100 lines with no hidden state and a loop the user can read top-to-bottom. The "claude -p wrapper" framing is honored architecturally (thin, transparent, skill-extensible) without the literal subprocess overhead.
 

@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from parallax.agent import run
+from parallax.backends.anthropic_api import run
 
 
 class FakeAnthropic:
