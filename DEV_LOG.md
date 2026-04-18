@@ -2,6 +2,16 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-18 — [CHANGED] Real FAL integration wired (prompt-only, v0)
+`generate_image` now calls FAL for real via `fal_client.subscribe` when not in test mode. `fal.generate(prompt, spec)` is the only call site; runner + downloader are dependency-injectable so hermetic tests don't touch the SDK. FAL-side failures (auth, quota, outage, safety) wrap as `RuntimeError` and surface to the model as `tool_result` errors — the agent can retry, apologize, or pivot instead of crashing the loop. `FAL_KEY` required; missing key fails fast at first real call. Deliberately prompt-only for v0 — reference-image support is purely additive at the tool-schema / pricing surface when it lands; the only non-additive work will be stripping prior-turn input bytes at the resume boundary (already flagged in an earlier DECISION entry).
+
+Rejected: raw HTTP (reimplements queueing/polling for zero benefit); passing arbitrary FAL params through the tool schema (invites the "agent hallucinates a field" footgun we already guarded against for model IDs).
+
+**Breaks if:** `FAL_KEY=... PARALLAX_TEST_MODE=` (unset) `uv run parallax run --backend anthropic-api --brief "..."` doesn't produce a real image file in `output/` whose extension matches the FAL-returned content type, or the usage record for that call shows `test_mode: true` / `cost_usd: 0.0`.
+
+## 2026-04-18 — [GOTCHA] FAL returns JPEG from Flux Schnell — honor URL extension, don't assume .png
+First live verify wrote a file named `draft_<hash>.png` that was actually JPEG content (Flux Schnell defaults to JPEG on FAL). Fixed by deriving the extension from the returned URL path (`.png/.jpg/.jpeg/.webp` allowed, else fallback `.png`). Don't hardcode an extension — different FAL models return different formats (and even the same model can change its default). Viewers coped, but `file` command revealed the mismatch, and downstream tools that dispatch by extension would have silently misbehaved.
+
 ## 2026-04-18 — [CHANGED] Model alias ladder + per-call cost/time tracking
 Five-alias ladder (`draft`, `mid`, `premium`, `nano-banana`, `grok`) defined in `src/parallax/pricing.py`, verified against fal.ai on 2026-04-17. Agent-facing tool schema constrains `model` to `enum: list(ALIASES)`; unknown alias raises `ValueError`. System prompt carries `alias_guidance()` so the model sees descriptions + prices and knows to default to `mid`. Every `generate_image` call appends one NDJSON line to `~/.parallax/usage.ndjson` with `{ts, session_id, backend, alias, fal_id, tier, prompt_preview, output_path, duration_ms, cost_usd, test_mode}`. New `parallax usage [--include-test]` subcommand aggregates by alias and session. Test-mode records land with `cost_usd=0.0` and `test_mode=true` so you can see what a dry run would have cost without polluting real-spend totals.
 

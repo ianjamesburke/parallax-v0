@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from . import usage
+from . import fal, usage
 from .context import current_backend, current_session_id
 from .log import get_logger
 from .pricing import ALIASES, resolve
@@ -65,10 +65,7 @@ def generate_image(prompt: str, model: str) -> str:
     if test_mode:
         output_path = str(render_mock_image(prompt=prompt, model=spec.alias))
     else:
-        raise NotImplementedError(
-            "Real FAL integration lands in the next commit. "
-            "Set PARALLAX_TEST_MODE=1 to run against the shim."
-        )
+        output_path = str(fal.generate(prompt=prompt, spec=spec))
     duration_ms = int((time.monotonic() - t0) * 1000)
     cost_usd = 0.0 if test_mode else spec.price_usd_per_image
 
