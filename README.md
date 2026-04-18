@@ -71,6 +71,7 @@ Passing `reference_images=[<local path>, ...]` routes to the model's edit endpoi
 | `PARALLAX_TEST_MODE=1` | use the Pillow shim instead of calling FAL |
 | `PARALLAX_BACKEND` | default backend selection |
 | `PARALLAX_CLAUDE_MODEL` | claude-code backend model (default: `sonnet`) |
+| `PARALLAX_NO_UPDATE_CHECK=1` | silence the once-daily update-available nag |
 | `PARALLAX_LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` (overridden by `-v`/`-vv`) |
 | `PARALLAX_SESSIONS_DIR` | override `~/.parallax/sessions/` |
 | `PARALLAX_USAGE_LOG` | override `~/.parallax/usage.ndjson` |

@@ -2,6 +2,15 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-18 — [CHANGED] v0.1.4 patch: cached update-check nag on startup (tag v0.1.4)
+Every `parallax` invocation now does a best-effort version check. Fire-and-forget at the start of `cli.main()`; never raises, swallows all errors (network, parse, filesystem). Hits `api.github.com/repos/ianjamesburke/parallax-v0/releases/latest` at most once per 24h, caches at `~/.parallax/.update_check`. Prints a single-line nag to stderr when the installed version is behind: `[parallax] A new version is available: vX.Y.Z (you have vA.B.C). Run: parallax update`. Opt out with `PARALLAX_NO_UPDATE_CHECK=1`. Skipped during `parallax update` itself.
+
+Rejected: `packaging.Version` for semver compare (adds a dep for a 5-line helper). `git ls-remote --tags` (requires shelling out, more surface area than a 3s HTTPS GET). Auto-upgrading in-place (silently mutating the user's install is invasive and collides with explicit `parallax update` as the contract).
+
+Version comparison uses tuple-of-ints on dot-split segments, trailing non-numeric chars dropped per segment. Good enough for x.y.z; prerelease tags compare by numeric prefix, which is close enough for a nag (we'll revisit if/when we ship prereleases).
+
+**Breaks if:** a fresh install prints the nag (no cached value + same version as latest → fetcher returns current version → comparison is not-newer → silent), the nag triggers more than once per 24h on the same machine (cache TTL check is broken), an offline machine sees `parallax run` fail or hang on startup (fetcher has a 3s timeout and errors are swallowed), `parallax update` itself prints the nag (we explicitly skip during that subcommand), or `PARALLAX_NO_UPDATE_CHECK=1` still hits the network (the env check short-circuits before fetcher is called).
+
 ## 2026-04-18 — [CHANGED] v0.1.3 patch: backend auto-fallback + installer prompts ANTHROPIC_API_KEY (tag v0.1.3)
 Two related fixes so "install on any Mac" actually works without Claude Code.
 

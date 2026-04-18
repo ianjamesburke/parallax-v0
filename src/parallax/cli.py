@@ -9,6 +9,7 @@ import sys
 from . import usage
 from .backends import AVAILABLE_BACKENDS, run as backend_run
 from .log import configure as configure_logging
+from .update_check import check_for_update
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -49,6 +50,11 @@ def main(argv: list[str] | None = None) -> int:
     elif args.verbose == 1:
         level = logging.INFO
     configure_logging(level)
+
+    # Best-effort, non-blocking: never raises, swallows network/filesystem errors.
+    # Skipped during `update` itself (no point nagging mid-upgrade).
+    if args.command != "update":
+        check_for_update()
 
     if args.command == "run":
         result = backend_run(brief=args.brief, session_id=args.session_id, backend=args.backend)
