@@ -2,6 +2,14 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-18 — [CHANGED] Distribution verified: `uv tool install` works
+Live-tested `uv tool install --python 3.11 --from <repo> parallax --force` on this machine. Installed binary at `~/.local/bin/parallax`, runs from any cwd, produces `output/` relative to cwd, writes sessions/usage to `~/.parallax/`. Both backends verified from the installed binary in `/tmp` with `PARALLAX_TEST_MODE=1`. Minimal README added with the install one-liner, env-var table, and model-alias table.
+
+**Breaks if:** `uv tool install` from this repo requires any manual venv setup, omitting `--python 3.11` succeeds silently against a lower Python (it shouldn't — pyproject.toml pins `requires-python = ">=3.11"`), or the installed `parallax` binary is missing from the user's PATH after install.
+
+## 2026-04-18 — [GOTCHA] `uv tool install` needs `--python 3.11` on systems with older default Python
+System Python on this machine is 3.9.6, so a bare `uv tool install --from <repo> parallax` fails with "Python>=3.11 required" since uv tries to match against the system interpreter rather than downloading one. The fix is `--python 3.11` (uv will download 3.11 if it doesn't have it). Documented in the README. Do not "fix" this by lowering `requires-python` — the SDKs and type hints we use (`str | None`, etc.) require 3.10+, and we deliberately pinned 3.11 as the install target per the project's Python-tooling convention.
+
 ## 2026-04-18 — [CHANGED] Reference-image support extended to `mid` (flux/dev img2img)
 `ModelSpec` gained `ref_param_name: str | None` and `max_refs: int` so each model can declare both the edit endpoint's arg name and the cardinality. `fal.generate` dispatches: singular-param models get `args[param] = url_str`; list-param models get `args[param] = list_of_urls`. `tools._validate_refs` rejects over-the-limit refs at the tool boundary so the agent pivots before any upload happens.
 
