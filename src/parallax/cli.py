@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shutil
+import subprocess
 import sys
 
 from . import usage
@@ -37,6 +39,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Include PARALLAX_TEST_MODE records (excluded by default).",
     )
 
+    sub.add_parser("update", help="Upgrade parallax to the latest release via uv.")
+
     args = parser.parse_args(argv)
 
     level: int | None = None
@@ -57,7 +61,24 @@ def main(argv: list[str] | None = None) -> int:
         _print_usage(usage.summarize(include_test=args.include_test))
         return 0
 
+    if args.command == "update":
+        return _run_update()
+
     return 2
+
+
+def _run_update() -> int:
+    uv = shutil.which("uv")
+    if not uv:
+        print(
+            "uv not found on PATH. Install it first:\n"
+            "  curl -LsSf https://astral.sh/uv/install.sh | sh",
+            file=sys.stderr,
+        )
+        return 1
+    print("Upgrading parallax via uv tool upgrade…")
+    result = subprocess.run([uv, "tool", "upgrade", "parallax"])
+    return result.returncode
 
 
 def _print_usage(summary: dict) -> None:

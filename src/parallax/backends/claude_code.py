@@ -11,6 +11,7 @@ This is the default backend. Opt out with --backend anthropic-api.
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
@@ -24,6 +25,9 @@ log = get_logger("backends.claude_code")
 
 NAME = "claude-code"
 MAX_TURNS = 20
+# Parallax's agent work is routine tool dispatch — Sonnet is the right default
+# over Opus on cost and latency. Override via PARALLAX_CLAUDE_MODEL.
+DEFAULT_MODEL = "sonnet"
 
 SYSTEM_PROMPT = (
     "You are Parallax, an agentic creative production assistant. "
@@ -129,6 +133,7 @@ async def _run_async(
         resume=session_id,
         max_turns=max_turns,
         permission_mode="acceptEdits",
+        model=os.environ.get("PARALLAX_CLAUDE_MODEL", DEFAULT_MODEL),
     )
 
     runner = query_fn if query_fn is not None else query

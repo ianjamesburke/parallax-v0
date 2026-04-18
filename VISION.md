@@ -6,6 +6,11 @@ A minimal agentic image-generation CLI. One agent, one tool (`generate_image`), 
 
 The smallest possible expression of "a creative brief goes in, image files come out" without any infrastructure we haven't proven we need.
 
+## Product principles
+
+- **Installable on any Mac, one command.** `uv tool install --python 3.11 git+<repo>` must be the entire install story — no manual venv, no Python-version hunting, no brew dance. If someone else can't get to a working `parallax run` from a clean Mac in under five minutes, that's a bug.
+- **Updatable the same way.** `uv tool upgrade parallax` on any machine pulls the latest release. Install and update are the same shape so the instructions fit on a sticky note.
+
 ## Why v0 exists as its own thing
 
 The broader Parallax is a video production pipeline with three agent roles (HoP / Editor / Compose) and a manifest as the contract. That's a lot of architecture to write at once, and most of the load-bearing questions — model ladder, cost accounting, session resume, backend abstraction, reference-image handling — live at the primitive layer. v0 is the primitive, stress-tested in isolation, so the video pipeline on top of it can be built without simultaneously designing the primitive.
@@ -22,15 +27,14 @@ The broader Parallax is a video production pipeline with three agent roles (HoP 
 
 - Not the video pipeline. No storyboard, no timeline, no assembly, no captions.
 - Not manifest-driven. The agent calls tools directly; there is no `.parallax/manifest.yaml` yet.
-- Not distributed. `uv tool install` has not been live-tested.
 - Not multi-agent. One flat agent; HoP / Editor / Compose is a Parallax-proper concern, not v0's.
 
 ## Deliberate deferrals (additive, no rewrite required)
 
 - Reference-image support for `premium` (Flux Kontext, different model underneath) and `grok` (no FAL edit endpoint yet).
 - Arbitrary FAL params (`strength`, `guidance_scale`, `aspect_ratio`, `num_images`). Same footgun class as letting the agent pass raw model IDs — deferred until an actual use case appears.
-- Distribution: `uv tool install git+<repo>` one-liner verify + a minimal README. Needed before anyone other than me uses this.
 - Parallel multi-model compare (same brief across aliases, side-by-side output). Latency optimization, not new capability.
+- Auto-update / update-check nag in the CLI. `uv tool upgrade` is the contract for now; revisit if manual upgrades become a drag on clients.
 
 ## How v0 relates to Parallax-proper
 

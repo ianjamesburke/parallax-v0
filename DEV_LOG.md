@@ -2,6 +2,15 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-18 — [CHANGED] v0.1.1 patch: public repo, sonnet default, `parallax update` (tag v0.1.1)
+Three small ships bundled into a patch:
+- Repo flipped to public so `uv tool install git+<url>` is a true one-liner. v0 has no secrets in-repo (keys all come from the client's env), and "easy install on any Mac" is an explicit VISION principle — private + easy-install don't compose.
+- `parallax update` subcommand shells out to `uv tool upgrade parallax`. Fails fast with an install hint if uv isn't on PATH. Makes install + update the same sticky-note story.
+- Claude-code backend defaults to `model="sonnet"` (override via `PARALLAX_CLAUDE_MODEL`). Parallax's agent work is routine tool dispatch — Opus was wasted cost and latency.
+- Also: bumped `pyproject.toml` from the stale `0.0.1` to `0.1.1` — the v0.1.0 tag shipped without updating pyproject, so `uv tool list` reported `parallax v0.0.1`. Tag + pyproject now agree.
+
+**Breaks if:** `uv tool install --python 3.11 git+https://github.com/ianjamesburke/parallax-v0` on a fresh Mac (no auth configured) fails with a 401 (repo should be public), `parallax update` prints "uv not found" when uv IS on PATH, `parallax run` against claude-code backend shows Opus in the SDK transcript without `PARALLAX_CLAUDE_MODEL=opus` set, or `parallax --version` (when added) disagrees with the git tag.
+
 ## 2026-04-18 — [FUTURE] v0.1.0 shipped; pausing here, resuming on `0.2.0` branch
 v0.1.0 tagged and released at https://github.com/ianjamesburke/parallax-v0/releases/tag/v0.1.0. Complete MVP arc shipped in one session: two backends, five-alias model ladder, real FAL integration, reference-image support on `mid` + `nano-banana`, per-call usage log, distribution verified via `uv tool install`, VISION.md + README. v0 is the still-gen primitive; the broader Parallax (HoP/Editor/Compose, manifest-first video pipeline) is explicitly not in v0 — see VISION.md.
 

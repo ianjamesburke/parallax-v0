@@ -86,6 +86,32 @@ def test_errored_result_raises():
         claude_code.run(brief="make a thing", query_fn=fake_query)
 
 
+def test_defaults_to_sonnet_model(monkeypatch):
+    monkeypatch.delenv("PARALLAX_CLAUDE_MODEL", raising=False)
+    captured: dict[str, Any] = {}
+
+    async def capturing_query(**kwargs) -> AsyncIterator[Any]:
+        captured["options"] = kwargs.get("options")
+        for item in [_system_init("s"), _result("s")]:
+            yield item
+
+    claude_code.run(brief="x", query_fn=capturing_query)
+    assert captured["options"].model == "sonnet"
+
+
+def test_model_override_via_env(monkeypatch):
+    monkeypatch.setenv("PARALLAX_CLAUDE_MODEL", "opus")
+    captured: dict[str, Any] = {}
+
+    async def capturing_query(**kwargs) -> AsyncIterator[Any]:
+        captured["options"] = kwargs.get("options")
+        for item in [_system_init("s"), _result("s")]:
+            yield item
+
+    claude_code.run(brief="x", query_fn=capturing_query)
+    assert captured["options"].model == "opus"
+
+
 def test_resume_session_id_preserved_when_no_init():
     """When resuming, the SDK may not emit a fresh init — the caller-provided
     session_id should carry through if ResultMessage doesn't override it."""

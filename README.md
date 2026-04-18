@@ -31,6 +31,7 @@ For real image generation: `export FAL_KEY=...` (get one from fal.ai). Without i
 parallax run --brief "A watercolor cat at premium tier"
 parallax run --brief "Same but oil painting" --resume <session-id>
 parallax usage
+parallax update   # upgrade to the latest release via uv
 ```
 
 Flags:
@@ -59,6 +60,7 @@ Passing `reference_images=[<local path>, ...]` routes to the model's edit endpoi
 | `ANTHROPIC_API_KEY` | required for `--backend anthropic-api` |
 | `PARALLAX_TEST_MODE=1` | use the Pillow shim instead of calling FAL |
 | `PARALLAX_BACKEND` | default backend selection |
+| `PARALLAX_CLAUDE_MODEL` | claude-code backend model (default: `sonnet`) |
 | `PARALLAX_LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` (overridden by `-v`/`-vv`) |
 | `PARALLAX_SESSIONS_DIR` | override `~/.parallax/sessions/` |
 | `PARALLAX_USAGE_LOG` | override `~/.parallax/usage.ndjson` |
