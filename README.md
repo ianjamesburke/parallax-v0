@@ -7,7 +7,7 @@ See `VISION.md` for scope and non-goals.
 ## Install
 
 ```sh
-uv tool install --python 3.11 git+https://github.com/<your-fork>/parallax-v0
+uv tool install --python 3.11 git+https://github.com/ianjamesburke/parallax-v0
 ```
 
 Or from a local checkout:
