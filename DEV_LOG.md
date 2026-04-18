@@ -2,6 +2,22 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-18 — [FUTURE] Next swings: video support + multi-user/multi-project web UI
+Two big tracks ahead of v0, explicitly not v0-scoped:
+
+1. **Video support** — the manifest-first video pipeline per VISION.md. HoP agent (brief → scene list), Editor agent (scene list → `.parallax/manifest.yaml` with per-shot asset specs), deterministic `parallax compose` (walks manifest, calls `generate_image` + ffmpeg + video-production skill's trim-silence / captions / headline steps). Lives in a separate repo that depends on `parallax-v0` as a dep — v0 stays a standalone still-gen primitive. Gated on having a real concrete video brief to force the manifest schema; designing the schema in the abstract is the documented anti-pattern (per earlier FUTURE entry).
+
+2. **Simple web UI with multi-user + multi-project support** — Plexi-shaped prototype that wraps the parallax CLI so creative users never see Terminal. Creative directors aren't going to `cd` into project folders; the CLI is the primitive, not the interface. Weekend-sized scope for the v1 of the UI:
+   - FastAPI backend shells out to `parallax run`, parses stdout for session/cost/paths.
+   - Per-user auth + per-user session isolation (each user's runs scoped to their own sessions dir + usage log).
+   - Per-project scoping (text box for brief, model picker, per-project output folder, gallery view scoped to the project).
+   - Block on subprocess, show spinner. No streaming in v1.
+   - Deployment: MBA-on-LAN initially, cloud-hosted once a remote client needs it. Google Drive sync (via Drive for Desktop, stream mode) is the distribution layer — images land in a shared Drive folder, clients consume from Drive on any device.
+
+**Not in scope for either track:** full Plexi App Protocol (trust floats, companion app, state buckets — per memory that's a multi-week build, not a weekend); streaming tool-call UI; built-in Drive sync as a parallax feature (keep parallax writing to `$PARALLAX_OUTPUT_DIR`, let a separate sync layer do cloud — matches "v0 is the still-gen primitive" framing).
+
+**Sequencing decision still open:** video v1 vs. web UI, which goes first. Depends on whether a real video brief is in hand. If yes, video. If no, web UI is the higher-leverage swing because without a usable surface the video pipeline has no consumer.
+
 ## 2026-04-18 — [CHANGED] v0.1.4 patch: cached update-check nag on startup (tag v0.1.4)
 Every `parallax` invocation now does a best-effort version check. Fire-and-forget at the start of `cli.main()`; never raises, swallows all errors (network, parse, filesystem). Hits `api.github.com/repos/ianjamesburke/parallax-v0/releases/latest` at most once per 24h, caches at `~/.parallax/.update_check`. Prints a single-line nag to stderr when the installed version is behind: `[parallax] A new version is available: vX.Y.Z (you have vA.B.C). Run: parallax update`. Opt out with `PARALLAX_NO_UPDATE_CHECK=1`. Skipped during `parallax update` itself.
 
