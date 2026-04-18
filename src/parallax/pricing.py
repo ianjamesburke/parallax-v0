@@ -25,11 +25,16 @@ class ModelSpec:
     price_usd: float
     price_unit: Literal["megapixel", "image"]
     description: str
+    edit_fal_id: str | None = None  # sibling endpoint to use when reference_images is passed
 
     @property
     def price_usd_per_image(self) -> float:
         """Effective per-image cost assuming 1MP output (v0 default)."""
         return self.price_usd
+
+    @property
+    def supports_reference(self) -> bool:
+        return self.edit_fal_id is not None
 
 
 MODELS: dict[str, ModelSpec] = {
@@ -63,7 +68,8 @@ MODELS: dict[str, ModelSpec] = {
         tier="latest",
         price_usd=0.039,
         price_unit="image",
-        description="Google Gemini 2.5 Flash Image. Use when the user asks for it or for Google-lineage realism.",
+        description="Google Gemini 2.5 Flash Image. Use when the user asks for it, for Google-lineage realism, or when reference images are provided.",
+        edit_fal_id="fal-ai/gemini-25-flash-image/edit",
     ),
     "grok": ModelSpec(
         alias="grok",
@@ -92,10 +98,15 @@ def alias_guidance() -> str:
     """Formatted guidance string for the agent's system prompt."""
     lines = ["Available image models. Pass exactly one of these as the `model` argument:"]
     for spec in MODELS.values():
+        refs = " — supports reference_images" if spec.supports_reference else ""
         lines.append(
-            f"- {spec.alias}: {spec.description} (~${spec.price_usd_per_image:.3f}/image)"
+            f"- {spec.alias}: {spec.description} (~${spec.price_usd_per_image:.3f}/image){refs}"
         )
     lines.append(
         "Never pass any value outside this list. If the user has not specified a tier, use 'mid'."
+    )
+    lines.append(
+        "If the user provides or implies reference images (inputs to remix, edit, or condition on), "
+        "you MUST use a model that supports reference_images. Pass the local file paths in reference_images."
     )
     return "\n".join(lines)

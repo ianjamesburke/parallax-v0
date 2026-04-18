@@ -28,6 +28,7 @@ log = get_logger("fal")
 
 Runner = Callable[[str, dict[str, Any]], dict[str, Any]]
 Downloader = Callable[[str, Path], None]
+Uploader = Callable[[Path], str]
 
 
 def check_available() -> None:
@@ -48,6 +49,12 @@ def _default_downloader(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     with urllib.request.urlopen(url) as resp, dest.open("wb") as f:
         f.write(resp.read())
+
+
+def _default_uploader(path: Path) -> str:
+    import fal_client
+
+    return fal_client.upload_file(str(path))
 
 
 def _url_ext(url: str) -> str:
@@ -74,18 +81,44 @@ def generate(
     prompt: str,
     spec: ModelSpec,
     *,
+    reference_images: list[Path] | None = None,
     runner: Runner | None = None,
     downloader: Downloader | None = None,
+    uploader: Uploader | None = None,
 ) -> Path:
     check_available()
     run = runner or _default_runner
     dl = downloader or _default_downloader
+    up = uploader or _default_uploader
 
-    log.info("fal call: %s prompt=%r", spec.fal_id, prompt[:60])
+    refs = reference_images or []
+    if refs and not spec.supports_reference:
+        raise RuntimeError(
+            f"Model {spec.alias!r} does not support reference_images "
+            f"(no edit endpoint). Caller should have validated this."
+        )
+
+    if refs:
+        ref_urls: list[str] = []
+        for p in refs:
+            try:
+                url = up(p)
+            except Exception as e:
+                raise RuntimeError(f"FAL upload failed for {p}: {type(e).__name__}: {e}") from e
+            ref_urls.append(url)
+        fal_id = spec.edit_fal_id
+        assert fal_id is not None  # guarded by supports_reference
+        args: dict[str, Any] = {"prompt": prompt, "image_urls": ref_urls}
+        log.info("fal call: %s prompt=%r refs=%d", fal_id, prompt[:60], len(ref_urls))
+    else:
+        fal_id = spec.fal_id
+        args = {"prompt": prompt}
+        log.info("fal call: %s prompt=%r", fal_id, prompt[:60])
+
     try:
-        result = run(spec.fal_id, {"prompt": prompt})
+        result = run(fal_id, args)
     except Exception as e:
-        raise RuntimeError(f"FAL call failed for {spec.fal_id}: {type(e).__name__}: {e}") from e
+        raise RuntimeError(f"FAL call failed for {fal_id}: {type(e).__name__}: {e}") from e
 
     url = _first_image_url(result)
     ext = _url_ext(url)

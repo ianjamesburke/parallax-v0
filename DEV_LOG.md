@@ -2,6 +2,15 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-18 — [CHANGED] Reference-image support (nano-banana only for v0)
+`generate_image` gains an optional `reference_images: list[str]` of local paths. When supplied, we upload each via `fal_client.upload_file`, route to the model's `edit_fal_id` sibling endpoint, and pass the returned URLs as `image_urls`. Only nano-banana (`fal-ai/gemini-25-flash-image/edit`) supports this in v0 — Flux Kontext/redux/img2img and a grok edit path are per-endpoint work we'll add one at a time as demand shows up, not speculatively. Adding them later is purely additive: set `edit_fal_id` on the spec and the dispatch just works.
+
+Unsupported-model + missing-file validation lives at the tool boundary (`tools._validate_refs`) so failures surface as `tool_result is_error=true`, not crashes. Live verify confirmed: the agent, told to use `draft` with refs, received the ValueError, stopped retrying, and correctly pivoted to recommending nano-banana. `alias_guidance()` now tells the model which aliases support refs and instructs "use one of those when the user supplies input images."
+
+Rejected: generic "pass any FAL param through the tool" — same footgun as model IDs. Rejected for v0: Flux Kontext on `premium` — endpoint + param shape differ from nano-banana's `image_urls`, would expand the test matrix before we know which cases matter.
+
+**Breaks if:** calling `generate_image(model="nano-banana", reference_images=[<real png>])` with `FAL_KEY` set doesn't produce an output file; or calling it with `model="draft"` plus refs doesn't raise a ValueError at the tool boundary before any FAL call.
+
 ## 2026-04-18 — [CHANGED] Real FAL integration wired (prompt-only, v0)
 `generate_image` now calls FAL for real via `fal_client.subscribe` when not in test mode. `fal.generate(prompt, spec)` is the only call site; runner + downloader are dependency-injectable so hermetic tests don't touch the SDK. FAL-side failures (auth, quota, outage, safety) wrap as `RuntimeError` and surface to the model as `tool_result` errors — the agent can retry, apologize, or pivot instead of crashing the loop. `FAL_KEY` required; missing key fails fast at first real call. Deliberately prompt-only for v0 — reference-image support is purely additive at the tool-schema / pricing surface when it lands; the only non-additive work will be stripping prior-turn input bytes at the resume boundary (already flagged in an earlier DECISION entry).
 
