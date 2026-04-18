@@ -2,6 +2,16 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-18 — [FUTURE] v0.1.0 shipped; pausing here, resuming on `0.2.0` branch
+v0.1.0 tagged and released at https://github.com/ianjamesburke/parallax-v0/releases/tag/v0.1.0. Complete MVP arc shipped in one session: two backends, five-alias model ladder, real FAL integration, reference-image support on `mid` + `nano-banana`, per-call usage log, distribution verified via `uv tool install`, VISION.md + README. v0 is the still-gen primitive; the broader Parallax (HoP/Editor/Compose, manifest-first video pipeline) is explicitly not in v0 — see VISION.md.
+
+Pausing to avoid designing v1 schema without a concrete video brief driving it — spec ambiguity is the bottleneck (per CLAUDE.md), not implementation speed. Two open next-swings when picking up on `0.2.0`:
+
+1. **premium-ref via Flux Kontext Pro** — ~1 commit capstone on v0, completes the ref matrix. Pick this if v0.2.0 is meant as a cleanup bump on the still-gen primitive.
+2. **Start v1 in a new repo** — manifest-first video pipeline. Only start if a real video brief is in hand; designing the manifest schema in the abstract is the wrong move.
+
+If the pick is #2, `0.2.0` was the wrong branch name — v1 belongs in a separate repo per VISION.md's "v0 stays a standalone primitive that v1 consumes" framing. Reconsider before opening a PR.
+
 ## 2026-04-18 — [CHANGED] Distribution verified: `uv tool install` works
 Live-tested `uv tool install --python 3.11 --from <repo> parallax --force` on this machine. Installed binary at `~/.local/bin/parallax`, runs from any cwd, produces `output/` relative to cwd, writes sessions/usage to `~/.parallax/`. Both backends verified from the installed binary in `/tmp` with `PARALLAX_TEST_MODE=1`. Minimal README added with the install one-liner, env-var table, and model-alias table.
 
