@@ -10,8 +10,11 @@ from __future__ import annotations
 import os
 from typing import Any, Protocol
 
+from ..log import get_logger
 from ..sessions import Session
 from ..tools import TOOL_SCHEMAS, dispatch_tool
+
+log = get_logger("backends.anthropic_api")
 
 NAME = "anthropic-api"
 DEFAULT_MODEL = "claude-sonnet-4-6"
@@ -59,12 +62,15 @@ def run(
         client = Anthropic()
 
     session = Session.resume(session_id) if session_id else Session.create()
+    log.info("session: %s (%s)", session.session_id, "resumed" if session_id else "new")
+    log.info("session log: %s", session.path)
     session.add_user_message(brief)
 
     final_text_parts: list[str] = []
 
     try:
-        for _ in range(max_turns):
+        for turn_idx in range(max_turns):
+            log.debug("turn %d: calling model=%s", turn_idx + 1, model)
             response = client.messages.create(
                 model=model,
                 max_tokens=MAX_OUTPUT_TOKENS,
@@ -82,6 +88,7 @@ def run(
             assistant_content = [_to_dict(block) for block in response.content]
             stop_reason = getattr(response, "stop_reason", None)
             session.add_assistant_message(assistant_content, stop_reason)
+            log.debug("turn %d: stop_reason=%s, blocks=%d", turn_idx + 1, stop_reason, len(assistant_content))
 
             if stop_reason == "end_turn":
                 for block in assistant_content:

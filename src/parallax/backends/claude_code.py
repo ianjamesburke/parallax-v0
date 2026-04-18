@@ -12,9 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
+from ..log import get_logger
 from ..tools import dispatch_tool
+
+log = get_logger("backends.claude_code")
 
 NAME = "claude-code"
 MAX_TURNS = 20
@@ -50,7 +54,23 @@ def run(
     `query_fn` is dependency-injectable for hermetic tests — leave None in
     production to use the real SDK.
     """
-    return asyncio.run(_run_async(brief, session_id, query_fn=query_fn, max_turns=max_turns))
+    log.info("session: %s", "resuming " + session_id if session_id else "new")
+    result = asyncio.run(_run_async(brief, session_id, query_fn=query_fn, max_turns=max_turns))
+    if result.get("session_id"):
+        transcript = _transcript_path_hint(result["session_id"])
+        log.info("SDK transcript: %s", transcript)
+    return result
+
+
+def _transcript_path_hint(session_id: str) -> str:
+    """Best-effort path where claude-agent-sdk stores the full jsonl transcript.
+
+    The real sanitization rule is internal to the SDK; this hint is usually
+    correct, and ls-ing the parent dir is the fallback when it isn't.
+    """
+    cwd = Path.cwd()
+    sanitized = "-" + str(cwd).lstrip("/").replace("/", "-")
+    return str(Path.home() / ".claude" / "projects" / sanitized / f"{session_id}.jsonl")
 
 
 async def _run_async(
@@ -106,12 +126,14 @@ async def _run_async(
     errored = False
 
     async for message in runner(prompt=brief, options=options):
+        log.debug("sdk message: %s", type(message).__name__)
         if isinstance(message, SystemMessage):
             # init event carries the fresh session_id
             data = getattr(message, "data", {}) or {}
             sid = data.get("session_id") if isinstance(data, dict) else None
             if sid:
                 captured_session_id = sid
+                log.debug("sdk session_id captured: %s", sid)
         elif isinstance(message, AssistantMessage):
             for block in getattr(message, "content", []) or []:
                 if isinstance(block, TextBlock):

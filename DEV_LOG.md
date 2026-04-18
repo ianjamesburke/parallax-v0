@@ -2,6 +2,16 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-17 — [CHANGED] Runtime logging wired; default WARNING, -v INFO, -vv DEBUG
+Added `src/parallax/log.py` and a `-v/-vv` flag on the CLI (also `PARALLAX_LOG_LEVEL` env). At INFO you see: backend selected, session id + session-log path, each tool call with a truncated args summary, each tool result, and — on the claude-code path — the SDK's jsonl transcript path so you know exactly where to grep when behavior is off. DEBUG adds full args, full raw results, and per-SDK-message type.
+
+Caught via live invocation that I should have done before calling commit 1b shipped: both backends' hermetic tests were green, but neither had actually been executed end-to-end against real infra. Fixed by running test-mode `parallax run` on both backends before landing this commit. Verified: claude-code produces a real `~/.claude/projects/<sanitized-cwd>/<sid>.jsonl`, anthropic-api produces `~/.parallax/sessions/<sid>.ndjson`, and the logged SDK transcript path matches the actual file location.
+
+**Breaks if:** `parallax -v run --backend <x> --brief "..."` with `PARALLAX_TEST_MODE=1` emits no `parallax.tools: tool call` line on stderr, or the `parallax.backends.claude_code: SDK transcript` path doesn't correspond to an existing file on disk after the run.
+
+## 2026-04-17 — [GOTCHA] Hermetic tests are not enough — run the CLI live before claiming done
+Both backends had passing hermetic tests (FakeAnthropic / injected async query_fn) but neither had been executed end-to-end against the real Anthropic API / real claude-agent-sdk until the user asked "did you run it yourself?". Reading the code and green unit tests is not the same as proving the wiring works. Going forward: every backend-touching commit must include a `PARALLAX_TEST_MODE=1 uv run parallax run --backend <each>` invocation before claiming the commit is shipped. Test shim keeps this cheap — no FAL, no spend — so there is no excuse.
+
 ## 2026-04-17 — [CHANGED] Two backends behind a dispatcher; default = Claude subscription
 Added the `claude-code` backend (default) via `claude-agent-sdk`, which routes through the user's `claude` CLI and uses their subscription — no API key, no extra billing. The existing anthropic-api backend is still selectable via `--backend anthropic-api` or `PARALLAX_BACKEND=anthropic-api` for CI / non-subscription use. Dispatcher lives in `src/parallax/backends/__init__.py`; selection is explicit-arg > env > default, with fail-fast `check_available()` on the selected backend (claude CLI on PATH / ANTHROPIC_API_KEY set). No silent fallback.
 

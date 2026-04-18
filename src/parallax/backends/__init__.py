@@ -10,6 +10,10 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Protocol
 
+from ..log import get_logger
+
+log = get_logger("backends")
+
 DEFAULT_BACKEND = "claude-code"
 AVAILABLE_BACKENDS = ("claude-code", "anthropic-api")
 
@@ -31,6 +35,7 @@ def select(name: str | None = None) -> BackendModule:
             f"Unknown backend: {backend_name!r}. Must be one of {AVAILABLE_BACKENDS}."
         )
     backend.check_available()
+    log.info("backend selected: %s", backend.NAME)
     return backend  # type: ignore[return-value]
 
 
