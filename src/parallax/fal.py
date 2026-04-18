@@ -99,6 +99,11 @@ def generate(
         )
 
     if refs:
+        if len(refs) > spec.max_refs:
+            raise RuntimeError(
+                f"Model {spec.alias!r} accepts at most {spec.max_refs} reference image(s); "
+                f"got {len(refs)}."
+            )
         ref_urls: list[str] = []
         for p in refs:
             try:
@@ -107,8 +112,10 @@ def generate(
                 raise RuntimeError(f"FAL upload failed for {p}: {type(e).__name__}: {e}") from e
             ref_urls.append(url)
         fal_id = spec.edit_fal_id
-        assert fal_id is not None  # guarded by supports_reference
-        args: dict[str, Any] = {"prompt": prompt, "image_urls": ref_urls}
+        param = spec.ref_param_name
+        assert fal_id is not None and param is not None  # guarded by supports_reference
+        args: dict[str, Any] = {"prompt": prompt}
+        args[param] = ref_urls if spec.refs_are_list else ref_urls[0]
         log.info("fal call: %s prompt=%r refs=%d", fal_id, prompt[:60], len(ref_urls))
     else:
         fal_id = spec.fal_id

@@ -2,6 +2,15 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-18 — [CHANGED] Reference-image support extended to `mid` (flux/dev img2img)
+`ModelSpec` gained `ref_param_name: str | None` and `max_refs: int` so each model can declare both the edit endpoint's arg name and the cardinality. `fal.generate` dispatches: singular-param models get `args[param] = url_str`; list-param models get `args[param] = list_of_urls`. `tools._validate_refs` rejects over-the-limit refs at the tool boundary so the agent pivots before any upload happens.
+
+Current support matrix: `mid` (flux/dev/image-to-image, `image_url`, max 1), `nano-banana` (gemini-25-flash-image/edit, `image_urls`, max 8). `draft`, `premium`, `grok` still raise — adding each is a pricing.py patch plus one live verify, no dispatch changes.
+
+Rejected: a per-spec callable that shapes args arbitrarily. `ref_param_name` + `max_refs` covers the two shapes we've seen and will cover the Flux Kontext family too — we'll only need the callable if a future model wants more than refs (e.g. a separate `mask_url`), and that's an additive field, not a rewrite.
+
+**Breaks if:** calling `generate_image(model="mid", reference_images=[<real jpg>])` with `FAL_KEY` set doesn't produce a file in `output/`, or passes `image_urls` (plural) to `fal-ai/flux/dev/image-to-image` — that endpoint only knows `image_url` and will silently ignore or error on an unknown field.
+
 ## 2026-04-18 — [CHANGED] Reference-image support (nano-banana only for v0)
 `generate_image` gains an optional `reference_images: list[str]` of local paths. When supplied, we upload each via `fal_client.upload_file`, route to the model's `edit_fal_id` sibling endpoint, and pass the returned URLs as `image_urls`. Only nano-banana (`fal-ai/gemini-25-flash-image/edit`) supports this in v0 — Flux Kontext/redux/img2img and a grok edit path are per-endpoint work we'll add one at a time as demand shows up, not speculatively. Adding them later is purely additive: set `edit_fal_id` on the spec and the dispatch just works.
 

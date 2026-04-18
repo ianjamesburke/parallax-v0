@@ -116,6 +116,11 @@ def _validate_refs(reference_images: list[str] | None, spec: ModelSpec) -> list[
             f"Model {spec.alias!r} does not support reference_images. "
             f"Use one of: {', '.join(a for a, s in _ref_capable().items())}."
         )
+    if len(reference_images) > spec.max_refs:
+        raise ValueError(
+            f"Model {spec.alias!r} accepts at most {spec.max_refs} reference image(s); "
+            f"got {len(reference_images)}."
+        )
     resolved: list[Path] = []
     for ref in reference_images:
         p = Path(ref).expanduser()

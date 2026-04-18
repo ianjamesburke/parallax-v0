@@ -25,7 +25,10 @@ class ModelSpec:
     price_usd: float
     price_unit: Literal["megapixel", "image"]
     description: str
-    edit_fal_id: str | None = None  # sibling endpoint to use when reference_images is passed
+    # Reference-image support (optional). To enable refs for a model, set all four.
+    edit_fal_id: str | None = None  # sibling endpoint used when refs are provided
+    ref_param_name: str | None = None  # e.g. "image_url" (single) or "image_urls" (list)
+    max_refs: int = 0  # max number of reference images accepted; 0 = not supported
 
     @property
     def price_usd_per_image(self) -> float:
@@ -34,7 +37,12 @@ class ModelSpec:
 
     @property
     def supports_reference(self) -> bool:
-        return self.edit_fal_id is not None
+        return self.edit_fal_id is not None and self.max_refs > 0
+
+    @property
+    def refs_are_list(self) -> bool:
+        """Whether the edit endpoint takes refs as a list (True) or a single string (False)."""
+        return self.max_refs != 1
 
 
 MODELS: dict[str, ModelSpec] = {
@@ -53,6 +61,9 @@ MODELS: dict[str, ModelSpec] = {
         price_usd=0.025,
         price_unit="megapixel",
         description="Balanced quality and speed. Default choice when the user has not specified a tier.",
+        edit_fal_id="fal-ai/flux/dev/image-to-image",
+        ref_param_name="image_url",
+        max_refs=1,
     ),
     "premium": ModelSpec(
         alias="premium",
@@ -68,8 +79,10 @@ MODELS: dict[str, ModelSpec] = {
         tier="latest",
         price_usd=0.039,
         price_unit="image",
-        description="Google Gemini 2.5 Flash Image. Use when the user asks for it, for Google-lineage realism, or when reference images are provided.",
+        description="Google Gemini 2.5 Flash Image. Use when the user asks for it, for Google-lineage realism, or when multiple reference images need to be combined.",
         edit_fal_id="fal-ai/gemini-25-flash-image/edit",
+        ref_param_name="image_urls",
+        max_refs=8,
     ),
     "grok": ModelSpec(
         alias="grok",
@@ -98,7 +111,12 @@ def alias_guidance() -> str:
     """Formatted guidance string for the agent's system prompt."""
     lines = ["Available image models. Pass exactly one of these as the `model` argument:"]
     for spec in MODELS.values():
-        refs = " — supports reference_images" if spec.supports_reference else ""
+        if not spec.supports_reference:
+            refs = ""
+        elif spec.max_refs == 1:
+            refs = " — supports reference_images (max 1)"
+        else:
+            refs = f" — supports reference_images (max {spec.max_refs})"
         lines.append(
             f"- {spec.alias}: {spec.description} (~${spec.price_usd_per_image:.3f}/image){refs}"
         )

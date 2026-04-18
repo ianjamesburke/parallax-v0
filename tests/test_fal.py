@@ -44,6 +44,7 @@ def test_generate_happy_path(tmp_path):
 def test_generate_with_reference_images_routes_to_edit_endpoint(tmp_path):
     spec = resolve("nano-banana")
     assert spec.supports_reference and spec.edit_fal_id
+    assert spec.refs_are_list
 
     ref1 = tmp_path / "ref1.png"
     ref1.write_bytes(b"x")
@@ -84,6 +85,58 @@ def test_generate_with_reference_images_routes_to_edit_endpoint(tmp_path):
         "https://v2.fal.media/uploaded/ref1.png",
         "https://v2.fal.media/uploaded/ref2.jpg",
     ]
+
+
+def test_generate_mid_img2img_uses_single_image_url(tmp_path):
+    spec = resolve("mid")
+    assert spec.supports_reference
+    assert not spec.refs_are_list
+    assert spec.max_refs == 1
+
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(b"x")
+
+    calls: list[tuple[str, dict]] = []
+
+    def runner(fal_id, args):
+        calls.append((fal_id, args))
+        return {"images": [{"url": "https://v2.fal.media/output/i2i.png"}]}
+
+    def downloader(url, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"\x89PNG")
+
+    fal.generate(
+        "same but red",
+        spec,
+        reference_images=[ref],
+        runner=runner,
+        downloader=downloader,
+        uploader=lambda p: f"https://v2.fal.media/uploaded/{p.name}",
+    )
+    fal_id, args = calls[0]
+    assert fal_id == "fal-ai/flux/dev/image-to-image"
+    # Singular param, string value (not a list)
+    assert args["image_url"] == "https://v2.fal.media/uploaded/ref.png"
+    assert "image_urls" not in args
+    assert args["prompt"] == "same but red"
+
+
+def test_generate_exceeds_max_refs_raises(tmp_path):
+    spec = resolve("mid")  # max_refs = 1
+    r1 = tmp_path / "a.png"
+    r1.write_bytes(b"x")
+    r2 = tmp_path / "b.png"
+    r2.write_bytes(b"y")
+    with pytest.raises(RuntimeError, match="at most 1 reference image"):
+        fal.generate(
+            "x",
+            spec,
+            reference_images=[r1, r2],
+            runner=lambda f, a: {"images": [{"url": "x"}]},
+            downloader=lambda u, d: None,
+            uploader=lambda p: "x",
+        )
 
 
 def test_generate_refs_on_unsupported_model_raises():
