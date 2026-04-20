@@ -2,6 +2,14 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-20 — [GOTCHA] ffmpeg drawtext filter absent in Homebrew's minimal build
+Homebrew ffmpeg 8.1 on this machine was built without `--enable-libfreetype`, so `drawtext` filter isn't in the binary. `burn_captions` was failing with "No such filter: 'drawtext'" on every run. Fixed by adding `_ffmpeg_has_drawtext()` probe and a Pillow-based fallback (`_burn_captions_pillow`) that decodes frames via rawvideo pipe, draws text with PIL/ImageDraw, re-encodes, then muxes audio back. The drawtext path is preferred when available (faster). Full pipeline now completes end-to-end in TEST_MODE.
+
+**What NOT to do:** assume `drawtext` is universally available — it requires a ffmpeg built with `--enable-libfreetype`. The Homebrew formula used to include it, but the current build on this machine does not. Always probe first.
+
+## 2026-04-20 — [CHANGED] video-pipeline-20260420: full pipeline e2e test passes
+scan_project_folder → generate_image ×6 → generate_voiceover → align_scenes → ken_burns_assemble → burn_captions all succeed in PARALLAX_TEST_MODE=1. Final captioned video at `output/aria_ad_final.mp4` (2MB, 20.8s, 1080×1920). Agent followed pipeline order correctly. No real API calls made in test mode.
+
 ## 2026-04-18 — [FUTURE] Next swings: video support + multi-user/multi-project web UI
 Two big tracks ahead of v0, explicitly not v0-scoped:
 
