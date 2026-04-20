@@ -453,10 +453,21 @@ def _make_kb_clip(
 # burn_captions
 # ---------------------------------------------------------------------------
 
+_FFMPEG_FULL = "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg"
+
+
+def _get_ffmpeg() -> str:
+    """Return the best available ffmpeg binary — ffmpeg-full (has drawtext) first."""
+    import shutil
+    if Path(_FFMPEG_FULL).exists():
+        return _FFMPEG_FULL
+    return shutil.which("ffmpeg") or "ffmpeg"
+
+
 def _ffmpeg_has_drawtext() -> bool:
-    """Return True if the system ffmpeg was compiled with libfreetype (drawtext filter)."""
+    """Return True if the resolved ffmpeg binary supports the drawtext filter."""
     result = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-filters"],
+        [_get_ffmpeg(), "-hide_banner", "-filters"],
         capture_output=True, text=True,
     )
     return "drawtext" in result.stdout
@@ -536,7 +547,7 @@ def _burn_captions_drawtext(
         )
     filter_str = ",".join(filters)
     result = subprocess.run(
-        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        [_get_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
          "-i", video_path,
          "-vf", filter_str,
          "-c:v", "libx264", "-preset", "fast", "-crf", "18",
