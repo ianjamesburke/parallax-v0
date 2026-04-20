@@ -229,15 +229,32 @@ def scan_project_folder(folder_path: str) -> str:
             char_path = sorted(imgs)[0]
             log.info("Multiple images found; using %s as character reference", char_path.name)
 
+    # Create versioned output directory: {folder}/.parallax/output/v1/, v2/, ...
+    parallax_dir = folder / ".parallax"
+    output_base = parallax_dir / "output"
+    output_base.mkdir(parents=True, exist_ok=True)
+    existing_versions = []
+    for d in output_base.iterdir():
+        if d.is_dir() and d.name.startswith("v"):
+            try:
+                existing_versions.append(int(d.name[1:]))
+            except ValueError:
+                pass
+    version = max(existing_versions, default=0) + 1
+    versioned_output = output_base / f"v{version}"
+    versioned_output.mkdir(parents=True, exist_ok=True)
+
     result: dict[str, Any] = {
         "folder": str(folder),
         "mode": mode,
+        "version": version,
+        "output_dir": str(versioned_output),
         "script_path": str(script_path) if script_path else None,
         "script_text": script_path.read_text().strip() if script_path else None,
         "character_image_path": str(char_path) if char_path else None,
         "clips": {str(num): path for num, path in sorted(numbered_clips.items())} if mode == "video_clips" else {},
     }
-    log.info("scan_project_folder: mode=%s script=%s clips=%d", mode, script_path, len(numbered_clips))
+    log.info("scan_project_folder: mode=%s script=%s clips=%d version=v%d", mode, script_path, len(numbered_clips), version)
     return json.dumps(result)
 
 

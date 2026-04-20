@@ -55,9 +55,10 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "name": "scan_project_folder",
         "description": (
             "Scan a project folder for a script and either numbered clips or a character image. "
-            "Returns JSON with: mode ('video_clips' or 'ken_burns'), script_path, script_text, "
-            "character_image_path, clips (dict of number→path, present in video_clips mode), and folder. "
-            "Call this first when given a folder path as the creative brief."
+            "Creates a versioned output directory at {folder}/.parallax/output/v{N}/. "
+            "Returns JSON with: mode, version, output_dir, script_path, script_text, "
+            "character_image_path, clips (dict of number→path in video_clips mode), and folder. "
+            "Call this first when given a folder path. Use output_dir for ALL subsequent tool outputs."
         ),
         "input_schema": {
             "type": "object",

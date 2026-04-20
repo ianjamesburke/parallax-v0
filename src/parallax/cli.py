@@ -103,6 +103,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Headline text color. Default: black.",
     )
 
+    chat_p = sub.add_parser("chat", help="Start an interactive session with the Parallax agent.")
+    chat_p.add_argument("--resume", dest="session_id", default=None, help="Resume a session by ID.")
+    chat_p.add_argument(
+        "--backend",
+        choices=AVAILABLE_BACKENDS,
+        default=None,
+        help="Which backend to use.",
+    )
+
     voices_p = sub.add_parser("voices", help="Browse ElevenLabs voices with bios.")
     voices_p.add_argument(
         "--filter", default=None, dest="voice_filter",
@@ -147,6 +156,9 @@ def main(argv: list[str] | None = None) -> int:
             print(result["text"])
         return 0
 
+    if args.command == "chat":
+        return _run_chat(args.session_id, args.backend)
+
     if args.command == "voices":
         return _print_voices(args.voice_filter, args.limit)
 
@@ -158,6 +170,32 @@ def main(argv: list[str] | None = None) -> int:
         return _run_update()
 
     return 2
+
+
+def _run_chat(session_id: str | None, backend: str | None) -> int:
+    if session_id:
+        print(f"Resuming session {session_id}. Type your message, Ctrl+C or empty line to exit.\n")
+    else:
+        print("Parallax chat. Type your message, Ctrl+C or empty line to exit.\n")
+    try:
+        while True:
+            try:
+                user_input = input("You: ").strip()
+            except EOFError:
+                break
+            if not user_input:
+                break
+            result = backend_run(brief=user_input, session_id=session_id, backend=backend)
+            session_id = result["session_id"]
+            if result["text"]:
+                print(f"\nParallax: {result['text']}\n")
+            else:
+                print(f"\n[session {session_id}]\n")
+    except KeyboardInterrupt:
+        print()
+    if session_id:
+        print(f"Session: {session_id}")
+    return 0
 
 
 def _print_voices(filter_str: str | None, limit: int) -> int:
