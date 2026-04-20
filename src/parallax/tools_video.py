@@ -453,6 +453,15 @@ def _make_kb_clip(
 # burn_captions
 # ---------------------------------------------------------------------------
 
+def _ffmpeg_has_drawtext() -> bool:
+    """Return True if the system ffmpeg was compiled with libfreetype (drawtext filter)."""
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-filters"],
+        capture_output=True, text=True,
+    )
+    return "drawtext" in result.stdout
+
+
 def burn_captions(
     video_path: str,
     words_json: str,
@@ -460,7 +469,10 @@ def burn_captions(
     words_per_chunk: int = 3,
     fontsize: int = 70,
 ) -> str:
-    """Burn word-by-word captions onto a video using ffmpeg drawtext.
+    """Burn word-by-word captions onto a video.
+
+    Tries ffmpeg drawtext first. Falls back to Pillow frame-by-frame rendering
+    when ffmpeg lacks libfreetype (e.g. minimal Homebrew builds).
 
     words_json: JSON string of [{word, start, end}] or path to vo_words.json
     Returns captioned video path.
@@ -490,10 +502,23 @@ def burn_captions(
             "end": group[-1]["end"],
         })
 
-    # Find font
-    font = _find_font()
+    if _ffmpeg_has_drawtext():
+        _burn_captions_drawtext(video_path, chunks, out, fontsize)
+    else:
+        log.info("burn_captions: drawtext unavailable, using Pillow fallback")
+        _burn_captions_pillow(video_path, chunks, out, fontsize)
 
-    # Build drawtext filter chain
+    log.info("burn_captions: wrote %s", out)
+    return str(out)
+
+
+def _burn_captions_drawtext(
+    video_path: str,
+    chunks: list[dict],
+    out: Path,
+    fontsize: int,
+) -> None:
+    font = _find_font()
     filters = []
     for chunk in chunks:
         text = chunk["text"].replace("'", "\u2019").replace(":", "\\:").replace("\\", "\\\\")
@@ -509,9 +534,7 @@ def burn_captions(
             f":y=h-th-160"
             f":enable='between(t,{start},{end})'"
         )
-
     filter_str = ",".join(filters)
-
     result = subprocess.run(
         ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
          "-i", video_path,
@@ -522,10 +545,126 @@ def burn_captions(
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"burn_captions ffmpeg failed:\n{result.stderr[:500]}")
+        raise RuntimeError(f"burn_captions (drawtext) failed:\n{result.stderr[:500]}")
 
-    log.info("burn_captions: wrote %s", out)
-    return str(out)
+
+def _burn_captions_pillow(
+    video_path: str,
+    chunks: list[dict],
+    out: Path,
+    fontsize: int,
+) -> None:
+    """Pillow-based caption burn: decode each frame, draw text, pipe to ffmpeg."""
+    from PIL import Image, ImageDraw, ImageFont  # type: ignore[import]
+
+    # Probe video for width/height/fps
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height,r_frame_rate",
+         "-of", "csv=p=0", video_path],
+        capture_output=True, text=True,
+    )
+    parts = probe.stdout.strip().split(",")
+    if len(parts) < 3:
+        raise RuntimeError(f"ffprobe failed to read video info: {probe.stderr[:200]}")
+    vid_w, vid_h = int(parts[0]), int(parts[1])
+    fps_num, fps_den = (int(x) for x in parts[2].split("/"))
+    fps = fps_num / fps_den
+
+    # Load font
+    pil_font: Any = None
+    for candidate in (
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ):
+        if Path(candidate).exists():
+            try:
+                pil_font = ImageFont.truetype(candidate, fontsize)
+                break
+            except OSError:
+                continue
+    if pil_font is None:
+        pil_font = ImageFont.load_default()
+
+    # Build chunk lookup: frame_index → text
+    def text_at(t: float) -> str:
+        for chunk in chunks:
+            if chunk["start"] <= t < chunk["end"]:
+                return chunk["text"]
+        return ""
+
+    # Decode raw frames from input video
+    decode = subprocess.Popen(
+        ["ffmpeg", "-i", video_path, "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
+         "-hide_banner", "-loglevel", "error"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+
+    # Encode output with audio mux in a second pass — write frames to tmp file first
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        no_audio = Path(tmp_dir) / "captioned_no_audio.mp4"
+        encode = subprocess.Popen(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "rawvideo", "-vcodec", "rawvideo",
+             "-s", f"{vid_w}x{vid_h}", "-pix_fmt", "rgb24", "-r", str(fps),
+             "-i", "pipe:0",
+             "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
+             str(no_audio)],
+            stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        assert encode.stdin is not None
+        assert decode.stdout is not None
+
+        frame_bytes = vid_w * vid_h * 3
+        frame_idx = 0
+        try:
+            while True:
+                raw = decode.stdout.read(frame_bytes)
+                if len(raw) < frame_bytes:
+                    break
+                img = Image.frombytes("RGB", (vid_w, vid_h), raw)
+                t = frame_idx / fps
+
+                caption = text_at(t)
+                if caption:
+                    draw = ImageDraw.Draw(img)
+                    bbox = draw.textbbox((0, 0), caption, font=pil_font)
+                    tw = bbox[2] - bbox[0]
+                    th = bbox[3] - bbox[1]
+                    x = (vid_w - tw) // 2
+                    y = vid_h - th - 160
+                    # Draw stroke
+                    for dx, dy in [(-3, -3), (3, -3), (-3, 3), (3, 3), (0, -3), (0, 3), (-3, 0), (3, 0)]:
+                        draw.text((x + dx, y + dy), caption, font=pil_font, fill=(0, 0, 0))
+                    draw.text((x, y), caption, font=pil_font, fill=(255, 255, 255))
+
+                encode.stdin.write(img.tobytes())
+                frame_idx += 1
+        except Exception as e:
+            decode.kill()
+            encode.kill()
+            raise RuntimeError(f"Pillow caption burn failed at frame {frame_idx}: {e}") from e
+        finally:
+            encode.stdin.close()
+            decode.stdout.close()
+
+        decode.wait()
+        encode.wait()
+        if encode.returncode != 0:
+            raise RuntimeError(f"Pillow caption encode failed: {encode.stderr.read()[:300]}")  # type: ignore[union-attr]
+
+        # Mux audio back in
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-i", str(no_audio), "-i", video_path,
+             "-map", "0:v", "-map", "1:a",
+             "-c:v", "copy", "-c:a", "copy", "-shortest",
+             str(out)],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Caption audio mux failed:\n{result.stderr[:300]}")
 
 
 def _find_font() -> str:
