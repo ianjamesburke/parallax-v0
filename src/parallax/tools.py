@@ -9,6 +9,7 @@ from .context import current_backend, current_session_id
 from .log import get_logger
 from .pricing import ALIASES, ModelSpec, resolve
 from .shim import is_test_mode, render_mock_image
+from . import tools_video
 
 log = get_logger("tools")
 
@@ -50,6 +51,126 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "required": ["prompt", "model"],
         },
     },
+    {
+        "name": "scan_project_folder",
+        "description": (
+            "Scan a project folder for a script file and character reference image. "
+            "Returns JSON with script_path, script_text, character_image_path, and folder. "
+            "Call this first when given a folder path as the creative brief."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "folder_path": {"type": "string", "description": "Absolute path to the project folder."},
+            },
+            "required": ["folder_path"],
+        },
+    },
+    {
+        "name": "generate_voiceover",
+        "description": (
+            "Generate a voiceover from text using ElevenLabs at a given speed. "
+            "Returns JSON with audio_path, words_path, words (list of {word, start, end}), and total_duration_s. "
+            "Default voice is 'george'. Default speed is 1.1. Available voices: george, rachel, domi, bella, daniel, arnold."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Script text to speak."},
+                "voice": {"type": "string", "description": "Voice name. Default: george."},
+                "speed": {"type": "number", "description": "Playback speed multiplier. Default: 1.1."},
+                "out_dir": {"type": "string", "description": "Directory to save audio files. Default: output/."},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "align_scenes",
+        "description": (
+            "Assign start_s, end_s, duration_s to each scene based on its vo_text word count "
+            "and the voiceover word timestamps. Call after generate_voiceover. "
+            "Returns updated scenes JSON list."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "scenes_json": {
+                    "type": "string",
+                    "description": "JSON array of scene objects, each with vo_text field.",
+                },
+                "words_json": {
+                    "type": "string",
+                    "description": "JSON string of word timestamps from generate_voiceover (words array or path to vo_words.json).",
+                },
+            },
+            "required": ["scenes_json", "words_json"],
+        },
+    },
+    {
+        "name": "ken_burns_assemble",
+        "description": (
+            "Assemble a Ken Burns draft video from stills + aligned scene durations and a voiceover. "
+            "Each scene gets a smooth zoom/pan motion. Returns the output video path. "
+            "Use resolution '1080x1920' for vertical (default) or '1920x1080' for landscape."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "scenes_json": {
+                    "type": "string",
+                    "description": "JSON array of scene objects with still_path and duration_s.",
+                },
+                "audio_path": {"type": "string", "description": "Path to voiceover audio file."},
+                "output_path": {"type": "string", "description": "Output video path. Default: output/ken_burns_draft.mp4."},
+                "resolution": {"type": "string", "description": "WxH resolution. Default: 1080x1920."},
+            },
+            "required": ["scenes_json", "audio_path"],
+        },
+    },
+    {
+        "name": "burn_captions",
+        "description": (
+            "Burn word-by-word captions onto a video using word timestamps. "
+            "Returns the captioned video path."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "video_path": {"type": "string", "description": "Input video path."},
+                "words_json": {
+                    "type": "string",
+                    "description": "Path to vo_words.json, or JSON string of [{word, start, end}].",
+                },
+                "output_path": {"type": "string", "description": "Output path. Default: input_captioned.mp4."},
+                "words_per_chunk": {"type": "integer", "description": "Words per caption chunk. Default: 3."},
+                "fontsize": {"type": "integer", "description": "Caption font size. Default: 70."},
+            },
+            "required": ["video_path", "words_json"],
+        },
+    },
+    {
+        "name": "write_manifest",
+        "description": "Write a manifest dict (JSON string) to a YAML file. Returns the file path.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "manifest_json": {"type": "string", "description": "JSON string of the manifest dict."},
+                "manifest_path": {"type": "string", "description": "Output path for the YAML file."},
+            },
+            "required": ["manifest_json", "manifest_path"],
+        },
+    },
+    {
+        "name": "read_manifest",
+        "description": "Read a manifest YAML file and return its contents as a JSON string.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "manifest_path": {"type": "string", "description": "Path to manifest YAML file."},
+            },
+            "required": ["manifest_path"],
+        },
+    },
 ]
 
 
@@ -59,6 +180,20 @@ def dispatch_tool(name: str, args: dict[str, Any]) -> str:
     try:
         if name == "generate_image":
             result = generate_image(**args)
+        elif name == "scan_project_folder":
+            result = tools_video.scan_project_folder(**args)
+        elif name == "generate_voiceover":
+            result = tools_video.generate_voiceover(**args)
+        elif name == "align_scenes":
+            result = tools_video.align_scenes(**args)
+        elif name == "ken_burns_assemble":
+            result = tools_video.ken_burns_assemble(**args)
+        elif name == "burn_captions":
+            result = tools_video.burn_captions(**args)
+        elif name == "write_manifest":
+            result = tools_video.write_manifest(**args)
+        elif name == "read_manifest":
+            result = tools_video.read_manifest(**args)
         else:
             raise ValueError(f"Unknown tool: {name!r}")
     except Exception as e:
