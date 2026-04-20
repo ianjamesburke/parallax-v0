@@ -33,6 +33,86 @@ def main(argv: list[str] | None = None) -> int:
         help="Which backend to use (default: claude-code; override with PARALLAX_BACKEND env).",
     )
 
+    # --- Voiceover ---
+    run_p.add_argument(
+        "--voice",
+        default=None,
+        help=(
+            "ElevenLabs voice name (partial match), full name, or raw voice ID. "
+            "Default: george. Run 'parallax voices' to browse all 700+ options."
+        ),
+    )
+    run_p.add_argument(
+        "--speed", type=float, default=None,
+        help="Voiceover speed multiplier. Default: 1.1.",
+    )
+
+    # --- Video ---
+    run_p.add_argument(
+        "--resolution",
+        choices=["1080x1920", "1920x1080"],
+        default=None,
+        help="Output resolution. Default: 1080x1920 (vertical).",
+    )
+
+    # --- Image generation ---
+    run_p.add_argument(
+        "--image-model",
+        choices=["draft", "mid", "premium", "nano-banana", "grok"],
+        default=None,
+        dest="image_model",
+        help="Image generation tier. Default: mid.",
+    )
+
+    # --- Captions ---
+    run_p.add_argument(
+        "--caption-style",
+        choices=["bangers", "impact", "bebas", "anton", "clean"],
+        default=None,
+        dest="caption_style",
+        help="Caption font/style preset. Default: anton.",
+    )
+    run_p.add_argument(
+        "--fontsize", type=int, default=None,
+        help="Caption font size in pixels. Default: 70.",
+    )
+    run_p.add_argument(
+        "--words-per-chunk", type=int, default=None, dest="words_per_chunk",
+        help="Words per caption chunk. Default: 1 (one word at a time).",
+    )
+    run_p.add_argument(
+        "--no-captions", action="store_true", dest="no_captions",
+        help="Skip caption burning entirely.",
+    )
+
+    # --- Headline ---
+    run_p.add_argument(
+        "--headline", default=None,
+        help="Overlay a persistent headline title (e.g. 'SHE TRAINS ALONE'). Omit to skip.",
+    )
+    run_p.add_argument(
+        "--headline-fontsize", type=int, default=None, dest="headline_fontsize",
+        help="Headline font size. Default: 64.",
+    )
+    run_p.add_argument(
+        "--headline-bg", default=None, dest="headline_bg",
+        help="Headline background box color. Default: white.",
+    )
+    run_p.add_argument(
+        "--headline-color", default=None, dest="headline_color",
+        help="Headline text color. Default: black.",
+    )
+
+    voices_p = sub.add_parser("voices", help="Browse ElevenLabs voices with bios.")
+    voices_p.add_argument(
+        "--filter", default=None, dest="voice_filter",
+        help="Filter by name, gender, accent, or use-case (partial, case-insensitive).",
+    )
+    voices_p.add_argument(
+        "--limit", type=int, default=20,
+        help="Max voices to show (default: 20). Use 0 for all.",
+    )
+
     usage_p = sub.add_parser("usage", help="Summarize per-model and per-session usage.")
     usage_p.add_argument(
         "--include-test",
@@ -57,11 +137,18 @@ def main(argv: list[str] | None = None) -> int:
         check_for_update()
 
     if args.command == "run":
-        result = backend_run(brief=args.brief, session_id=args.session_id, backend=args.backend)
+        brief = args.brief
+        overrides = _build_overrides(args)
+        if overrides:
+            brief = f"{brief}\n\n{overrides}"
+        result = backend_run(brief=brief, session_id=args.session_id, backend=args.backend)
         print(f"[session {result['session_id']}]")
         if result["text"]:
             print(result["text"])
         return 0
+
+    if args.command == "voices":
+        return _print_voices(args.voice_filter, args.limit)
 
     if args.command == "usage":
         _print_usage(usage.summarize(include_test=args.include_test))
@@ -71,6 +158,91 @@ def main(argv: list[str] | None = None) -> int:
         return _run_update()
 
     return 2
+
+
+def _print_voices(filter_str: str | None, limit: int) -> int:
+    import os
+    key = os.environ.get("AI_VIDEO_ELEVENLABS_KEY") or os.environ.get("ELEVENLABS_API_KEY")
+    if not key:
+        print(
+            "ElevenLabs key required: set AI_VIDEO_ELEVENLABS_KEY or ELEVENLABS_API_KEY",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        from elevenlabs.client import ElevenLabs
+        client = ElevenLabs(api_key=key)
+        resp = client.voices.get_all()
+    except Exception as e:
+        print(f"Failed to fetch voices: {e}", file=sys.stderr)
+        return 1
+
+    voices = resp.voices
+    if filter_str:
+        needle = filter_str.lower()
+        voices = [
+            v for v in voices
+            if needle in (v.name or "").lower()
+            or needle in (v.description or "").lower()
+            or needle in str(v.labels or {}).lower()
+        ]
+
+    total = len(voices)
+    if limit > 0:
+        voices = voices[:limit]
+
+    print(f"\n{'ID':<24} {'Name':<36} {'Gender':<8} {'Accent':<14} Use case")
+    print("-" * 100)
+    for v in voices:
+        labels = v.labels or {}
+        gender = labels.get("gender", "")
+        accent = labels.get("accent", "")
+        use_case = labels.get("use_case", "")
+        name = (v.name or "")[:35]
+        print(f"{v.voice_id:<24} {name:<36} {gender:<8} {accent:<14} {use_case}")
+        if v.description:
+            print(f"  {v.description[:90]}")
+
+    shown = len(voices)
+    if filter_str:
+        print(f"\n{shown} of {total} voices match '{filter_str}'.", end="")
+    else:
+        print(f"\nShowing {shown} of {total} total voices.", end="")
+    print(" Pass --voice NAME or --voice ID to use one.\n")
+    return 0
+
+
+def _build_overrides(args: argparse.Namespace) -> str:
+    """Build a pipeline-overrides block from CLI flags. Only includes explicitly set values."""
+    lines: list[str] = []
+    if args.voice:
+        lines.append(f"voice: {args.voice}")
+    if args.speed is not None:
+        lines.append(f"speed: {args.speed}")
+    if args.resolution:
+        lines.append(f"resolution: {args.resolution}")
+    if args.image_model:
+        lines.append(f"image_model: {args.image_model}")
+    if args.no_captions:
+        lines.append("captions: skip")
+    else:
+        if args.caption_style:
+            lines.append(f"caption_style: {args.caption_style}")
+        if args.fontsize is not None:
+            lines.append(f"fontsize: {args.fontsize}")
+        if args.words_per_chunk is not None:
+            lines.append(f"words_per_chunk: {args.words_per_chunk}")
+    if args.headline:
+        lines.append(f"headline: {args.headline}")
+        if args.headline_fontsize is not None:
+            lines.append(f"headline_fontsize: {args.headline_fontsize}")
+        if args.headline_bg:
+            lines.append(f"headline_bg: {args.headline_bg}")
+        if args.headline_color:
+            lines.append(f"headline_color: {args.headline_color}")
+    if not lines:
+        return ""
+    return "---PIPELINE OVERRIDES (apply these exactly, override all defaults)---\n" + "\n".join(lines) + "\n---"
 
 
 def _run_update() -> int:

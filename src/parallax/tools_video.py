@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -21,6 +22,10 @@ from .shim import is_test_mode, output_dir
 
 log = get_logger("tools_video")
 
+# Offline shorthand aliases → ElevenLabs voice IDs.
+# These are common voices kept here so the tool works without a network call
+# when a well-known shorthand is used. For anything else, _resolve_voice()
+# fetches the full voice list and matches by name.
 VOICE_IDS: dict[str, str] = {
     "george": "JBFqnCBsd6RMkjVDRZzb",
     "rachel": "21m00Tcm4TlvDq8ikWAM",
@@ -30,19 +35,151 @@ VOICE_IDS: dict[str, str] = {
     "arnold": "VR6AewLTigWG4xSOukaG",
 }
 
+_RAW_ID_MIN_LEN = 18  # ElevenLabs IDs are 20 alphanumeric chars
+
+
+def _resolve_voice(voice: str, api_key: str) -> str:
+    """Resolve a voice name or ID to an ElevenLabs voice_id.
+
+    Resolution order:
+      1. Offline alias dict (e.g. 'george') — no API call needed.
+      2. Raw voice ID — looks like 18+ alphanumeric chars, use as-is.
+      3. Live ElevenLabs name match — fetches voice list, matches by name
+         (exact first, then partial case-insensitive).
+    Raises ValueError with a helpful message if no match is found.
+    """
+    # 1. Known alias
+    alias_id = VOICE_IDS.get(voice.lower())
+    if alias_id:
+        return alias_id
+
+    # 2. Looks like a raw voice ID (alphanumeric, no spaces, long enough)
+    if len(voice) >= _RAW_ID_MIN_LEN and voice.replace("-", "").isalnum():
+        return voice
+
+    # 3. Fetch and match by name
+    try:
+        from elevenlabs.client import ElevenLabs
+        client = ElevenLabs(api_key=api_key)
+        resp = client.voices.get_all()
+        voices = resp.voices
+    except Exception as e:
+        raise ValueError(f"Could not fetch ElevenLabs voice list to resolve {voice!r}: {e}") from e
+
+    needle = voice.lower()
+    # Exact name match first
+    for v in voices:
+        if (v.name or "").lower() == needle:
+            log.info("voice resolved: %r → %s (%s)", voice, v.voice_id, v.name)
+            return v.voice_id
+    # Partial match — pick first
+    matches = [v for v in voices if needle in (v.name or "").lower()]
+    if matches:
+        chosen = matches[0]
+        log.info("voice resolved (partial): %r → %s (%s)", voice, chosen.voice_id, chosen.name)
+        return chosen.voice_id
+
+    raise ValueError(
+        f"No ElevenLabs voice found matching {voice!r}. "
+        f"Run 'parallax voices --filter {voice}' to search, or pass a raw voice ID."
+    )
+
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
+
+_FONTS_DIR = Path(__file__).parent / "fonts"
+
+# Five TikTok-native caption styles. Each is applied by both the drawtext and
+# Pillow code paths, so they stay visually consistent regardless of backend.
+CAPTION_STYLES: dict[str, dict] = {
+    "bangers": {
+        # Kill Tony style — chunky, heavy stroke, all-caps
+        # x_expr uses 1.2× tw to give room for Bangers' rightward italic slant
+        "fontfile": "Bangers-Regular.ttf",
+        "fontcolor": "white",
+        "bordercolor": "black",
+        "borderw": 6,
+        "shadowx": 0,
+        "shadowy": 0,
+        "box": False,
+        "uppercase": True,
+        "x_expr": "(w-tw)/2",
+        "y_expr": "h*65/100-th",
+    },
+    "impact": {
+        # Classic meme — system Impact, thin outline
+        "fontfile": None,
+        "system_font": "/Library/Fonts/Impact.ttf",
+        "fontcolor": "white",
+        "bordercolor": "black",
+        "borderw": 3,
+        "shadowx": 0,
+        "shadowy": 0,
+        "box": False,
+        "uppercase": True,
+        "x_expr": "(w-tw)/2",
+        "y_expr": "h*65/100-th",
+    },
+    "bebas": {
+        # Viral TikTok — Bebas Neue, electric yellow, thick stroke
+        "fontfile": "BebasNeue-Regular.ttf",
+        "fontcolor": "#FFE600",
+        "bordercolor": "black",
+        "borderw": 5,
+        "shadowx": 0,
+        "shadowy": 0,
+        "box": False,
+        "uppercase": True,
+        "x_expr": "(w-tw)/2",
+        "y_expr": "h*65/100-th",
+    },
+    "anton": {
+        # Bold podcast — Anton, white with soft drop shadow
+        "fontfile": "Anton-Regular.ttf",
+        "fontcolor": "white",
+        "bordercolor": "black",
+        "borderw": 2,
+        "shadowx": 4,
+        "shadowy": 4,
+        "box": False,
+        "uppercase": True,
+        "x_expr": "(w-tw)/2",
+        "y_expr": "h*65/100-th",
+    },
+    "clean": {
+        # Modern/clean — Montserrat Black, white on semi-transparent dark pill
+        "fontfile": "Montserrat-Black.ttf",
+        "fontcolor": "white",
+        "bordercolor": None,
+        "borderw": 0,
+        "shadowx": 0,
+        "shadowy": 0,
+        "box": True,
+        "boxcolor": "black@0.55",
+        "boxborderw": 20,
+        "uppercase": False,
+        "x_expr": "(w-tw)/2",
+        "y_expr": "h*65/100-th",
+    },
+}
 
 
 # ---------------------------------------------------------------------------
 # scan_project_folder
 # ---------------------------------------------------------------------------
 
-def scan_project_folder(folder_path: str) -> str:
-    """Scan a project folder for a script file and character reference image.
+_CLIP_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".png", ".jpg", ".jpeg", ".webp"}
 
-    Returns JSON: {script_path, character_image_path, script_text, folder}.
-    Fails fast if neither is found.
+
+def scan_project_folder(folder_path: str) -> str:
+    """Scan a project folder for a script and either numbered clips or a character image.
+
+    Returns JSON with:
+      - mode: "video_clips" (numbered clip files found) or "ken_burns" (still images / no clips)
+      - script_path, script_text: the script file
+      - clips: {str(number): path} — only present in video_clips mode
+      - character_image_path: only relevant in ken_burns mode
+      - folder: resolved folder path
     """
     folder = Path(folder_path).expanduser().resolve()
     if not folder.is_dir():
@@ -65,7 +202,16 @@ def scan_project_folder(folder_path: str) -> str:
                 + ", ".join(f.name for f in txts)
             )
 
-    # Find character image: prefer character.jpg/png; fall back to any lone image
+    # Detect numbered clips (e.g. 001.mp4, 002.mov, 011.png)
+    numbered_clips: dict[int, str] = {}
+    for f in sorted(folder.iterdir()):
+        if re.match(r"^\d+$", f.stem) and f.suffix.lower() in _CLIP_EXTS and f.is_file():
+            numbered_clips[int(f.stem)] = str(f)
+
+    mode = "video_clips" if len(numbered_clips) >= 3 else "ken_burns"
+
+    # Find character image (only meaningful in ken_burns mode; exclude numbered clips)
+    numbered_paths = set(numbered_clips.values())
     char_path: Path | None = None
     for name in ("character.jpg", "character.jpeg", "character.png", "character.webp"):
         candidate = folder / name
@@ -75,22 +221,23 @@ def scan_project_folder(folder_path: str) -> str:
     if char_path is None:
         imgs = [
             f for f in folder.iterdir()
-            if f.suffix.lower() in IMAGE_EXTS and f.is_file()
+            if f.suffix.lower() in IMAGE_EXTS and f.is_file() and str(f) not in numbered_paths
         ]
         if len(imgs) == 1:
             char_path = imgs[0]
         elif len(imgs) > 1:
-            # Pick alphabetically first (stable)
             char_path = sorted(imgs)[0]
             log.info("Multiple images found; using %s as character reference", char_path.name)
 
     result: dict[str, Any] = {
         "folder": str(folder),
+        "mode": mode,
         "script_path": str(script_path) if script_path else None,
         "script_text": script_path.read_text().strip() if script_path else None,
         "character_image_path": str(char_path) if char_path else None,
+        "clips": {str(num): path for num, path in sorted(numbered_clips.items())} if mode == "video_clips" else {},
     }
-    log.info("scan_project_folder: script=%s char=%s", script_path, char_path)
+    log.info("scan_project_folder: mode=%s script=%s clips=%d", mode, script_path, len(numbered_clips))
     return json.dumps(result)
 
 
@@ -115,7 +262,7 @@ def generate_voiceover(
             "ElevenLabs key required: set AI_VIDEO_ELEVENLABS_KEY or ELEVENLABS_API_KEY"
         )
 
-    voice_id = VOICE_IDS.get(voice.lower(), voice)
+    voice_id = _resolve_voice(voice, key)
     dest = Path(out_dir or str(output_dir()))
     dest.mkdir(parents=True, exist_ok=True)
 
@@ -152,7 +299,10 @@ def generate_voiceover(
     )
     raw_duration = float(probe.stdout.strip()) if probe.stdout.strip() else 0.0
 
-    # Derive word timestamps from character-level alignment
+    # Derive word timestamps from character-level alignment.
+    # Space characters mark the acoustic END of the preceding word — capture those
+    # timestamps so we know when speech actually stops vs when the next word starts.
+    # This lets _trim_long_pauses detect inter-sentence silence accurately.
     alignment = getattr(response, "alignment", None)
     if alignment is None:
         raise RuntimeError("ElevenLabs response missing alignment data")
@@ -164,7 +314,8 @@ def generate_voiceover(
     for i, ch in enumerate(chars):
         if ch.strip() == "":
             if cur_word and word_start is not None:
-                words_raw.append({"word": cur_word, "start": word_start})
+                # Space start = when the preceding word's acoustic sound ended
+                words_raw.append({"word": cur_word, "start": word_start, "acoustic_end": starts[i]})
                 cur_word = ""
                 word_start = None
         else:
@@ -172,12 +323,17 @@ def generate_voiceover(
                 word_start = starts[i]
             cur_word += ch
     if cur_word and word_start is not None:
-        words_raw.append({"word": cur_word, "start": word_start})
+        words_raw.append({"word": cur_word, "start": word_start, "acoustic_end": None})
 
-    # Add end times
+    # End times: use acoustic_end (space timestamp) when available; fall back to next word's start
     words_with_ends: list[dict] = []
     for i, w in enumerate(words_raw):
-        end = words_raw[i + 1]["start"] if i + 1 < len(words_raw) else raw_duration
+        if w.get("acoustic_end") is not None:
+            end = w["acoustic_end"]
+        elif i + 1 < len(words_raw):
+            end = words_raw[i + 1]["start"]
+        else:
+            end = raw_duration
         words_with_ends.append({
             "word": w["word"],
             "start": round(w["start"], 3),
@@ -186,7 +342,12 @@ def generate_voiceover(
 
     # Apply atempo speed-up
     audio_path = dest / "voiceover.mp3"
-    words_sped, sped_duration = _apply_atempo(raw_path, words_with_ends, audio_path, speed)
+    sped_path = dest / "voiceover_sped_tmp.mp3"
+    words_sped, sped_duration = _apply_atempo(raw_path, words_with_ends, sped_path, speed)
+
+    # Surgically remove inter-word gaps > 400ms using word timestamps (no amplitude detection)
+    words_sped, sped_duration = _trim_long_pauses(sped_path, words_sped, audio_path)
+    sped_path.unlink(missing_ok=True)
 
     # Save word timestamps
     words_path = dest / "vo_words.json"
@@ -225,6 +386,90 @@ def _apply_atempo(raw_path: Path, words: list[dict], out_path: Path, speed: floa
     ]
     duration = sped[-1]["end"] if sped else 0.0
     return sped, duration
+
+
+def _trim_long_pauses(
+    audio_path: Path,
+    words: list[dict],
+    out_path: Path,
+    max_gap_s: float = 0.4,
+    keep_gap_s: float = 0.1,
+) -> tuple[list[dict], float]:
+    """Remove inter-word gaps > max_gap_s, trimming each to keep_gap_s.
+
+    Uses ffmpeg atrim+concat for surgical cuts driven by word timestamps.
+    No amplitude detection — purely timestamp-based.
+    Returns (adjusted_words, new_duration_s).
+    """
+    import shutil
+
+    gaps: list[tuple[float, float]] = []
+    for i in range(len(words) - 1):
+        gap = words[i + 1]["start"] - words[i]["end"]
+        if gap > max_gap_s:
+            gaps.append((words[i]["end"] + keep_gap_s, words[i + 1]["start"]))
+
+    if not gaps:
+        shutil.copy2(audio_path, out_path)
+        return list(words), words[-1]["end"] if words else 0.0
+
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)],
+        capture_output=True, text=True,
+    )
+    total_dur = float(probe.stdout.strip()) if probe.stdout.strip() else (words[-1]["end"] if words else 0.0)
+
+    # Build the audio segments to keep
+    keep: list[tuple[float, float]] = []
+    cursor = 0.0
+    for trim_start, trim_end in gaps:
+        if cursor < trim_start:
+            keep.append((cursor, trim_start))
+        cursor = trim_end
+    if cursor < total_dur:
+        keep.append((cursor, total_dur))
+
+    n = len(keep)
+    parts = [
+        f"[0:a]atrim=start={s}:end={e},asetpts=PTS-STARTPTS[s{i}]"
+        for i, (s, e) in enumerate(keep)
+    ]
+    concat_in = "".join(f"[s{i}]" for i in range(n))
+    parts.append(f"{concat_in}concat=n={n}:v=0:a=1[out]")
+
+    result = subprocess.run(
+        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+         "-i", str(audio_path),
+         "-filter_complex", ";".join(parts),
+         "-map", "[out]", "-c:a", "libmp3lame", "-b:a", "128k",
+         str(out_path)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        log.warning("_trim_long_pauses: ffmpeg failed (%s), keeping original", result.stderr[:200])
+        shutil.copy2(audio_path, out_path)
+        return list(words), words[-1]["end"] if words else 0.0
+
+    # Shift timestamps: each word shifts back by total gap removed before it
+    shifts = [0.0] * len(words)
+    for trim_start, trim_end in gaps:
+        removed = trim_end - trim_start
+        for j, w in enumerate(words):
+            if w["start"] >= trim_end:
+                shifts[j] += removed
+
+    adjusted = [
+        {"word": w["word"],
+         "start": round(w["start"] - shifts[j], 3),
+         "end": round(w["end"] - shifts[j], 3)}
+        for j, w in enumerate(words)
+    ]
+    new_dur = adjusted[-1]["end"] if adjusted else 0.0
+    total_removed = sum(e - s for s, e in gaps)
+    log.info("_trim_long_pauses: %d gaps removed (%.2fs total), duration %.2fs→%.2fs",
+             len(gaps), total_removed, total_dur, new_dur)
+    return adjusted, new_dur
 
 
 def _mock_voiceover(text: str, dest: Path) -> str:
@@ -450,6 +695,158 @@ def _make_kb_clip(
 
 
 # ---------------------------------------------------------------------------
+# assemble_clip_video
+# ---------------------------------------------------------------------------
+
+def assemble_clip_video(
+    scenes_json: str,
+    audio_path: str,
+    output_path: str | None = None,
+    resolution: str | None = None,
+) -> str:
+    """Assemble a video from pre-existing numbered clips + aligned scene durations.
+
+    Use this instead of ken_burns_assemble when scan_project_folder returns mode='video_clips'.
+    Each scene in scenes_json must have clip_paths (list of file paths) and duration_s.
+    Clips are looped or trimmed to fill each scene's target duration.
+    Returns the assembled video path.
+    """
+    scenes: list[dict] = json.loads(scenes_json)
+    if not scenes:
+        raise ValueError("No scenes provided")
+
+    # Auto-detect resolution from first available video clip
+    if resolution is None:
+        for scene in scenes:
+            for cp in scene.get("clip_paths", []):
+                if Path(cp).exists() and Path(cp).suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+                    probe = subprocess.run(
+                        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                         "-show_entries", "stream=width,height",
+                         "-of", "csv=p=0", cp],
+                        capture_output=True, text=True,
+                    )
+                    parts = probe.stdout.strip().split(",")
+                    if len(parts) >= 2:
+                        resolution = f"{parts[0]}x{parts[1]}"
+                        break
+            if resolution:
+                break
+        resolution = resolution or "720x1280"
+
+    out_w, out_h = (int(x) for x in resolution.split("x"))
+    out = Path(output_path or str(output_dir() / "clip_assembly.mp4"))
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        segment_paths: list[str] = []
+        for i, scene in enumerate(scenes):
+            clip_paths = scene.get("clip_paths", [])
+            duration_s = float(scene.get("duration_s", 5.0))
+            if not clip_paths:
+                log.warning("Scene %d: no clip_paths, skipping", i)
+                continue
+            segment_path = str(Path(tmp_dir) / f"seg_{i:04d}.mp4")
+            _make_clip_segment(clip_paths, duration_s, segment_path, out_w, out_h, tmp_dir, i)
+            segment_paths.append(segment_path)
+
+        if not segment_paths:
+            raise RuntimeError("No scenes with valid clip_paths to assemble")
+
+        # Concat all segments — re-encode to avoid black-first-frame from stream copy
+        list_file = Path(tmp_dir) / "segments.txt"
+        list_file.write_text("\n".join(f"file '{p}'" for p in segment_paths))
+        no_audio = Path(tmp_dir) / "no_audio.mp4"
+        subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "concat", "-safe", "0", "-i", str(list_file),
+             "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+             str(no_audio)],
+            check=True,
+        )
+
+        # Mux with audio
+        subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-i", str(no_audio),
+             "-i", str(audio_path),
+             "-c:v", "copy", "-c:a", "aac", "-shortest",
+             str(out)],
+            check=True,
+        )
+
+    log.info("assemble_clip_video: wrote %s (res=%s)", out, resolution)
+    return str(out)
+
+
+def _make_clip_segment(
+    clip_paths: list[str],
+    duration_s: float,
+    output_path: str,
+    out_w: int,
+    out_h: int,
+    tmp_dir: str,
+    scene_idx: int,
+) -> None:
+    """Normalize clips for one scene, concat them, then loop/trim to duration_s."""
+    image_exts = {".png", ".jpg", ".jpeg", ".webp"}
+    scale_filter = (
+        f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
+        f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2"
+    )
+    normalized: list[str] = []
+
+    for j, cp in enumerate(clip_paths):
+        p = Path(cp)
+        if not p.exists():
+            log.warning("Clip not found: %s, skipping", cp)
+            continue
+        norm_path = str(Path(tmp_dir) / f"norm_{scene_idx:04d}_{j:04d}.mp4")
+
+        if p.suffix.lower() in image_exts:
+            # Apply Ken Burns so no still frames appear in the final video
+            _make_kb_clip(str(p), duration_s, norm_path, f"{out_w}x{out_h}", scene_idx)
+        else:
+            subprocess.run(
+                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                 "-i", str(p),
+                 "-vf", scale_filter,
+                 "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+                 "-r", "30", "-an", norm_path],
+                check=True,
+            )
+        normalized.append(norm_path)
+
+    if not normalized:
+        raise RuntimeError(f"Scene {scene_idx}: no valid clips found in {clip_paths}")
+
+    # Concat all clips within this scene
+    if len(normalized) == 1:
+        combined = normalized[0]
+    else:
+        concat_list = Path(tmp_dir) / f"inner_{scene_idx:04d}.txt"
+        concat_list.write_text("\n".join(f"file '{p}'" for p in normalized))
+        combined = str(Path(tmp_dir) / f"combined_{scene_idx:04d}.mp4")
+        subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "concat", "-safe", "0", "-i", str(concat_list),
+             "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+             combined],
+            check=True,
+        )
+
+    # Loop/trim to exact target duration
+    subprocess.run(
+        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+         "-stream_loop", "-1", "-i", combined,
+         "-t", str(duration_s),
+         "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+         "-an", output_path],
+        check=True,
+    )
+
+
+# ---------------------------------------------------------------------------
 # burn_captions
 # ---------------------------------------------------------------------------
 
@@ -477,8 +874,9 @@ def burn_captions(
     video_path: str,
     words_json: str,
     output_path: str | None = None,
-    words_per_chunk: int = 3,
-    fontsize: int = 70,
+    words_per_chunk: int = 1,
+    fontsize: int = 55,
+    caption_style: str = "bangers",
 ) -> str:
     """Burn word-by-word captions onto a video.
 
@@ -486,6 +884,7 @@ def burn_captions(
     when ffmpeg lacks libfreetype (e.g. minimal Homebrew builds).
 
     words_json: JSON string of [{word, start, end}] or path to vo_words.json
+    caption_style: one of bangers, impact, bebas, anton, clean
     Returns captioned video path.
     """
     wjson_path = Path(words_json)
@@ -513,14 +912,67 @@ def burn_captions(
             "end": group[-1]["end"],
         })
 
+    style = CAPTION_STYLES.get(caption_style, CAPTION_STYLES["bangers"])
     if _ffmpeg_has_drawtext():
-        _burn_captions_drawtext(video_path, chunks, out, fontsize)
+        try:
+            _burn_captions_drawtext(video_path, chunks, out, fontsize, style)
+        except RuntimeError as e:
+            log.warning("burn_captions: drawtext failed (%s), falling back to Pillow", e)
+            if out.exists():
+                out.unlink()
+            _burn_captions_pillow(video_path, chunks, out, fontsize, style)
     else:
         log.info("burn_captions: drawtext unavailable, using Pillow fallback")
-        _burn_captions_pillow(video_path, chunks, out, fontsize)
+        _burn_captions_pillow(video_path, chunks, out, fontsize, style)
 
     log.info("burn_captions: wrote %s", out)
     return str(out)
+
+
+def _style_drawtext_filter(style: dict, text: str, start: float, end: float, fontsize: int) -> str:
+    # Escape order matters: backslashes first, then other special chars.
+    # Reversing this order would double-escape the backslashes inserted by later steps.
+    escaped = text.replace("\\", "\\\\").replace("'", "\u2019").replace(":", "\\:")
+    if style.get("uppercase"):
+        escaped = escaped.upper()
+
+    fontfile = style.get("fontfile")
+    font_path = str(_FONTS_DIR / fontfile) if fontfile else style.get("system_font", "")
+
+    x_expr = style.get("x_expr", "(w-tw)/2")
+    y_expr = style.get("y_expr", "h*0.65-th")
+
+    kv: list[str] = [
+        f"fontfile='{font_path}'",
+        f"text='{escaped}'",
+        f"fontsize={fontsize}",
+        f"fontcolor={style['fontcolor']}",
+    ]
+    if style.get("borderw") and style.get("bordercolor"):
+        kv += [f"bordercolor={style['bordercolor']}", f"borderw={style['borderw']}"]
+    if style.get("shadowx") or style.get("shadowy"):
+        kv += [
+            f"shadowx={style.get('shadowx', 0)}",
+            f"shadowy={style.get('shadowy', 0)}",
+            "shadowcolor=black@0.7",
+        ]
+    if style.get("box"):
+        kv += ["box=1", f"boxcolor={style['boxcolor']}", f"boxborderw={style.get('boxborderw', 10)}"]
+    kv += [f"x={x_expr}", f"y={y_expr}", f"enable='gte(t,{start})*lt(t,{end})'"]
+    return "drawtext=" + ":".join(kv)
+
+
+def _parse_color(color: str | None) -> tuple[int, int, int]:
+    if not color:
+        return (255, 255, 255)
+    color = color.split("@")[0].strip()
+    if color.lower() == "white":
+        return (255, 255, 255)
+    if color.lower() == "black":
+        return (0, 0, 0)
+    if color.startswith("#") and len(color) == 7:
+        return (int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16))
+    return (255, 255, 255)
 
 
 def _burn_captions_drawtext(
@@ -528,28 +980,16 @@ def _burn_captions_drawtext(
     chunks: list[dict],
     out: Path,
     fontsize: int,
+    style: dict,
 ) -> None:
-    font = _find_font()
-    filters = []
-    for chunk in chunks:
-        text = chunk["text"].replace("'", "\u2019").replace(":", "\\:").replace("\\", "\\\\")
-        start = chunk["start"]
-        end = chunk["end"]
-        filters.append(
-            f"drawtext=font='{font}'"
-            f":text='{text}'"
-            f":fontsize={fontsize}"
-            f":fontcolor=white"
-            f":bordercolor=black:borderw=3"
-            f":x=(w-tw)/2"
-            f":y=h-th-160"
-            f":enable='between(t,{start},{end})'"
-        )
-    filter_str = ",".join(filters)
+    filters = [
+        _style_drawtext_filter(style, c["text"], c["start"], c["end"], fontsize)
+        for c in chunks
+    ]
     result = subprocess.run(
         [_get_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
          "-i", video_path,
-         "-vf", filter_str,
+         "-vf", ",".join(filters),
          "-c:v", "libx264", "-preset", "fast", "-crf", "18",
          "-c:a", "copy",
          str(out)],
@@ -564,6 +1004,7 @@ def _burn_captions_pillow(
     chunks: list[dict],
     out: Path,
     fontsize: int,
+    style: dict,
 ) -> None:
     """Pillow-based caption burn: decode each frame, draw text, pipe to ffmpeg."""
     from PIL import Image, ImageDraw, ImageFont  # type: ignore[import]
@@ -582,37 +1023,50 @@ def _burn_captions_pillow(
     fps_num, fps_den = (int(x) for x in parts[2].split("/"))
     fps = fps_num / fps_den
 
-    # Load font
+    # Load font from style
+    fontfile = style.get("fontfile")
+    font_path: str | None = str(_FONTS_DIR / fontfile) if fontfile else style.get("system_font")
     pil_font: Any = None
-    for candidate in (
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ):
-        if Path(candidate).exists():
-            try:
-                pil_font = ImageFont.truetype(candidate, fontsize)
-                break
-            except OSError:
-                continue
+    if font_path and Path(font_path).exists():
+        try:
+            pil_font = ImageFont.truetype(font_path, fontsize)
+        except OSError:
+            pass
+    if pil_font is None:
+        for candidate in (
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        ):
+            if Path(candidate).exists():
+                try:
+                    pil_font = ImageFont.truetype(candidate, fontsize)
+                    break
+                except OSError:
+                    continue
     if pil_font is None:
         pil_font = ImageFont.load_default()
 
-    # Build chunk lookup: frame_index → text
+    fill_rgb = _parse_color(style.get("fontcolor", "white"))
+    stroke_rgb = _parse_color(style.get("bordercolor")) if style.get("bordercolor") else None
+    borderw = style.get("borderw", 0)
+    uppercase = style.get("uppercase", False)
+    use_box = style.get("box", False)
+    boxborderw = style.get("boxborderw", 10)
+
     def text_at(t: float) -> str:
         for chunk in chunks:
             if chunk["start"] <= t < chunk["end"]:
-                return chunk["text"]
+                txt = chunk["text"]
+                return txt.upper() if uppercase else txt
         return ""
 
-    # Decode raw frames from input video
     decode = subprocess.Popen(
         ["ffmpeg", "-i", video_path, "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
          "-hide_banner", "-loglevel", "error"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
 
-    # Encode output with audio mux in a second pass — write frames to tmp file first
     with tempfile.TemporaryDirectory() as tmp_dir:
         no_audio = Path(tmp_dir) / "captioned_no_audio.mp4"
         encode = subprocess.Popen(
@@ -644,11 +1098,29 @@ def _burn_captions_pillow(
                     tw = bbox[2] - bbox[0]
                     th = bbox[3] - bbox[1]
                     x = (vid_w - tw) // 2
-                    y = vid_h - th - 160
-                    # Draw stroke
-                    for dx, dy in [(-3, -3), (3, -3), (-3, 3), (3, 3), (0, -3), (0, 3), (-3, 0), (3, 0)]:
-                        draw.text((x + dx, y + dy), caption, font=pil_font, fill=(0, 0, 0))
-                    draw.text((x, y), caption, font=pil_font, fill=(255, 255, 255))
+                    y = int(vid_h * 0.65 - th)
+
+                    if use_box:
+                        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                        overlay_draw = ImageDraw.Draw(overlay)
+                        pad = boxborderw
+                        overlay_draw.rectangle(
+                            [x - pad, y - pad, x + tw + pad, y + th + pad],
+                            fill=(0, 0, 0, 140),
+                        )
+                        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+                        draw = ImageDraw.Draw(img)
+
+                    if stroke_rgb and borderw:
+                        offsets = [
+                            (dx, dy)
+                            for dx in range(-borderw, borderw + 1)
+                            for dy in range(-borderw, borderw + 1)
+                            if dx != 0 or dy != 0
+                        ]
+                        for dx, dy in offsets:
+                            draw.text((x + dx, y + dy), caption, font=pil_font, fill=stroke_rgb)
+                    draw.text((x, y), caption, font=pil_font, fill=fill_rgb)
 
                 encode.stdin.write(img.tobytes())
                 frame_idx += 1
@@ -662,10 +1134,11 @@ def _burn_captions_pillow(
 
         decode.wait()
         encode.wait()
+        enc_stderr = encode.stderr
         if encode.returncode != 0:
-            raise RuntimeError(f"Pillow caption encode failed: {encode.stderr.read()[:300]}")  # type: ignore[union-attr]
+            err_msg = enc_stderr.read(300).decode(errors="replace") if enc_stderr else ""
+            raise RuntimeError(f"Pillow caption encode failed: {err_msg}")
 
-        # Mux audio back in
         result = subprocess.run(
             ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
              "-i", str(no_audio), "-i", video_path,
@@ -678,17 +1151,69 @@ def _burn_captions_pillow(
             raise RuntimeError(f"Caption audio mux failed:\n{result.stderr[:300]}")
 
 
-def _find_font() -> str:
-    candidates = [
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-    ]
-    for p in candidates:
-        if Path(p).exists():
-            return p
-    raise FileNotFoundError(f"No usable font found. Tried: {candidates}")
+
+
+# ---------------------------------------------------------------------------
+# burn_headline
+# ---------------------------------------------------------------------------
+
+def burn_headline(
+    video_path: str,
+    text: str,
+    output_path: str | None = None,
+    fontsize: int = 64,
+    bg_color: str = "white",
+    text_color: str = "black",
+    font_name: str = "bangers",
+    y_position: str = "h*12/100",
+    end_time_s: float | None = None,
+) -> str:
+    """Overlay a headline with a solid block background (Instagram/TikTok style).
+
+    end_time_s: if set, headline fades out at this timestamp (use first scene's end_s
+                so the headline is only visible during the intro).
+    bg_color / text_color accept any ffmpeg color string (e.g. 'white', 'black', '#FF0000').
+    y_position is an ffmpeg expression for the TOP of the text block (default: 12% from top).
+    font_name: one of bangers, impact, bebas, anton, clean (uses bundled fonts).
+    Returns the output video path.
+    """
+    out = Path(output_path or str(Path(video_path).with_stem(Path(video_path).stem + "_headline")))
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    style = CAPTION_STYLES.get(font_name, CAPTION_STYLES["bangers"])
+    fontfile = style.get("fontfile")
+    font_path = str(_FONTS_DIR / fontfile) if fontfile else style.get("system_font", "")
+
+    escaped = text.replace("\\", "\\\\").replace("'", "\u2019").replace(":", "\\:")
+    if style.get("uppercase"):
+        escaped = escaped.upper()
+
+    pad = max(12, fontsize // 4)
+    enable_clause = f":enable='lt(t,{end_time_s})'" if end_time_s is not None else ""
+    filter_str = (
+        f"drawtext=fontfile='{font_path}'"
+        f":text='{escaped}'"
+        f":fontsize={fontsize}"
+        f":fontcolor={text_color}"
+        f":box=1:boxcolor={bg_color}:boxborderw={pad}"
+        f":x=(w-tw)/2"
+        f":y={y_position}"
+        f"{enable_clause}"
+    )
+
+    result = subprocess.run(
+        [_get_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
+         "-i", video_path,
+         "-vf", filter_str,
+         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+         "-c:a", "copy",
+         str(out)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"burn_headline failed:\n{result.stderr[:500]}")
+    log.info("burn_headline: wrote %s", out)
+    return str(out)
 
 
 # ---------------------------------------------------------------------------

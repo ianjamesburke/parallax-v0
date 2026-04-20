@@ -2,6 +2,40 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-20 — [FIX] drawtext escape order: backslash before colon
+
+`_style_drawtext_filter` and `burn_headline` were running `replace(":", "\\:")` before `replace("\\", "\\\\")`. This doubled the backslashes inserted by the colon escape — turning `\:` (correct escaped colon) into `\\:` (literal backslash + option delimiter). Any word containing `:` (e.g. `Week 1:`) would corrupt the filter chain and break all subsequent drawtext filters.
+
+Fix: reordered to backslash-first — `replace("\\", "\\\\")` then `replace(":", "\\:")`. Backslashes in the original text are doubled (safe), then colons are escaped, and the newly introduced `\` is not touched again.
+
+**What NOT to do:** never run `replace("\\", "\\\\")` after `replace(":", "\\:")` — the first inserts backslashes that the second will then double.
+
+## 2026-04-20 — [CHANGED] Clip Assembly Pipeline: video clip mode for numbered asset folders
+
+Added a second pipeline mode alongside Ken Burns. `scan_project_folder` now detects folders that contain numbered clips (`001.mp4`, `002.mov`, `011.png`, etc.) and returns `mode='video_clips'` plus a `clips` dict mapping clip number → file path. When mode is `video_clips`, the agent uses `assemble_clip_video` instead of `generate_image` + `ken_burns_assemble`.
+
+`assemble_clip_video` takes aligned scenes (each with `clip_paths` and `duration_s`), normalizes every clip to a uniform resolution/fps, loops or trims each scene to its voiceover duration, concats all scenes, and mixes in the voiceover audio. PNGs are converted to a 2s video before looping.
+
+**Why:** the Fitbod Simpsons animation project has 19 numbered clips that map 1:1 to script scene markers `[001]`, `[002-004]`, etc. The Ken Burns pipeline isn't applicable here — the clips already exist. The model parses the `[NNN]` markers to build `clip_paths` per scene, aligns with voiceover word timestamps, then assembles.
+
+**Breaks if:** `assemble_clip_video` produces a video with wrong total duration (alignment or loop-trim logic off), clip scenes appear in wrong order (scene index ordering), a PNG clip produces a black segment (ffmpeg `-loop 1` command), or `scan_project_folder` returns `mode='video_clips'` on a Ken Burns project that happens to have 3+ numbered files.
+
+## 2026-04-20 — [GOTCHA] Bangers font: glyph clipping in drawtext — deferred
+
+Bangers (display font with extreme italic slant) renders glyphs that extend above the font's declared ascender bounding box. ffmpeg's `drawtext` clips anything outside the declared text bounding box (`th`), so the tops of tall letters get cut regardless of position. Attempted fix was scaling the x centering (`tw*1.45`) to shift text left and give the slant room — that fixed neither the top clipping nor kept the text centered (it just shifted the whole word left).
+
+Root cause: the clipping is not a frame-boundary issue — it's drawtext's internal render clipping against the font's declared glyph metrics. The fix is likely one of: (a) add a `y` offset to push text down so the declared box sits lower and clipped tops are off-screen instead of in-frame, (b) use `expansion=none` + manual line height overrides, or (c) switch to a font with correct metrics (Bebas Neue, Anton, Impact all render clean).
+
+**Do NOT attempt to fix with x centering multipliers** — they shift the text off-center without helping the clip. The y/ascender metrics are the real lever.
+
+**What NOT to do next time:** don't try `(w-tw*N)/2` style x hacks. The glyph clips at the top, not the side.
+
+## 2026-04-20 — [CHANGED] boxer_v2: reassembly from existing assets, full pipeline
+
+Ran the full post-production pipeline (write_manifest → align_scenes → ken_burns_assemble → burn_captions → burn_headline → write_manifest final) against pre-existing stills and voiceover — no image or audio generation. Final output: `output/boxer_v2_final.mp4` (1080×1920, 11.57s), Bangers captions 1-word-at-a-time, "SHE TRAINS ALONE" headline at y=10%. `align_scenes` fell back to the explicit timings from the brief (JSON parse issue when given a file path — the tool's path-read branch failed in this agent context). Manifests at `output/boxer_manifest.yaml` and `output/boxer_manifest_final.yaml`.
+
+**Breaks if:** `output/boxer_v2_final.mp4` doesn't open, captions are missing or unstyled, or the headline doesn't appear at the top of the frame.
+
 ## 2026-04-20 — [GOTCHA] ffmpeg drawtext filter absent in Homebrew's minimal build
 Homebrew ffmpeg 8.1 on this machine was built without `--enable-libfreetype`, so `drawtext` filter isn't in the binary. `burn_captions` was failing with "No such filter: 'drawtext'" on every run. Fixed by adding `_ffmpeg_has_drawtext()` probe and a Pillow-based fallback (`_burn_captions_pillow`) that decodes frames via rawvideo pipe, draws text with PIL/ImageDraw, re-encodes, then muxes audio back. The drawtext path is preferred when available (faster). Full pipeline now completes end-to-end in TEST_MODE.
 

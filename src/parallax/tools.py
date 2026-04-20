@@ -54,8 +54,9 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "name": "scan_project_folder",
         "description": (
-            "Scan a project folder for a script file and character reference image. "
-            "Returns JSON with script_path, script_text, character_image_path, and folder. "
+            "Scan a project folder for a script and either numbered clips or a character image. "
+            "Returns JSON with: mode ('video_clips' or 'ken_burns'), script_path, script_text, "
+            "character_image_path, clips (dict of number→path, present in video_clips mode), and folder. "
             "Call this first when given a folder path as the creative brief."
         ),
         "input_schema": {
@@ -107,6 +108,29 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "assemble_clip_video",
+        "description": (
+            "Assemble a video from pre-existing numbered clips + aligned scene durations and voiceover. "
+            "Use this instead of ken_burns_assemble when scan_project_folder returns mode='video_clips'. "
+            "Each scene in scenes_json must have clip_paths (list of file paths) and duration_s. "
+            "Clips are looped or trimmed to fill each scene's target duration. "
+            "Returns the assembled video path."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "scenes_json": {
+                    "type": "string",
+                    "description": "JSON array of scene objects, each with clip_paths (list of paths) and duration_s.",
+                },
+                "audio_path": {"type": "string", "description": "Path to voiceover audio file."},
+                "output_path": {"type": "string", "description": "Output video path. Default: output/clip_assembly.mp4."},
+                "resolution": {"type": "string", "description": "WxH resolution. Default: auto-detect from clips."},
+            },
+            "required": ["scenes_json", "audio_path"],
+        },
+    },
+    {
         "name": "ken_burns_assemble",
         "description": (
             "Assemble a Ken Burns draft video from stills + aligned scene durations and a voiceover. "
@@ -131,6 +155,9 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "name": "burn_captions",
         "description": (
             "Burn word-by-word captions onto a video using word timestamps. "
+            "Default is one word at a time (words_per_chunk=1). "
+            "caption_style controls the visual style — pick from: bangers (Kill Tony, default), "
+            "impact (classic meme), bebas (yellow TikTok), anton (bold podcast), clean (dark pill box). "
             "Returns the captioned video path."
         ),
         "input_schema": {
@@ -142,10 +169,42 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "description": "Path to vo_words.json, or JSON string of [{word, start, end}].",
                 },
                 "output_path": {"type": "string", "description": "Output path. Default: input_captioned.mp4."},
-                "words_per_chunk": {"type": "integer", "description": "Words per caption chunk. Default: 3."},
-                "fontsize": {"type": "integer", "description": "Caption font size. Default: 70."},
+                "words_per_chunk": {"type": "integer", "description": "Words per caption chunk. Default: 1 (one word at a time)."},
+                "fontsize": {"type": "integer", "description": "Caption font size. Default: 55."},
+                "caption_style": {
+                    "type": "string",
+                    "enum": ["bangers", "impact", "bebas", "anton", "clean"],
+                    "description": "Visual style preset. Default: bangers.",
+                },
             },
             "required": ["video_path", "words_json"],
+        },
+    },
+    {
+        "name": "burn_headline",
+        "description": (
+            "Overlay a persistent headline title with a solid block background (Instagram/TikTok style). "
+            "The text sits on a solid-color box — no stroke/outline. Always visible across the full video. "
+            "bg_color/text_color accept ffmpeg color strings. y_position is an ffmpeg height expression."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "video_path": {"type": "string", "description": "Input video path."},
+                "text": {"type": "string", "description": "Headline text to display."},
+                "output_path": {"type": "string", "description": "Output path. Default: input_headline.mp4."},
+                "fontsize": {"type": "integer", "description": "Font size. Default: 64."},
+                "bg_color": {"type": "string", "description": "Background box color. Default: white."},
+                "text_color": {"type": "string", "description": "Text color. Default: black."},
+                "font_name": {
+                    "type": "string",
+                    "enum": ["bangers", "impact", "bebas", "anton", "clean"],
+                    "description": "Font to use. Default: bangers.",
+                },
+                "y_position": {"type": "string", "description": "ffmpeg expression for top of text block. Default: h*12/100 (12% from top)."},
+                "end_time_s": {"type": "number", "description": "If set, headline disappears after this timestamp. Pass the first scene's end_s to show headline only during the intro."},
+            },
+            "required": ["video_path", "text"],
         },
     },
     {
@@ -182,6 +241,8 @@ def dispatch_tool(name: str, args: dict[str, Any]) -> str:
             result = generate_image(**args)
         elif name == "scan_project_folder":
             result = tools_video.scan_project_folder(**args)
+        elif name == "assemble_clip_video":
+            result = tools_video.assemble_clip_video(**args)
         elif name == "generate_voiceover":
             result = tools_video.generate_voiceover(**args)
         elif name == "align_scenes":
@@ -190,6 +251,8 @@ def dispatch_tool(name: str, args: dict[str, Any]) -> str:
             result = tools_video.ken_burns_assemble(**args)
         elif name == "burn_captions":
             result = tools_video.burn_captions(**args)
+        elif name == "burn_headline":
+            result = tools_video.burn_headline(**args)
         elif name == "write_manifest":
             result = tools_video.write_manifest(**args)
         elif name == "read_manifest":
