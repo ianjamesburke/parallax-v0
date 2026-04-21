@@ -229,8 +229,8 @@ def scan_project_folder(folder_path: str) -> str:
             char_path = sorted(imgs)[0]
             log.info("Multiple images found; using %s as character reference", char_path.name)
 
-    # Create versioned output directory: {folder}/.parallax/output/v1/, v2/, ...
-    parallax_dir = folder / ".parallax"
+    # Create versioned output directory: {folder}/parallax/output/v1/, v2/, ...
+    parallax_dir = folder / "parallax"
     output_base = parallax_dir / "output"
     output_base.mkdir(parents=True, exist_ok=True)
     existing_versions = []
@@ -579,6 +579,7 @@ def animate_scenes(
     scenes_json: str,
     out_dir: str,
     video_model: str = "xai/grok-imagine-video/image-to-video",
+    resolution: str = "480p",
 ) -> str:
     """Generate video clips for scenes marked with animate=true using an image-to-video model.
 
@@ -617,13 +618,14 @@ def animate_scenes(
         log.info("animate_scenes: scene %d — uploading still", idx)
         image_url = fal_client.upload_file(Path(still))
 
-        log.info("animate_scenes: scene %d — calling %s", idx, video_model)
+        scene_resolution = scene.get("animate_resolution", resolution)
+        log.info("animate_scenes: scene %d — calling %s @ %s", idx, video_model, scene_resolution)
         try:
             result = fal_client.subscribe(video_model, arguments={
                 "image_url": image_url,
                 "prompt": motion_prompt,
                 "aspect_ratio": "9:16",
-                "resolution": "720p",
+                "resolution": scene_resolution,
             })
         except Exception as e:
             raise RuntimeError(f"animate_scenes: scene {idx} failed: {e}") from e
@@ -1093,6 +1095,22 @@ def _ffmpeg_has_drawtext() -> bool:
     return "drawtext" in result.stdout
 
 
+def _probe_fps(video_path: str) -> float:
+    """Return video FPS; falls back to 30.0 on any error."""
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=r_frame_rate",
+         "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+        capture_output=True, text=True,
+    )
+    raw = result.stdout.strip()
+    try:
+        num, den = raw.split("/")
+        return float(num) / float(den)
+    except Exception:
+        return 30.0
+
+
 def burn_captions(
     video_path: str,
     words_json: str,
@@ -1100,6 +1118,7 @@ def burn_captions(
     words_per_chunk: int = 1,
     fontsize: int = 55,
     caption_style: str = "bangers",
+    gap_hold_frames: int = 15,
 ) -> str:
     """Burn word-by-word captions onto a video.
 
@@ -1108,6 +1127,9 @@ def burn_captions(
 
     words_json: JSON string of [{word, start, end}] or path to vo_words.json
     caption_style: one of bangers, impact, bebas, anton, clean
+    gap_hold_frames: if the gap to the next caption is smaller than this many
+        frames, extend the current caption to butt up against the next one
+        (eliminates flicker from brief blank frames between words).
     Returns captioned video path.
     """
     wjson_path = Path(words_json)
@@ -1134,6 +1156,16 @@ def burn_captions(
             "start": group[0]["start"],
             "end": group[-1]["end"],
         })
+
+    # Extend chunk end to the next chunk's start when the gap is smaller than
+    # gap_hold_frames, so there's no blank flash between adjacent captions.
+    if gap_hold_frames > 0 and len(chunks) > 1:
+        fps = _probe_fps(video_path)
+        threshold_s = gap_hold_frames / fps
+        for i in range(len(chunks) - 1):
+            gap = chunks[i + 1]["start"] - chunks[i]["end"]
+            if gap < threshold_s:
+                chunks[i]["end"] = chunks[i + 1]["start"]
 
     style = CAPTION_STYLES.get(caption_style, CAPTION_STYLES["bangers"])
     if _ffmpeg_has_drawtext():

@@ -13,7 +13,7 @@ Plan YAML schema:
   caption_style: bangers
   captions: skip        # omit to enable captions
   headline: THE TITLE   # omit to skip headline
-  character_image: .parallax/scratch/ref.png  # relative to --folder; used for reference: true scenes
+  character_image: parallax/scratch/ref.png  # relative to --folder; used for reference: true scenes
 
   scenes:
     - index: 0
@@ -40,6 +40,27 @@ from .log import get_logger
 from .tools import generate_image
 
 log = get_logger("produce")
+
+
+def _lock_field_in_plan(plan_path: Path, plan: dict, scene_idx: int, field: str, value: str, folder: Path) -> None:
+    """Write an asset path back into the plan YAML so the scene is locked on future runs."""
+    try:
+        try:
+            locked_path = str(Path(value).relative_to(folder))
+        except ValueError:
+            locked_path = value
+        for scene in plan.get("scenes", []):
+            if scene.get("index") == scene_idx:
+                scene[field] = locked_path
+                break
+        with plan_path.open("w") as f:
+            yaml.dump(plan, f, default_flow_style=False, allow_unicode=True, sort_keys=False, width=10000)
+    except Exception as e:
+        log.warning("_lock_field_in_plan: could not write back to plan: %s", e)
+
+
+def _lock_still_in_plan(plan_path: Path, plan: dict, scene_idx: int, still_path: str, folder: Path) -> None:
+    _lock_field_in_plan(plan_path, plan, scene_idx, "still_path", still_path, folder)
 
 
 def run_plan(folder: str | Path, plan_path: str | Path) -> int:
@@ -128,6 +149,7 @@ def run_plan(folder: str | Path, plan_path: str | Path) -> int:
                 out_dir=out_dir,
             )
             _log(f"       → {Path(still_path).name}")
+            _lock_still_in_plan(plan_path, plan, idx, still_path, folder)
         scene_entry: dict[str, Any] = {
             "index": idx,
             "shot_type": s.get("shot_type", "broll"),
@@ -140,6 +162,8 @@ def run_plan(folder: str | Path, plan_path: str | Path) -> int:
             scene_entry["animate"] = True
             if s.get("motion_prompt"):
                 scene_entry["motion_prompt"] = s["motion_prompt"]
+            if s.get("animate_resolution"):
+                scene_entry["animate_resolution"] = s["animate_resolution"]
         if s.get("clip_path"):
             cp = Path(s["clip_path"])
             scene_entry["clip_path"] = str(cp if cp.is_absolute() else folder / cp)
@@ -151,17 +175,20 @@ def run_plan(folder: str | Path, plan_path: str | Path) -> int:
 
     # 2b. Animate selected scenes (image-to-video)
     animate_model = plan.get("animate_model", "xai/grok-imagine-video/image-to-video")
+    animate_resolution = "720p" if plan.get("hq") else "480p"
     animated_count = sum(1 for s in scenes if s.get("animate") and not s.get("clip_path"))
     if animated_count:
-        _log(f"animate_scenes — {animated_count} scenes via {animate_model}")
+        _log(f"animate_scenes — {animated_count} scenes via {animate_model} @ {animate_resolution}")
         scenes = json.loads(tools_video.animate_scenes(
             scenes_json=json.dumps(scenes),
             out_dir=out_dir,
             video_model=animate_model,
+            resolution=animate_resolution,
         ))
         for s in scenes:
             if s.get("clip_path"):
                 _log(f"  [{s['index']:02d}] → {Path(s['clip_path']).name}")
+                _lock_field_in_plan(plan_path, plan, s["index"], "clip_path", s["clip_path"], folder)
     else:
         locked = sum(1 for s in scenes if s.get("clip_path"))
         if locked:
@@ -332,7 +359,7 @@ def run_plan(folder: str | Path, plan_path: str | Path) -> int:
             _log(
                 f"  → lock in plan to skip future Aurora calls:\n"
                 f"    avatar:\n"
-                f"      avatar_track: .parallax/output/{out_ver}/{Path(avatar_track).name}\n"
+                f"      avatar_track: parallax/output/{out_ver}/{Path(avatar_track).name}\n"
                 f"      track_start_s: {track_start_s:.1f}"
             )
 
@@ -349,7 +376,7 @@ def run_plan(folder: str | Path, plan_path: str | Path) -> int:
             _log(
                 f"  → lock in plan to skip future chroma-key calls:\n"
                 f"    avatar:\n"
-                f"      avatar_track_keyed: .parallax/output/{out_ver}/avatar_track_keyed.mov"
+                f"      avatar_track_keyed: parallax/output/{out_ver}/avatar_track_keyed.mov"
             )
 
         # Composite — use pre-keyed track if available (no chroma filter needed)
@@ -383,7 +410,7 @@ def _log(msg: str) -> None:
 _KNOWN_SCENE_FIELDS = {
     "index", "shot_type", "vo_text", "prompt",
     "still_path", "reference", "reference_images",
-    "animate", "motion_prompt", "clip_path",
+    "animate", "motion_prompt", "clip_path", "animate_resolution",
     "zoom_direction", "zoom_amount",
 }
 
