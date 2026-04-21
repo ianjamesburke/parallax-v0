@@ -27,7 +27,7 @@ If a use case can't be handled by the CLI, add the capability to the CLI first, 
 
 ## Plan YAML is the iteration artifact
 
-When working on a video project, the plan YAML (typically in `.parallax/scratch/`) is the single file to edit between versions. Lock approved stills with `still_path`, lock approved audio with `audio_path`/`words_path`. Never bypass the plan to regenerate individual assets ad-hoc.
+When working on a video project, the plan YAML (typically in `parallax/scratch/`) is the single file to edit between versions. Lock approved stills with `still_path`, lock approved audio with `audio_path`/`words_path`. Never bypass the plan to regenerate individual assets ad-hoc.
 
 ## Dev log
 

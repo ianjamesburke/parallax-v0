@@ -48,19 +48,20 @@ model: nano-banana        # image model alias
 caption_style: bangers    # bangers | impact | bebas | anton | clean
 headline: THE BIG CLAIM   # omit to skip
 # captions: skip          # uncomment to disable captions
+# hq: true                # use 720p for all Grok i2v clips (default: 480p); override per scene with animate_resolution
 
 # Lock voiceover — skips regeneration
-audio_path: .parallax/output/v6/voiceover.mp3
-words_path: .parallax/output/v6/vo_words.json
+audio_path: parallax/output/v6/voiceover.mp3
+words_path: parallax/output/v6/vo_words.json
 
 # Character reference image for scenes with reference: true
-character_image: .parallax/scratch/ref.png
+character_image: parallax/scratch/ref.png
 
 # Avatar (lip-sync PiP overlay)
 avatar:
-  image: .parallax/scratch/avatar_blue_bg.png   # blue bg for chroma key
-  avatar_track: .parallax/output/v12/avatar_track.mp4          # lock after first gen
-  avatar_track_keyed: .parallax/output/v12/avatar_track_keyed.mov  # pre-keyed ProRes 4444
+  image: parallax/scratch/avatar_blue_bg.png   # blue bg for chroma key
+  avatar_track: parallax/output/v12/avatar_track.mp4          # lock after first gen
+  avatar_track_keyed: parallax/output/v12/avatar_track_keyed.mov  # pre-keyed ProRes 4444
   track_start_s: 0.0
   position: bottom_left   # bottom_left | bottom_right | top_left | top_right
   size: 0.70              # fraction of frame width
@@ -72,9 +73,10 @@ scenes:
     shot_type: broll        # broll | character | screen
     vo_text: "Words spoken here."
     prompt: "Pixar-style 3D, 9:16 vertical..."
-    still_path: .parallax/output/v6/nano-banana_abc123.png  # lock approved still
+    still_path: parallax/output/v6/nano-banana_abc123.png  # lock approved still
     animate: true           # generate video clip via Grok i2v
-    clip_path: .parallax/output/v17/scene_00_animated.mp4   # lock approved clip
+    animate_resolution: 720p  # per-scene override; default is 480p (plan-level hq: true sets 720p globally)
+    clip_path: parallax/output/v17/scene_00_animated.mp4   # auto-written after generation
     motion_prompt: "Slow camera drift, warm light..."
     zoom_direction: up      # up | down | left | right | in
     zoom_amount: 1.30       # zoom factor (1.0 = no zoom, 1.3 = 30% zoom in)
@@ -85,15 +87,19 @@ scenes:
     prompt: "..."
 ```
 
-### Lockable fields — lock these once approved to prevent regeneration
+### Auto-locking — how it works
 
-| Field | Skips |
-|---|---|
-| `still_path` | Image generation for that scene |
-| `animate: true` + `clip_path` | Grok i2v call for that scene |
-| `audio_path` + `words_path` | Voiceover generation (both required) |
-| `avatar.avatar_track` | Aurora avatar generation |
-| `avatar.avatar_track_keyed` | Chroma key step |
+**`still_path` and `clip_path` are written automatically to the plan YAML after each generation.** You do not need to add them manually. The pipeline skips any scene that already has these fields set.
+
+To regenerate a scene: delete its `still_path` (and `clip_path` if animated) from the YAML and re-run. Everything else stays locked.
+
+| Field | Skips | Written automatically? |
+|---|---|---|
+| `still_path` | Image generation for that scene | ✓ yes — after generate_image |
+| `animate: true` + `clip_path` | Grok i2v call for that scene | ✓ yes — after animate_scenes |
+| `audio_path` + `words_path` | Voiceover generation (both required) | no — lock manually after first good VO |
+| `avatar.avatar_track` | Aurora avatar generation | no — lock manually |
+| `avatar.avatar_track_keyed` | Chroma key step | no — lock manually |
 
 ### Model aliases
 
@@ -130,8 +136,8 @@ Aurora (FAL lip-sync) generates an avatar track from the character image + full 
 ```yaml
 avatar:
   full_audio: true          # one Aurora call for the entire voiceover
-  avatar_track: .parallax/output/v12/avatar_track.mp4
-  avatar_track_keyed: .parallax/output/v12/avatar_track_keyed.mov
+  avatar_track: parallax/output/v12/avatar_track.mp4
+  avatar_track_keyed: parallax/output/v12/avatar_track_keyed.mov
 ```
 
 - Always use `full_audio: true` — per-scene Aurora calls are wasteful
@@ -174,22 +180,22 @@ Never animate scenes the user hasn't approved. Follow this order to avoid burnin
 
 **Stage 2 — Stills + Ken Burns cut:** Run `parallax produce` with no animated scenes. This generates stills and a full Ken Burns assembly with VO so the user can review pacing, composition, and cuts cheaply.
 
-**Stage 3 — Approve and animate:** For scenes the user approves for animation, add `animate: true`. Lock the approved stills with `still_path`. Re-run — only the newly animated scenes incur Grok costs.
+**Stage 3 — Approve and animate:** For scenes the user approves for animation, add `animate: true`. Stills are already auto-locked from Stage 2 — do not manually add `still_path`. Re-run — only scenes with `animate: true` and no `clip_path` incur Grok costs.
 
-**Stage 4 — Lock approved clips:** Add `clip_path` to each approved animated scene. Any scene needing a re-prompt gets its `still_path` cleared and `animate: true` added; everything else stays locked.
+**Stage 4 — Iterate:** `clip_path` is auto-locked after generation. To re-prompt a scene, delete its `still_path` and `clip_path` from the YAML and update the prompt. Everything else stays locked automatically.
 
 ```sh
 # Stage 2 — stills + Ken Burns only (no animate: true in YAML yet)
-parallax produce --folder ./project --plan ./project/.parallax/scratch/plan.yaml
+parallax produce --folder ./project --plan ./project/parallax/scratch/plan.yaml
 
 # Stage 3 — after approval, add animate: true to approved scenes
-parallax produce --folder ./project --plan ./project/.parallax/scratch/plan.yaml
+parallax produce --folder ./project --plan ./project/parallax/scratch/plan.yaml
 
 # Stage 4 — lock clips, iterate on any remaining scenes
-parallax produce --folder ./project --plan ./project/.parallax/scratch/plan.yaml
+parallax produce --folder ./project --plan ./project/parallax/scratch/plan.yaml
 ```
 
-Each run auto-increments the output version. Output lands in `.parallax/output/vN/`.
+Each run auto-increments the output version. Output lands in `parallax/output/vN/`.
 
 ---
 

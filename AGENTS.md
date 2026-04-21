@@ -11,10 +11,10 @@ Reads a pre-planned scene manifest and runs the pipeline directly — no agent, 
 ```sh
 parallax produce \
   --folder "/path/to/project" \
-  --plan  "/path/to/project/.parallax/scratch/my_plan.yaml"
+  --plan  "/path/to/project/parallax/scratch/my_plan.yaml"
 ```
 
-**`--folder`** — the project root. Output lands in `{folder}/.parallax/output/vN/`.
+**`--folder`** — the project root. Output lands in `{folder}/parallax/output/vN/`.
 **`--plan`** — a YAML file describing every scene, voice, model, and optional locked stills.
 
 ---
@@ -37,9 +37,9 @@ headline_bg: white
 headline_color: black
 
 # --- Locked assets (skip regeneration) ---
-character_image: .parallax/scratch/ref.png   # relative to --folder
-audio_path: .parallax/output/v6/voiceover.mp3
-words_path: .parallax/output/v6/vo_words.json
+character_image: parallax/scratch/ref.png   # relative to --folder
+audio_path: parallax/output/v6/voiceover.mp3
+words_path: parallax/output/v6/vo_words.json
 
 # --- Scenes ---
 scenes:
@@ -48,12 +48,12 @@ scenes:
     reference: true               # use character_image as reference
     vo_text: "Words spoken here."
     prompt: "Image generation prompt."
-    # still_path: .parallax/output/v6/nano-banana_abc123.png  # lock in a generated still
+    # still_path: parallax/output/v6/nano-banana_abc123.png  # lock in a generated still
 
   - index: 1
     shot_type: broll
     animate: true                 # generate video clip via Grok image-to-video
-    clip_path: .parallax/output/v17/scene_01_animated.mp4  # lock approved clip
+    clip_path: parallax/output/v17/scene_01_animated.mp4  # lock approved clip
     motion_prompt: "Slow drift..."
     zoom_direction: up            # up | down | left | right | in  (progressive zoom+pan)
     zoom_amount: 1.30             # zoom factor: 1.0 = none, 1.3 = 30% zoom in over clip
@@ -67,10 +67,10 @@ scenes:
 
 ```yaml
 avatar:
-  image: .parallax/scratch/avatar_blue_bg.png   # blue-screen source image
+  image: parallax/scratch/avatar_blue_bg.png   # blue-screen source image
   full_audio: true              # one Aurora call for full voiceover (not per-scene)
-  avatar_track: .parallax/output/v12/avatar_track.mp4          # lock after first gen
-  avatar_track_keyed: .parallax/output/v12/avatar_track_keyed.mov  # pre-keyed ProRes 4444
+  avatar_track: parallax/output/v12/avatar_track.mp4          # lock after first gen
+  avatar_track_keyed: parallax/output/v12/avatar_track_keyed.mov  # pre-keyed ProRes 4444
   track_start_s: 0.0
   position: bottom_left         # bottom_left | bottom_right | top_left | top_right
   size: 0.70                    # fraction of frame width
@@ -110,11 +110,11 @@ The plan YAML is the single artifact you edit between versions. Lock in stills a
 
 ```sh
 # First full run — generates everything, creates v1
-parallax produce --folder ./rise1 --plan ./rise1/.parallax/scratch/plan.yaml
+parallax produce --folder ./rise1 --plan ./rise1/parallax/scratch/plan.yaml
 
 # After approving stills: add still_path to each scene in the YAML, re-run
 # Only unlocked scenes regenerate; output lands in v2
-parallax produce --folder ./rise1 --plan ./rise1/.parallax/scratch/plan.yaml
+parallax produce --folder ./rise1 --plan ./rise1/parallax/scratch/plan.yaml
 ```
 
 Each `produce` run calls `scan_project_folder`, which auto-increments the output version (v1 → v2 → v3…).
@@ -129,7 +129,7 @@ parallax usage                      # cost + call summary
 parallax update                     # upgrade via uv
 
 # Test a single scene's video filter without running the full pipeline
-parallax test-scene --folder ./project --plan ./project/.parallax/scratch/plan.yaml --index 0
+parallax test-scene --folder ./project --plan ./project/parallax/scratch/plan.yaml --index 0
 ```
 
 `test-scene` applies only the zoom/pan filter for the given scene index, saves to `/tmp/parallax_test_scene_NN.mp4`, and opens it. Use this to verify zoom, direction, and amount before committing to a full produce run.

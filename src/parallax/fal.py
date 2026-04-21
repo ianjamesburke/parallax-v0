@@ -59,13 +59,13 @@ def _default_uploader(path: Path) -> str:
     # fal_client encodes the filename as ASCII in the Content-Disposition header.
     # macOS screenshot filenames contain U+202F (narrow no-break space) before AM/PM,
     # which trips the codec. Copy to a temp file with an ASCII-safe name first.
-    safe_name = path.name.encode("ascii", errors="replace").decode("ascii").replace("?", "_")
+    safe_name = path.name.encode("ascii", errors="replace").decode("ascii").replace("?", "_").replace(" ", "_")
     if safe_name == path.name:
-        return fal_client.upload_file(str(path))
+        return fal_client.upload_file(path)
     with tempfile.TemporaryDirectory() as tmp:
         safe_path = Path(tmp) / safe_name
         shutil.copy2(path, safe_path)
-        return fal_client.upload_file(str(safe_path))
+        return fal_client.upload_file(safe_path)
 
 
 def _url_ext(url: str) -> str:
