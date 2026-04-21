@@ -32,33 +32,43 @@ def _load_font(size: int) -> Any:
     return ImageFont.load_default()
 
 
-def render_mock_image(prompt: str, model: str) -> Path:
+def render_mock_image(prompt: str, model: str, out_dir: Path | None = None) -> Path:
     """Render a PNG that contains the request parameters as readable text.
 
     This is the test-mode substitute for any real external image generator.
     The goal is full transparency: the returned file IS the record of what
     the agent asked for — no network, no spend.
     """
-    out = output_dir()
+    out = out_dir or output_dir()
     try:
         out.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         raise RuntimeError(f"shim: could not create output dir {out}: {e}") from e
 
-    img = Image.new("RGB", (1024, 1024), color=(245, 245, 250))
+    W, H = 1080, 1920
+    img = Image.new("RGB", (W, H), color=(30, 30, 46))
     draw = ImageDraw.Draw(img)
-    header_font = _load_font(34)
-    body_font = _load_font(24)
+    label_font = _load_font(28)
+    body_font = _load_font(36)
 
-    draw.text((40, 40), f"FAL {model}", fill=(18, 18, 36), font=header_font)
-    draw.line([(40, 96), (984, 96)], fill=(18, 18, 36), width=2)
-    draw.text((40, 120), "prompt:", fill=(90, 90, 110), font=body_font)
+    wrapped = textwrap.fill(prompt, width=28)
+
+    # Center the text block vertically and horizontally
+    _, _, tw, th = draw.multiline_textbbox((0, 0), wrapped, font=body_font, spacing=10)
+    label = f"SCENE · {model.upper()}"
+    _, _, lw, lh = draw.textbbox((0, 0), label, font=label_font)
+
+    total_h = lh + 24 + th
+    y_start = (H - total_h) // 2
+
+    draw.text(((W - lw) // 2, y_start), label, fill=(160, 160, 200), font=label_font)
     draw.multiline_text(
-        (40, 156),
-        textwrap.fill(prompt, width=44),
-        fill=(30, 30, 60),
+        ((W - tw) // 2, y_start + lh + 24),
+        wrapped,
+        fill=(240, 240, 255),
         font=body_font,
-        spacing=6,
+        spacing=10,
+        align="center",
     )
 
     key = hashlib.sha1(f"{prompt}|{model}".encode()).hexdigest()[:10]

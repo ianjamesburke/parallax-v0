@@ -253,6 +253,7 @@ def scan_project_folder(folder_path: str) -> str:
         "script_text": script_path.read_text().strip() if script_path else None,
         "character_image_path": str(char_path) if char_path else None,
         "clips": {str(num): path for num, path in sorted(numbered_clips.items())} if mode == "video_clips" else {},
+        "test_mode": is_test_mode(),
     }
     log.info("scan_project_folder: mode=%s script=%s clips=%d version=v%d", mode, script_path, len(numbered_clips), version)
     return json.dumps(result)
@@ -571,6 +572,85 @@ def align_scenes(scenes_json: str, words_json: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# animate_scenes — image-to-video for selected scenes
+# ---------------------------------------------------------------------------
+
+def animate_scenes(
+    scenes_json: str,
+    out_dir: str,
+    video_model: str = "xai/grok-imagine-video/image-to-video",
+) -> str:
+    """Generate video clips for scenes marked with animate=true using an image-to-video model.
+
+    Uploads each scene's still to FAL, calls the model with the scene's motion_prompt
+    (or a generic cinematic motion prompt), downloads the result, and returns updated
+    scenes_json with clip_path set on each animated scene.
+
+    Scenes without animate=true are returned unchanged (clip_path stays unset).
+    """
+    import urllib.request
+    import fal_client
+
+    scenes: list[dict] = json.loads(scenes_json)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    for scene in scenes:
+        if not scene.get("animate"):
+            continue
+        # Skip scenes whose clip is already locked
+        existing_clip = scene.get("clip_path")
+        if existing_clip and Path(existing_clip).exists():
+            log.info("animate_scenes: scene %d clip already locked, skipping", scene.get("index"))
+            continue
+        idx = scene["index"]
+        still = scene.get("still_path")
+        if not still or not Path(still).exists():
+            log.warning("animate_scenes: scene %d has no valid still, skipping", idx)
+            continue
+
+        motion_prompt = scene.get("motion_prompt") or (
+            "Subtle cinematic motion, gentle camera drift, Pixar 3D animation style. "
+            "Keep the scene stable and beautiful."
+        )
+
+        log.info("animate_scenes: scene %d — uploading still", idx)
+        image_url = fal_client.upload_file(Path(still))
+
+        log.info("animate_scenes: scene %d — calling %s", idx, video_model)
+        try:
+            result = fal_client.subscribe(video_model, arguments={
+                "image_url": image_url,
+                "prompt": motion_prompt,
+                "aspect_ratio": "9:16",
+                "resolution": "720p",
+            })
+        except Exception as e:
+            raise RuntimeError(f"animate_scenes: scene {idx} failed: {e}") from e
+
+        video_url = (result.get("video") or {}).get("url") or result.get("url")
+        if not video_url:
+            raise RuntimeError(f"animate_scenes: no video URL for scene {idx}: {result}")
+
+        raw_path = str(out / f"scene_{idx:02d}_animated_raw.mp4")
+        log.info("animate_scenes: scene %d — downloading clip", idx)
+        urllib.request.urlretrieve(video_url, raw_path)
+
+        # Strip generated audio — voiceover is mixed in at assembly
+        clip_path = str(out / f"scene_{idx:02d}_animated.mp4")
+        subprocess.run(
+            [_get_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
+             "-i", raw_path, "-an", "-c:v", "copy", clip_path],
+            check=True,
+        )
+        Path(raw_path).unlink(missing_ok=True)
+        scene["clip_path"] = clip_path
+        log.info("animate_scenes: scene %d → %s", idx, clip_path)
+
+    return json.dumps(scenes)
+
+
+# ---------------------------------------------------------------------------
 # ken_burns_assemble
 # ---------------------------------------------------------------------------
 
@@ -596,37 +676,79 @@ def ken_burns_assemble(
     out = Path(output_path or str(output_dir() / "ken_burns_draft.mp4"))
     out.parent.mkdir(parents=True, exist_ok=True)
 
+    ffmpeg = _get_ffmpeg()
+    w, h = resolution.split("x")
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         clip_paths: list[str] = []
         for i, scene in enumerate(scenes):
-            still = scene.get("still_path") or scene.get("image_path")
             dur = float(scene.get("duration_s", 5.0))
-            if not still or not Path(still).exists():
-                log.warning("Scene %d: still not found at %r, skipping", i, still)
-                continue
             clip_out = str(Path(tmp_dir) / f"scene_{i:04d}.mp4")
-            _make_kb_clip(still, dur, clip_out, resolution=resolution, scene_index=i)
+
+            zoom_dir = scene.get("zoom_direction")
+            zoom_amount = float(scene.get("zoom_amount", 1.25))
+
+            pre_animated = scene.get("clip_path")
+            if pre_animated and Path(pre_animated).exists():
+                vf = _zoom_filter(zoom_dir, zoom_amount, dur, w, h)
+                probe = subprocess.run(
+                    ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1", pre_animated],
+                    capture_output=True, text=True,
+                )
+                clip_dur = float(probe.stdout.strip() or "0")
+                src = pre_animated
+                if 0 < clip_dur < dur:
+                    # Clip is shorter than scene — build ping-pong (fwd+rev) so the
+                    # loop seam is a smooth reverse rather than a jump cut.
+                    pp_path = str(Path(tmp_dir) / f"pingpong_{i:04d}.mp4")
+                    subprocess.run(
+                        [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                         "-i", pre_animated,
+                         "-filter_complex",
+                         "[0:v]reverse[r];[0:v][r]concat=n=2:v=1:a=0[out]",
+                         "-map", "[out]",
+                         "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+                         pp_path],
+                        check=True,
+                    )
+                    src = pp_path
+                subprocess.run(
+                    [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                     "-stream_loop", "-1", "-i", src, "-t", str(dur),
+                     "-vf", vf,
+                     "-an", "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+                     clip_out],
+                    check=True,
+                )
+            else:
+                still = scene.get("still_path") or scene.get("image_path")
+                if not still or not Path(still).exists():
+                    log.warning("Scene %d: still not found at %r, skipping", i, still)
+                    continue
+                _make_kb_clip(still, dur, clip_out, resolution=resolution, scene_index=i,
+                              zoom_direction=zoom_dir, zoom_amount=zoom_amount)
+
             clip_paths.append(clip_out)
 
         if not clip_paths:
             raise RuntimeError("No scenes with valid stills to assemble")
 
-        # Concat all clips
+        # Concat — all clips already normalized to same codec/fps/resolution, stream copy is safe
         list_file = Path(tmp_dir) / "clips.txt"
         list_file.write_text("\n".join(f"file '{p}'" for p in clip_paths))
         no_audio = Path(tmp_dir) / "no_audio.mp4"
         subprocess.run(
-            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
              "-f", "concat", "-safe", "0", "-i", str(list_file),
-             "-vf", f"scale={resolution.replace('x', ':')}",
-             "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+             "-c:v", "copy", "-an",
              str(no_audio)],
             check=True,
         )
 
-        # Mux with audio
+        # Mux with voiceover
         subprocess.run(
-            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
              "-i", str(no_audio),
              "-i", str(audio_path),
              "-c:v", "copy", "-c:a", "aac", "-shortest",
@@ -638,12 +760,63 @@ def ken_burns_assemble(
     return str(out)
 
 
+def _zoom_filter(
+    direction: str | None,
+    zoom_amount: float,
+    duration: float,
+    w: str,
+    h: str,
+    fps: int = 30,
+) -> str:
+    """Return an FFmpeg -vf filter string that zooms+pans a video clip.
+
+    Uses scale+crop with the `n` frame-counter expression, which reliably
+    accumulates across frames (unlike zoompan with d=1 which resets each frame).
+
+    direction: up | down | left | right | in | None (no zoom — normalize only)
+    zoom_amount: max zoom factor (e.g. 1.25 = 25% zoom in)
+    """
+    if not direction:
+        return (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,fps={fps}")
+
+    wi, hi = int(w), int(h)
+    dur = float(duration)
+    zd = float(zoom_amount) - 1.0  # zoom delta (0 at t=0 → zoom_amount-1 at t=dur)
+
+    # Progressive zoom: scale to output size, then scale up further per-frame using eval=frame,
+    # then crop the output-size window from the correct anchor position.
+    # This gives real zoom-in (not just pan) because the scale factor grows over time.
+    # crop filter cannot vary w/h per frame, so we use a fixed-size crop from the growing frame.
+    zexpr = f"1+{zd:.4f}*t/{dur}"  # zoom factor expression: 1.0 → zoom_amount over clip
+
+    if direction == "up":
+        cx, cy = "(iw-1080)/2", "0"
+    elif direction == "down":
+        cx, cy = "(iw-1080)/2", f"(ih-{hi})"
+    elif direction == "left":
+        cx, cy = "0", f"(ih-{hi})/2"
+    elif direction == "right":
+        cx, cy = f"(iw-{wi})", f"(ih-{hi})/2"
+    else:  # "in" — centered
+        cx, cy = "(iw-1080)/2", f"(ih-{hi})/2"
+
+    return (
+        f"scale={wi}:{hi}:flags=lanczos,"
+        f"scale=w='{wi}*({zexpr})':h='{hi}*({zexpr})':eval=frame:flags=lanczos,"
+        f"crop={wi}:{hi}:{cx}:{cy},"
+        f"fps={fps}"
+    )
+
+
 def _make_kb_clip(
     image_path: str,
     duration: float,
     output_path: str,
     resolution: str = "1080x1920",
     scene_index: int = 0,
+    zoom_direction: str | None = None,
+    zoom_amount: float | None = None,
 ) -> None:
     """Pillow-based Ken Burns with float-precision crop (no zoompan jitter)."""
     from PIL import Image  # type: ignore[import]
@@ -651,6 +824,32 @@ def _make_kb_clip(
     out_w, out_h = (int(x) for x in resolution.split("x"))
     fps = 30
     total_frames = max(1, round(duration * fps))
+
+    if is_test_mode():
+        # In test mode, resize directly to output size — no crop, no zoom.
+        # Mock images are already 1080×1920; this avoids the center-crop that
+        # cuts off text when a square image is scaled into a portrait frame.
+        img = Image.open(image_path).convert("RGB")
+        img = img.resize((out_w, out_h), Image.Resampling.LANCZOS)
+        cmd = [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-f", "rawvideo", "-vcodec", "rawvideo",
+            "-s", f"{out_w}x{out_h}", "-pix_fmt", "rgb24", "-r", str(fps),
+            "-i", "pipe:0",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            "-vframes", str(total_frames),
+            output_path,
+        ]
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        assert proc.stdin is not None
+        frame_bytes = img.tobytes()
+        try:
+            for _ in range(total_frames):
+                proc.stdin.write(frame_bytes)
+        finally:
+            proc.stdin.close()
+            proc.wait()
+        return
 
     # Motion presets: (start_zoom, end_zoom, pan_x, pan_y)
     motions = [
@@ -661,7 +860,14 @@ def _make_kb_clip(
         (1.0, 1.12, 0.0, 0.4),
         (1.0, 1.12, 0.0, -0.4),
     ]
-    start_zoom, end_zoom, pan_x, pan_y = motions[scene_index % len(motions)]
+    if zoom_direction:
+        end_z = zoom_amount if zoom_amount is not None else 1.25
+        dir_map = {"up": (0.0, -1.0), "down": (0.0, 1.0),
+                   "left": (-1.0, 0.0), "right": (1.0, 0.0), "in": (0.0, 0.0)}
+        pan_x, pan_y = dir_map.get(zoom_direction, (0.0, 0.0))
+        start_zoom, end_zoom = 1.0, end_z
+    else:
+        start_zoom, end_zoom, pan_x, pan_y = motions[scene_index % len(motions)]
 
     src_w, src_h = round(out_w * 1.5), round(out_h * 1.5)
     img = Image.open(image_path).convert("RGB")
@@ -1171,6 +1377,68 @@ def _burn_captions_pillow(
 
 
 # ---------------------------------------------------------------------------
+# burn_titles
+# ---------------------------------------------------------------------------
+
+def burn_titles(
+    video_path: str,
+    titles: list[dict],
+    output_path: str | None = None,
+    fontsize: int = 72,
+    style: str = "bebas",
+) -> str:
+    """Burn timed section-title overlays onto a video.
+
+    Each entry in titles: {text, start_s, end_s}
+    Titles appear at ~20% from the top, centred, with a semi-transparent background.
+    Returns the output video path.
+    """
+    if not titles:
+        return video_path
+
+    out = Path(output_path or str(Path(video_path).with_stem(Path(video_path).stem + "_titled")))
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    s = CAPTION_STYLES.get(style, CAPTION_STYLES["bebas"])
+    fontfile = s.get("fontfile")
+    font_path = str(_FONTS_DIR / fontfile) if fontfile else s.get("system_font", "")
+
+    filters = []
+    for t in titles:
+        text = t["text"]
+        start_s = float(t["start_s"])
+        end_s = float(t["end_s"])
+        escaped = text.replace("\\", "\\\\").replace("'", "\u2019").replace(":", "\\:")
+        if s.get("uppercase"):
+            escaped = escaped.upper()
+        filters.append(
+            f"drawtext=fontfile='{font_path}'"
+            f":text='{escaped}'"
+            f":fontsize={fontsize}"
+            f":fontcolor=white"
+            f":bordercolor=black:borderw=5"
+            f":box=1:boxcolor=black@0.55:boxborderw=22"
+            f":x=(w-tw)/2"
+            f":y=h*20/100"
+            f":enable='gte(t,{start_s})*lt(t,{end_s})'"
+        )
+
+    result = subprocess.run(
+        [_get_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
+         "-i", video_path,
+         "-vf", ",".join(filters),
+         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+         "-c:a", "copy",
+         str(out)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"burn_titles failed:\n{result.stderr[:500]}")
+    log.info("burn_titles: wrote %s", out)
+    return str(out)
+
+
+# ---------------------------------------------------------------------------
 # burn_headline
 # ---------------------------------------------------------------------------
 
@@ -1230,6 +1498,228 @@ def burn_headline(
     if result.returncode != 0:
         raise RuntimeError(f"burn_headline failed:\n{result.stderr[:500]}")
     log.info("burn_headline: wrote %s", out)
+    return str(out)
+
+
+# ---------------------------------------------------------------------------
+# generate_avatar_clips
+# ---------------------------------------------------------------------------
+
+def generate_avatar_clips(
+    scenes_json: str,
+    audio_path: str,
+    character_image: str,
+    avatar_scene_indices: list[int],
+    out_dir: str,
+    aurora_prompt: str | None = None,
+    full_audio: bool = False,
+) -> str:
+    """Generate a lip-synced avatar track via fal-ai/creatify/aurora.
+
+    full_audio=True (recommended): one Aurora call with the full voiceover — one
+    continuous talking clip starting at t=0. avatar_scene_indices is ignored.
+
+    full_audio=False (legacy): splits audio per scene, calls Aurora once per scene,
+    concatenates. Use only when the avatar should only appear during specific scenes.
+
+    Returns JSON:
+      {"clips": [...], "avatar_track": path, "track_start_s": float}
+    """
+    import urllib.request
+    import fal_client
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    aurora_args: dict = {"resolution": "720p"}
+    if aurora_prompt:
+        aurora_args["prompt"] = aurora_prompt
+
+    log.info("avatar: uploading character image %s", character_image)
+    aurora_args["image_url"] = fal_client.upload_file(Path(character_image))
+
+    if full_audio:
+        log.info("avatar: full-audio mode — uploading full voiceover")
+        aurora_args["audio_url"] = fal_client.upload_file(Path(audio_path))
+        log.info("avatar: calling Aurora (full voiceover)")
+        try:
+            result = fal_client.subscribe("fal-ai/creatify/aurora", arguments=aurora_args)
+        except Exception as e:
+            raise RuntimeError(f"Aurora failed: {e}") from e
+        video_url = (result.get("video") or {}).get("url") or result.get("url")
+        if not video_url:
+            raise RuntimeError(f"Aurora returned no video URL: {result}")
+        avatar_track = out / "avatar_track.mp4"
+        log.info("avatar: downloading full clip")
+        urllib.request.urlretrieve(video_url, str(avatar_track))
+        log.info("avatar: track written %s", avatar_track)
+        return json.dumps({
+            "clips": [{"index": -1, "path": str(avatar_track), "start_s": 0.0}],
+            "avatar_track": str(avatar_track),
+            "track_start_s": 0.0,
+        })
+
+    # Per-scene mode (legacy)
+    ffmpeg = _get_ffmpeg()
+    scenes: list[dict] = json.loads(scenes_json)
+    clips: list[dict] = []
+    for scene in scenes:
+        idx = scene["index"]
+        if idx not in avatar_scene_indices:
+            continue
+        start_s = scene.get("start_s", 0.0)
+        dur = scene.get("duration_s", 0.0)
+        if dur <= 0:
+            log.warning("avatar: scene %d has zero duration, skipping", idx)
+            continue
+
+        audio_clip = out / f"avatar_audio_{idx:03d}.mp3"
+        subprocess.run(
+            [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+             "-i", audio_path, "-ss", str(start_s), "-t", str(dur),
+             "-c", "copy", str(audio_clip)],
+            check=True,
+        )
+        log.info("avatar: scene %d — uploading audio clip (%.2fs)", idx, dur)
+        scene_args = {**aurora_args, "audio_url": fal_client.upload_file(audio_clip)}
+        log.info("avatar: scene %d — calling Aurora", idx)
+        try:
+            result = fal_client.subscribe("fal-ai/creatify/aurora", arguments=scene_args)
+        except Exception as e:
+            raise RuntimeError(f"Aurora failed for scene {idx}: {e}") from e
+        video_url = (result.get("video") or {}).get("url") or result.get("url")
+        if not video_url:
+            raise RuntimeError(f"Aurora returned no video URL for scene {idx}: {result}")
+        clip_path = out / f"avatar_clip_{idx:03d}.mp4"
+        log.info("avatar: scene %d — downloading clip", idx)
+        urllib.request.urlretrieve(video_url, str(clip_path))
+        clips.append({"index": idx, "path": str(clip_path),
+                      "start_s": start_s, "end_s": scene.get("end_s", start_s + dur),
+                      "duration_s": dur})
+
+    if not clips:
+        raise RuntimeError("No avatar clips generated — check avatar_scene_indices")
+
+    concat_list = out / "avatar_concat.txt"
+    concat_list.write_text("\n".join(f"file '{c['path']}'" for c in clips))
+    avatar_track = out / "avatar_track.mp4"
+    subprocess.run(
+        [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+         "-f", "concat", "-safe", "0", "-i", str(concat_list),
+         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+         "-c:a", "aac", str(avatar_track)],
+        check=True,
+    )
+    log.info("avatar: track written %s (%d clips)", avatar_track, len(clips))
+    return json.dumps({
+        "clips": clips,
+        "avatar_track": str(avatar_track),
+        "track_start_s": clips[0]["start_s"],
+    })
+
+
+# ---------------------------------------------------------------------------
+# key_avatar_track  — pre-key once, composite forever
+# ---------------------------------------------------------------------------
+
+def key_avatar_track(
+    avatar_track: str,
+    chroma_key: str,
+    output_path: str | None = None,
+    similarity: float = 0.30,
+    blend: float = 0.10,
+) -> str:
+    """Apply chromakey to avatar_track once, saving a ProRes 4444 clip with alpha.
+
+    The result can be overlaid directly without any chroma key filter, eliminating
+    the need to re-key on every composite pass.
+    """
+    src = Path(avatar_track)
+    out = Path(output_path) if output_path else src.with_stem(src.stem + "_keyed").with_suffix(".mov")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    ffmpeg = _get_ffmpeg()
+    result = subprocess.run(
+        [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+         "-i", str(src),
+         "-vf", f"chromakey={chroma_key}:{similarity}:{blend}",
+         "-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le",
+         str(out)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"key_avatar_track failed:\n{result.stderr[:800]}")
+    log.info("key_avatar_track: wrote %s", out)
+    return str(out)
+
+
+# ---------------------------------------------------------------------------
+# burn_avatar
+# ---------------------------------------------------------------------------
+
+def burn_avatar(
+    video_path: str,
+    avatar_track: str,
+    track_start_s: float,
+    output_path: str | None = None,
+    position: str = "bottom_left",
+    size: float = 0.22,
+    chroma_key: str | None = None,
+    chroma_similarity: float = 0.30,
+    chroma_blend: float = 0.10,
+    y_offset_pct: float | None = None,
+) -> str:
+    """Composite a talking avatar track as PiP over a video.
+
+    avatar_track: path to avatar clip — either raw (pass chroma_key to key at composite
+                  time) or pre-keyed .mov with alpha (omit chroma_key for clean overlay).
+    track_start_s: when in the main video the avatar track should begin
+    position: bottom_left | bottom_right | top_left | top_right
+    size: avatar width as fraction of video width (default 0.22 = 22%)
+    chroma_key: key out this color at composite time (use only if not pre-keyed)
+    y_offset_pct: bottom edge position as fraction from screen bottom (0.4 = 40% up)
+    """
+    src = Path(video_path)
+    out = Path(output_path) if output_path else src.with_stem(src.stem + "_avatar")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    ffmpeg = _get_ffmpeg()
+
+    margin = 20
+    scale_filter = f"[1:v]scale=iw*{size}:-1[av_raw]"
+
+    if chroma_key:
+        key_filter = f"[av_raw]chromakey={chroma_key}:{chroma_similarity}:{chroma_blend}[av]"
+        av_label = "[av]"
+        extra_filters = f"{scale_filter};{key_filter}"
+    else:
+        av_label = "[av_raw]"
+        extra_filters = scale_filter
+
+    is_right = "right" in position
+    x = f"W-w-{margin}" if is_right else str(margin)
+    if y_offset_pct is not None:
+        # Place avatar bottom edge at y_offset_pct from screen bottom
+        y = f"H*{1.0 - y_offset_pct:.4f}-h"
+    elif "top" in position:
+        y = str(margin)
+    else:
+        y = f"H-h-{margin}"
+    xy = f"{x}:{y}"
+    overlay_filter = f"[0:v]{av_label}overlay={xy}:eof_action=endall[out]"
+    filter_complex = f"{extra_filters};{overlay_filter}"
+
+    result = subprocess.run(
+        [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+         "-i", video_path,
+         "-itsoffset", str(track_start_s), "-i", avatar_track,
+         "-filter_complex", filter_complex,
+         "-map", "[out]", "-map", "0:a",
+         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+         "-c:a", "copy", str(out)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"burn_avatar failed:\n{result.stderr[:800]}")
+    log.info("burn_avatar: wrote %s", out)
     return str(out)
 
 

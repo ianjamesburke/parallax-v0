@@ -7,9 +7,7 @@ import subprocess
 import sys
 
 from . import usage
-from .backends import AVAILABLE_BACKENDS, run as backend_run
 from .log import configure as configure_logging
-from .update_check import check_for_update
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,93 +21,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    run_p = sub.add_parser("run", help="Run a creative brief through the agent loop.")
-    run_p.add_argument("--brief", required=True, help="Creative brief / prompt.")
-    run_p.add_argument("--resume", dest="session_id", default=None, help="Resume a session by ID.")
-    run_p.add_argument(
-        "--backend",
-        choices=AVAILABLE_BACKENDS,
-        default=None,
-        help="Which backend to use (default: claude-code; override with PARALLAX_BACKEND env).",
+    produce_p = sub.add_parser(
+        "produce",
+        help="Run a pre-planned scene manifest directly — no agent, no replanning.",
+    )
+    produce_p.add_argument(
+        "--folder", required=True,
+        help="Path to the project folder.",
+    )
+    produce_p.add_argument(
+        "--plan", required=True,
+        help="Path to a plan YAML file with scenes, prompts, voice, and model settings.",
     )
 
-    # --- Voiceover ---
-    run_p.add_argument(
-        "--voice",
-        default=None,
-        help=(
-            "ElevenLabs voice name (partial match), full name, or raw voice ID. "
-            "Default: george. Run 'parallax voices' to browse all 700+ options."
-        ),
+    test_scene_p = sub.add_parser(
+        "test-scene",
+        help="Apply the video filter for one scene and open the result. No full pipeline.",
     )
-    run_p.add_argument(
-        "--speed", type=float, default=None,
-        help="Voiceover speed multiplier. Default: 1.1.",
-    )
-
-    # --- Video ---
-    run_p.add_argument(
-        "--resolution",
-        choices=["1080x1920", "1920x1080"],
-        default=None,
-        help="Output resolution. Default: 1080x1920 (vertical).",
-    )
-
-    # --- Image generation ---
-    run_p.add_argument(
-        "--image-model",
-        choices=["draft", "mid", "premium", "nano-banana", "grok"],
-        default=None,
-        dest="image_model",
-        help="Image generation tier. Default: mid.",
-    )
-
-    # --- Captions ---
-    run_p.add_argument(
-        "--caption-style",
-        choices=["bangers", "impact", "bebas", "anton", "clean"],
-        default=None,
-        dest="caption_style",
-        help="Caption font/style preset. Default: anton.",
-    )
-    run_p.add_argument(
-        "--fontsize", type=int, default=None,
-        help="Caption font size in pixels. Default: 70.",
-    )
-    run_p.add_argument(
-        "--words-per-chunk", type=int, default=None, dest="words_per_chunk",
-        help="Words per caption chunk. Default: 1 (one word at a time).",
-    )
-    run_p.add_argument(
-        "--no-captions", action="store_true", dest="no_captions",
-        help="Skip caption burning entirely.",
-    )
-
-    # --- Headline ---
-    run_p.add_argument(
-        "--headline", default=None,
-        help="Overlay a persistent headline title (e.g. 'SHE TRAINS ALONE'). Omit to skip.",
-    )
-    run_p.add_argument(
-        "--headline-fontsize", type=int, default=None, dest="headline_fontsize",
-        help="Headline font size. Default: 64.",
-    )
-    run_p.add_argument(
-        "--headline-bg", default=None, dest="headline_bg",
-        help="Headline background box color. Default: white.",
-    )
-    run_p.add_argument(
-        "--headline-color", default=None, dest="headline_color",
-        help="Headline text color. Default: black.",
-    )
-
-    chat_p = sub.add_parser("chat", help="Start an interactive session with the Parallax agent.")
-    chat_p.add_argument("--resume", dest="session_id", default=None, help="Resume a session by ID.")
-    chat_p.add_argument(
-        "--backend",
-        choices=AVAILABLE_BACKENDS,
-        default=None,
-        help="Which backend to use.",
+    test_scene_p.add_argument("--folder", required=True, help="Project folder path.")
+    test_scene_p.add_argument("--plan", required=True, help="Plan YAML path.")
+    test_scene_p.add_argument(
+        "--index", required=True, type=int,
+        help="Scene index to test (must have clip_path or still_path in the plan).",
     )
 
     voices_p = sub.add_parser("voices", help="Browse ElevenLabs voices with bios.")
@@ -140,24 +73,13 @@ def main(argv: list[str] | None = None) -> int:
         level = logging.INFO
     configure_logging(level)
 
-    # Best-effort, non-blocking: never raises, swallows network/filesystem errors.
-    # Skipped during `update` itself (no point nagging mid-upgrade).
-    if args.command != "update":
-        check_for_update()
+    if args.command == "produce":
+        from .produce import run_plan
+        return run_plan(folder=args.folder, plan_path=args.plan)
 
-    if args.command == "run":
-        brief = args.brief
-        overrides = _build_overrides(args)
-        if overrides:
-            brief = f"{brief}\n\n{overrides}"
-        result = backend_run(brief=brief, session_id=args.session_id, backend=args.backend)
-        print(f"[session {result['session_id']}]")
-        if result["text"]:
-            print(result["text"])
-        return 0
-
-    if args.command == "chat":
-        return _run_chat(args.session_id, args.backend)
+    if args.command == "test-scene":
+        from .produce import test_scene
+        return test_scene(folder=args.folder, plan_path=args.plan, scene_index=args.index)
 
     if args.command == "voices":
         return _print_voices(args.voice_filter, args.limit)
@@ -170,32 +92,6 @@ def main(argv: list[str] | None = None) -> int:
         return _run_update()
 
     return 2
-
-
-def _run_chat(session_id: str | None, backend: str | None) -> int:
-    if session_id:
-        print(f"Resuming session {session_id}. Type your message, Ctrl+C or empty line to exit.\n")
-    else:
-        print("Parallax chat. Type your message, Ctrl+C or empty line to exit.\n")
-    try:
-        while True:
-            try:
-                user_input = input("You: ").strip()
-            except EOFError:
-                break
-            if not user_input:
-                break
-            result = backend_run(brief=user_input, session_id=session_id, backend=backend)
-            session_id = result["session_id"]
-            if result["text"]:
-                print(f"\nParallax: {result['text']}\n")
-            else:
-                print(f"\n[session {session_id}]\n")
-    except KeyboardInterrupt:
-        print()
-    if session_id:
-        print(f"Session: {session_id}")
-    return 0
 
 
 def _print_voices(filter_str: str | None, limit: int) -> int:
@@ -248,39 +144,6 @@ def _print_voices(filter_str: str | None, limit: int) -> int:
         print(f"\nShowing {shown} of {total} total voices.", end="")
     print(" Pass --voice NAME or --voice ID to use one.\n")
     return 0
-
-
-def _build_overrides(args: argparse.Namespace) -> str:
-    """Build a pipeline-overrides block from CLI flags. Only includes explicitly set values."""
-    lines: list[str] = []
-    if args.voice:
-        lines.append(f"voice: {args.voice}")
-    if args.speed is not None:
-        lines.append(f"speed: {args.speed}")
-    if args.resolution:
-        lines.append(f"resolution: {args.resolution}")
-    if args.image_model:
-        lines.append(f"image_model: {args.image_model}")
-    if args.no_captions:
-        lines.append("captions: skip")
-    else:
-        if args.caption_style:
-            lines.append(f"caption_style: {args.caption_style}")
-        if args.fontsize is not None:
-            lines.append(f"fontsize: {args.fontsize}")
-        if args.words_per_chunk is not None:
-            lines.append(f"words_per_chunk: {args.words_per_chunk}")
-    if args.headline:
-        lines.append(f"headline: {args.headline}")
-        if args.headline_fontsize is not None:
-            lines.append(f"headline_fontsize: {args.headline_fontsize}")
-        if args.headline_bg:
-            lines.append(f"headline_bg: {args.headline_bg}")
-        if args.headline_color:
-            lines.append(f"headline_color: {args.headline_color}")
-    if not lines:
-        return ""
-    return "---PIPELINE OVERRIDES (apply these exactly, override all defaults)---\n" + "\n".join(lines) + "\n---"
 
 
 def _run_update() -> int:

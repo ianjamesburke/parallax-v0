@@ -29,6 +29,8 @@ class ModelSpec:
     edit_fal_id: str | None = None  # sibling endpoint used when refs are provided
     ref_param_name: str | None = None  # e.g. "image_url" (single) or "image_urls" (list)
     max_refs: int = 0  # max number of reference images accepted; 0 = not supported
+    # Portrait 9:16 params — each model uses different param names/formats.
+    portrait_args: dict[str, object] | None = None
 
     @property
     def price_usd_per_image(self) -> float:
@@ -53,6 +55,7 @@ MODELS: dict[str, ModelSpec] = {
         price_usd=0.003,
         price_unit="megapixel",
         description="Cheapest and fastest. Use for exploration, drafts, and throwaways.",
+        portrait_args={"image_size": {"width": 576, "height": 1024}},
     ),
     "mid": ModelSpec(
         alias="mid",
@@ -64,6 +67,7 @@ MODELS: dict[str, ModelSpec] = {
         edit_fal_id="fal-ai/flux/dev/image-to-image",
         ref_param_name="image_url",
         max_refs=1,
+        portrait_args={"image_size": {"width": 576, "height": 1024}},
     ),
     "premium": ModelSpec(
         alias="premium",
@@ -72,6 +76,19 @@ MODELS: dict[str, ModelSpec] = {
         price_usd=0.04,
         price_unit="megapixel",
         description="Highest quality in the Flux lineage. Use for final deliverables.",
+        portrait_args={"image_size": {"width": 576, "height": 1024}},
+    ),
+    "kontext": ModelSpec(
+        alias="kontext",
+        fal_id="fal-ai/flux-pro/kontext",
+        tier="premium",
+        price_usd=0.04,
+        price_unit="image",
+        description="FLUX Kontext — best-in-class character consistency across scenes. Use when reference_images are provided and character fidelity matters. Same endpoint handles text-to-image and reference-conditioned generation.",
+        edit_fal_id="fal-ai/flux-pro/kontext",
+        ref_param_name="image_url",
+        max_refs=1,
+        portrait_args={"image_size": {"width": 576, "height": 1024}},
     ),
     "nano-banana": ModelSpec(
         alias="nano-banana",
@@ -83,6 +100,7 @@ MODELS: dict[str, ModelSpec] = {
         edit_fal_id="fal-ai/gemini-25-flash-image/edit",
         ref_param_name="image_urls",
         max_refs=8,
+        portrait_args={"aspect_ratio": "9:16"},
     ),
     "grok": ModelSpec(
         alias="grok",

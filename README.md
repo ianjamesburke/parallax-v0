@@ -2,7 +2,7 @@
 
 Minimal agentic image-generation CLI. A creative brief goes in; image files come out. Five FAL model aliases, two backends (your Claude subscription or a raw Anthropic API key), per-call cost + time tracking.
 
-See `VISION.md` for scope and non-goals.
+See `AGENTS.md` for the full CLI reference (commands, plan YAML schema, iteration pattern). See `VISION.md` for scope and non-goals.
 
 ## Install
 

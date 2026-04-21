@@ -53,8 +53,19 @@ def _default_downloader(url: str, dest: Path) -> None:
 
 def _default_uploader(path: Path) -> str:
     import fal_client
+    import shutil
+    import tempfile
 
-    return fal_client.upload_file(str(path))
+    # fal_client encodes the filename as ASCII in the Content-Disposition header.
+    # macOS screenshot filenames contain U+202F (narrow no-break space) before AM/PM,
+    # which trips the codec. Copy to a temp file with an ASCII-safe name first.
+    safe_name = path.name.encode("ascii", errors="replace").decode("ascii").replace("?", "_")
+    if safe_name == path.name:
+        return fal_client.upload_file(str(path))
+    with tempfile.TemporaryDirectory() as tmp:
+        safe_path = Path(tmp) / safe_name
+        shutil.copy2(path, safe_path)
+        return fal_client.upload_file(str(safe_path))
 
 
 def _url_ext(url: str) -> str:
@@ -82,6 +93,7 @@ def generate(
     spec: ModelSpec,
     *,
     reference_images: list[Path] | None = None,
+    out_dir: Path | None = None,
     runner: Runner | None = None,
     downloader: Downloader | None = None,
     uploader: Uploader | None = None,
@@ -97,6 +109,8 @@ def generate(
             f"Model {spec.alias!r} does not support reference_images "
             f"(no edit endpoint). Caller should have validated this."
         )
+
+    portrait = spec.portrait_args or {}
 
     if refs:
         if len(refs) > spec.max_refs:
@@ -114,12 +128,12 @@ def generate(
         fal_id = spec.edit_fal_id
         param = spec.ref_param_name
         assert fal_id is not None and param is not None  # guarded by supports_reference
-        args: dict[str, Any] = {"prompt": prompt}
+        args: dict[str, Any] = {"prompt": prompt, **portrait}
         args[param] = ref_urls if spec.refs_are_list else ref_urls[0]
         log.info("fal call: %s prompt=%r refs=%d", fal_id, prompt[:60], len(ref_urls))
     else:
         fal_id = spec.fal_id
-        args = {"prompt": prompt}
+        args = {"prompt": prompt, **portrait}
         log.info("fal call: %s prompt=%r", fal_id, prompt[:60])
 
     try:
@@ -130,7 +144,7 @@ def generate(
     url = _first_image_url(result)
     ext = _url_ext(url)
     key = hashlib.sha1(f"{spec.alias}|{prompt}|{url}".encode()).hexdigest()[:10]
-    dest = output_dir() / f"{spec.alias}_{key}{ext}"
+    dest = (out_dir or output_dir()) / f"{spec.alias}_{key}{ext}"
     try:
         dl(url, dest)
     except Exception as e:
