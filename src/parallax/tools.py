@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 from . import fal, usage
-from .context import current_backend, current_session_id
+from .context import current_session_id
 from .log import get_logger
 from .pricing import ModelSpec, resolve
 from .shim import is_test_mode, render_mock_image
@@ -33,7 +33,7 @@ def generate_image(
 
     rec = usage.record(
         session_id=current_session_id.get(),
-        backend=current_backend.get(),
+        backend="produce",
         alias=spec.alias,
         fal_id=spec.fal_id,
         tier=spec.tier,
