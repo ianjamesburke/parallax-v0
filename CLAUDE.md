@@ -21,8 +21,7 @@ Do not leave AGENTS.md stale. A fresh agent reading it should be able to operate
 
 Never write ad-hoc Python scripts to run pipeline steps. Everything must go through the CLI:
 
-- **Pre-planned scenes with specific prompts:** `parallax produce --folder <path> --plan <plan.yaml>`
-- **Agent-driven from a brief or folder:** `parallax run --brief <path or text>`
+- **All pipeline runs:** `parallax produce --folder <path> --plan <plan.yaml>`
 
 If a use case can't be handled by the CLI, add the capability to the CLI first, then use it.
 

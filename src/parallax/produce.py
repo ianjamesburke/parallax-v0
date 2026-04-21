@@ -35,7 +35,7 @@ from typing import Any
 import yaml
 
 from . import tools_video
-from .context import current_backend, current_session_id
+from .context import current_session_id
 from .log import get_logger
 from .tools import generate_image
 
@@ -86,7 +86,6 @@ def run_plan(folder: str | Path, plan_path: str | Path) -> int:
             return 1
         character_image = str(resolved)
 
-    current_backend.set("produce")
     current_session_id.set(f"produce-{plan_path.stem}")
 
     # 1. Scan project folder → versioned output_dir

@@ -2,6 +2,12 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-21 — [CHANGED] Removed agent backends; CLI is now produce-only
+
+Deleted `claude-code` and `anthropic-api` backends along with session tracking, the `parallax run` command, and the update-check nag. The CLI now has exactly one pipeline entry point: `parallax produce --folder <path> --plan <plan.yaml>`. `current_backend` ContextVar removed — usage records hardcode `backend="produce"`. AGENTS.md and env var table updated to remove all agent/backend references.
+
+**Breaks if:** `parallax produce` fails to write usage records (the `backend` field in `~/.parallax/usage.ndjson` should read `"produce"`).
+
 ## 2026-04-20 — [FIX] drawtext escape order: backslash before colon
 
 `_style_drawtext_filter` and `burn_headline` were running `replace(":", "\\:")` before `replace("\\", "\\\\")`. This doubled the backslashes inserted by the colon escape — turning `\:` (correct escaped colon) into `\\:` (literal backslash + option delimiter). Any word containing `:` (e.g. `Week 1:`) would corrupt the filter chain and break all subsequent drawtext filters.

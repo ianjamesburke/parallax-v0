@@ -2,22 +2,11 @@
 
 This file is the authoritative guide for agents and humans using the Parallax CLI. Keep it current whenever commands, plan YAML fields, or pipeline behavior changes.
 
-## Two workflows
+## Workflow
 
-### 1. `parallax run` — agent-driven
+### `parallax produce` — execute from a plan YAML
 
-The agent receives a brief or folder path, plans scenes autonomously, and runs the full pipeline.
-
-```sh
-parallax run --brief "/path/to/project/folder"
-parallax run --brief "A solo sailor crosses the Pacific" --voice bella --no-captions
-```
-
-Use this when you want the agent to write scene prompts from scratch.
-
-### 2. `parallax produce` — direct execution from a plan YAML
-
-Reads a pre-planned scene manifest and runs the pipeline directly — no agent, no replanning. Use this when you have specific image prompts you want to control exactly.
+Reads a pre-planned scene manifest and runs the pipeline directly — no agent, no replanning. Write specific scene prompts in the YAML; produce runs them deterministically.
 
 ```sh
 parallax produce \
@@ -135,8 +124,6 @@ Each `produce` run calls `scan_project_folder`, which auto-increments the output
 ## Other commands
 
 ```sh
-parallax run --brief "..."          # agent-driven pipeline
-parallax chat                       # interactive session
 parallax voices --filter female     # browse ElevenLabs voices
 parallax usage                      # cost + call summary
 parallax update                     # upgrade via uv
@@ -153,13 +140,9 @@ parallax test-scene --folder ./project --plan ./project/.parallax/scratch/plan.y
 
 | var | purpose |
 |---|---|
-| `FAL_KEY` | required for real image generation |
-| `ANTHROPIC_API_KEY` | required for `--backend anthropic-api` |
+| `FAL_KEY` | required for real image/video generation |
+| `AI_VIDEO_ELEVENLABS_KEY` / `ELEVENLABS_API_KEY` | required for voiceover generation |
 | `PARALLAX_TEST_MODE=1` | Pillow shim instead of FAL — no spend |
-| `PARALLAX_BACKEND` | default backend (`claude-code` or `anthropic-api`) |
-| `PARALLAX_CLAUDE_MODEL` | model for claude-code backend |
 | `PARALLAX_OUTPUT_DIR` | override default `output/` directory |
-| `PARALLAX_SESSIONS_DIR` | override `~/.parallax/sessions/` |
 | `PARALLAX_USAGE_LOG` | override `~/.parallax/usage.ndjson` |
 | `PARALLAX_LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` |
-| `PARALLAX_NO_UPDATE_CHECK=1` | silence update nag |
