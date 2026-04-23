@@ -99,6 +99,12 @@ def load_records(include_test: bool = False) -> list[dict[str, Any]]:
     return out
 
 
+def session_total(session_id: str, include_test: bool = False) -> float:
+    """Return total cost_usd for all records matching a given session_id."""
+    records = load_records(include_test=include_test)
+    return round(sum(float(r.get("cost_usd", 0.0)) for r in records if r.get("session_id") == session_id), 4)
+
+
 def summarize(include_test: bool = False) -> dict[str, Any]:
     records = load_records(include_test=include_test)
     by_alias: dict[str, dict[str, Any]] = {}

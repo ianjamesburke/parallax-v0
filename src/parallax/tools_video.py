@@ -17,8 +17,19 @@ from typing import Any
 
 import yaml
 
+from .context import current_session_id
 from .log import get_logger
 from .shim import is_test_mode, output_dir
+from . import usage as _usage
+
+# Per-second rates from fal.ai/models/xai/grok-imagine-video/image-to-video (verified 2026-04-23).
+# Cost = duration_s * rate + $0.002 image input fee. Update when FAL pricing changes.
+_GROK_I2V_RATE_480P = 0.05   # $/second @ 480p
+_GROK_I2V_RATE_720P = 0.07   # $/second @ 720p
+_GROK_I2V_INPUT_FEE = 0.002  # flat image-upload fee per clip
+# ElevenLabs eleven_multilingual_v2 — Scale plan rate (verified 2026-04-23).
+# Scale = $299/mo, 1.8M credits, 1 credit/char for v2 multilingual.
+_ELEVENLABS_COST_PER_CHAR = 0.000166  # $/char on Scale ($299/mo, 1.8M credits)
 
 log = get_logger("tools_video")
 
@@ -377,6 +388,20 @@ def generate_voiceover(
     elapsed = int((time.monotonic() - t0) * 1000)
     log.info("voiceover: done duration=%.2fs elapsed=%dms", sped_duration, elapsed)
 
+    vo_cost = round(len(text) * _ELEVENLABS_COST_PER_CHAR, 4)
+    _usage.record(
+        session_id=current_session_id.get(),
+        backend="elevenlabs",
+        alias="eleven_multilingual_v2",
+        fal_id="",
+        tier="standard",
+        prompt=text[:120],
+        output_path=str(audio_path),
+        duration_ms=elapsed,
+        cost_usd=vo_cost,
+        test_mode=is_test_mode(),
+    )
+
     return json.dumps({
         "audio_path": str(audio_path),
         "words_path": str(words_path),
@@ -645,9 +670,32 @@ def animate_scenes(
              "-i", raw_path, "-an", "-c:v", "copy", clip_path],
             check=True,
         )
+        # Probe duration before deleting raw clip — needed for per-second cost
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", raw_path],
+            capture_output=True, text=True,
+        )
+        clip_duration_s = float(probe.stdout.strip()) if probe.stdout.strip() else 6.0
+
         Path(raw_path).unlink(missing_ok=True)
         scene["clip_path"] = clip_path
-        log.info("animate_scenes: scene %d → %s", idx, clip_path)
+        log.info("animate_scenes: scene %d → %s (%.1fs)", idx, clip_path, clip_duration_s)
+
+        rate = _GROK_I2V_RATE_720P if scene_resolution == "720p" else _GROK_I2V_RATE_480P
+        cost = round(clip_duration_s * rate + _GROK_I2V_INPUT_FEE, 4)
+        _usage.record(
+            session_id=current_session_id.get(),
+            backend="fal",
+            alias="grok-i2v",
+            fal_id=video_model,
+            tier="latest",
+            prompt=motion_prompt,
+            output_path=clip_path,
+            duration_ms=0,
+            cost_usd=cost,
+            test_mode=is_test_mode(),
+        )
 
     return json.dumps(scenes)
 
@@ -1187,7 +1235,7 @@ def burn_captions(
 def _style_drawtext_filter(style: dict, text: str, start: float, end: float, fontsize: int) -> str:
     # Escape order matters: backslashes first, then other special chars.
     # Reversing this order would double-escape the backslashes inserted by later steps.
-    escaped = text.replace("\\", "\\\\").replace("'", "\u2019").replace(":", "\\:")
+    escaped = text.replace("\\", "\\\\").replace("'", "’").replace(":", "\\:")
     if style.get("uppercase"):
         escaped = escaped.upper()
 
@@ -1440,7 +1488,7 @@ def burn_titles(
         text = t["text"]
         start_s = float(t["start_s"])
         end_s = float(t["end_s"])
-        escaped = text.replace("\\", "\\\\").replace("'", "\u2019").replace(":", "\\:")
+        escaped = text.replace("\\", "\\\\").replace("'", "’").replace(":", "\\:")
         if s.get("uppercase"):
             escaped = escaped.upper()
         filters.append(
@@ -1501,22 +1549,29 @@ def burn_headline(
     fontfile = style.get("fontfile")
     font_path = str(_FONTS_DIR / fontfile) if fontfile else style.get("system_font", "")
 
-    escaped = text.replace("\\", "\\\\").replace("'", "\u2019").replace(":", "\\:")
-    if style.get("uppercase"):
-        escaped = escaped.upper()
-
-    pad = max(12, fontsize // 4)
     enable_clause = f":enable='lt(t,{end_time_s})'" if end_time_s is not None else ""
-    filter_str = (
-        f"drawtext=fontfile='{font_path}'"
-        f":text='{escaped}'"
-        f":fontsize={fontsize}"
-        f":fontcolor={text_color}"
-        f":box=1:boxcolor={bg_color}:boxborderw={pad}"
-        f":x=(w-tw)/2"
-        f":y={y_position}"
-        f"{enable_clause}"
-    )
+    pad = max(8, fontsize // 5)
+    line_height = int(fontsize * 1.30)
+
+    # One drawtext per line — each gets its own tight box (TikTok per-line style)
+    lines = text.split("\n")
+    filters = []
+    for i, line in enumerate(lines):
+        esc = line.replace("\\", "\\\\").replace("’", "’").replace("'", "’").replace(":", "\\:")
+        if style.get("uppercase"):
+            esc = esc.upper()
+        y_expr = f"({y_position})+{i}*{line_height}"
+        filters.append(
+            f"drawtext=fontfile='{font_path}'"
+            f":text='{esc}'"
+            f":fontsize={fontsize}"
+            f":fontcolor={text_color}"
+            f":box=1:boxcolor={bg_color}:boxborderw={pad}"
+            f":x=(w-tw)/2"
+            f":y={y_expr}"
+            f"{enable_clause}"
+        )
+    filter_str = ",".join(filters)
 
     result = subprocess.run(
         [_get_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
@@ -1659,7 +1714,7 @@ def key_avatar_track(
     chroma_key: str,
     output_path: str | None = None,
     similarity: float = 0.30,
-    blend: float = 0.10,
+    blend: float = 0.03,
 ) -> str:
     """Apply chromakey to avatar_track once, saving a ProRes 4444 clip with alpha.
 
@@ -1699,6 +1754,7 @@ def burn_avatar(
     chroma_similarity: float = 0.30,
     chroma_blend: float = 0.10,
     y_offset_pct: float | None = None,
+    crop_px: int = 0,
 ) -> str:
     """Composite a talking avatar track as PiP over a video.
 
@@ -1709,6 +1765,7 @@ def burn_avatar(
     size: avatar width as fraction of video width (default 0.22 = 22%)
     chroma_key: key out this color at composite time (use only if not pre-keyed)
     y_offset_pct: bottom edge position as fraction from screen bottom (0.4 = 40% up)
+    crop_px: pixels to crop from top AND bottom of avatar before scaling (masks edge artifacts)
     """
     src = Path(video_path)
     out = Path(output_path) if output_path else src.with_stem(src.stem + "_avatar")
@@ -1716,13 +1773,16 @@ def burn_avatar(
     ffmpeg = _get_ffmpeg()
 
     margin = 20
-    scale_filter = f"[1:v]scale=iw*{size}:-1[av_raw]"
+    crop_filter = f"crop=iw:ih-{2*crop_px}:0:{crop_px}," if crop_px > 0 else ""
 
     if chroma_key:
+        scale_filter = f"[1:v]{crop_filter}scale=iw*{size}:-1[av_raw]"
         key_filter = f"[av_raw]chromakey={chroma_key}:{chroma_similarity}:{chroma_blend}[av]"
         av_label = "[av]"
         extra_filters = f"{scale_filter};{key_filter}"
     else:
+        # Pre-keyed ProRes 4444 with alpha — preserve alpha channel through scale
+        scale_filter = f"[1:v]{crop_filter}scale=iw*{size}:-1,format=rgba[av_raw]"
         av_label = "[av_raw]"
         extra_filters = scale_filter
 
@@ -1736,7 +1796,7 @@ def burn_avatar(
     else:
         y = f"H-h-{margin}"
     xy = f"{x}:{y}"
-    overlay_filter = f"[0:v]{av_label}overlay={xy}:eof_action=endall[out]"
+    overlay_filter = f"[0:v]{av_label}overlay={xy}:format=auto:eof_action=endall[out]"
     filter_complex = f"{extra_filters};{overlay_filter}"
 
     result = subprocess.run(

@@ -11,6 +11,29 @@ last_synced: 2026-04-20
 
 Parallax is a CLI-first AI video pipeline. Everything flows through a plan YAML — you edit the YAML between versions, lock approved assets, and re-run. Never bypass the plan to regenerate individual assets ad-hoc.
 
+---
+
+## Concept Routing (when invoked with just a number)
+
+If the skill is invoked with only a concept ID (e.g. `/parallax 0006` or `/parallax 6`), read `concepts.json` from the project root, find the concept, and route based on status:
+
+| Status | `frameio_link` | Action |
+|---|---|---|
+| `ready_for_edits` | exists | **Revision flow** — pull Frame.io comments, apply to plan, re-render, upload |
+| `ready_for_edits` | null | **Initial render flow** — run pipeline, upload, flip to `ready_for_review` |
+| `rendering` | any | **Upload flow** — find latest render, run `upload_to_frameio.py --id N` |
+| anything else | — | Report current status and ask what to do |
+
+No need for the user to spell out the action — infer it from the concept's state.
+
+**Flip to `rendering` immediately on pickup.** As soon as routing resolves to an action (initial render or revision), before any pipeline work begins:
+1. Write `status: rendering` to `concepts.json`
+2. Push to the sheet: `uv run --with google-api-python-client --with google-auth scripts/sheets_sync.py --push-only`
+
+This prevents the tick loop or a second agent from picking up the same concept while work is in progress.
+
+---
+
 **Invoke via:** `uv run parallax` from the parallax-v0 repo root, or `parallax` if installed globally.
 
 **Project root:** `/Users/ianburke/Documents/github/parallax-v0/`
@@ -196,6 +219,66 @@ parallax produce --folder ./project --plan ./project/parallax/scratch/plan.yaml
 ```
 
 Each run auto-increments the output version. Output lands in `parallax/output/vN/`.
+
+---
+
+## Output Naming Convention
+
+After a pipeline run, copy the final output with the convention name so it's identifiable and uploadable:
+
+```sh
+cp parallax/output/vN/avatar.mp4 parallax/output/vN/0003-rise-vN.mp4
+```
+
+Convention: `{id:04d}-{slug}-v{N}.mp4` — matches what `upload_to_frameio.py` scans for. Use the zero-padded 4-digit concept ID and brand slug from `concepts.json`. Do this as the last step after verifying frames.
+
+---
+
+## Frame.io Upload
+
+All uploads go through `scripts/upload_to_frameio.py`. It handles folder lookup, clearing old files, upload, `concepts.json` update, and status flip to `ready_for_review` automatically.
+
+```sh
+# Batch — uploads all concepts with status=rendering and no frameio_link
+uv run scripts/upload_to_frameio.py
+
+# Targeted — upload concept N regardless of status or existing frameio_link (use for revisions)
+uv run scripts/upload_to_frameio.py --id 3
+```
+
+The `--id` flag is the right call for any revision re-upload. Never write custom Frame.io upload code — the script handles the project root folder, per-concept subfolder creation, and old-file cleanup internally.
+
+**Project root folder ID:** `108b8d0e-15fa-46a8-9693-e78934ac1376` (the Frame.io folder that holds per-concept subfolders — not the same as the project UUID `e8807083-...`). The script already knows this; stated here so you don't need to read the script to find it if you're debugging a raw API call.
+
+---
+
+## Revision Flow (end-to-end)
+
+When told to "address comments on concept N" or similar:
+
+1. **Read concepts.json** — confirm the concept's `frameio_link` and `folder`.
+2. **Pull Frame.io comments:**
+   ```sh
+   cd "/Users/ianburke/Library/CloudStorage/GoogleDrive-ian@narrativeads.com/My Drive/PARALLAX CONTENT"
+   uv run python3 scripts/fetch_comments.py --id N
+   ```
+   Output is one comment per line: `[timestamp_s]  text`. General (non-timecoded) comments show `-` as timestamp. Handles token refresh automatically. See the `frameio` skill for the underlying API details.
+
+   > **Do not use** `frameio_revisions.py` as a CLI (no `__main__`, zero output) or `client.get_comments_summary()` (crashes on `timestamp: null`).
+3. **Interpret and apply** — edit the plan YAML at `{folder}/parallax/scratch/v6_plan.yaml` (or whatever the active plan is). Add/modify params, unlock scenes by deleting `still_path`/`clip_path` as needed.
+4. **Re-run the pipeline:**
+   ```sh
+   cd /Users/ianburke/Documents/github/parallax-v0
+   uv run parallax produce --folder "<concept-folder>" --plan "<plan-yaml>"
+   ```
+5. **Sample frames** to confirm the change is visible (see Verification section).
+6. **Rename output** to convention: `cp parallax/output/vN/avatar.mp4 parallax/output/vN/{id:04d}-{slug}-vN.mp4`
+7. **Upload + flip status:**
+   ```sh
+   cd "/Users/ianburke/Library/CloudStorage/GoogleDrive-ian@narrativeads.com/My Drive/PARALLAX CONTENT"
+   uv run scripts/upload_to_frameio.py --id N
+   ```
+   This clears old files, uploads, updates `frameio_link`, and sets status → `ready_for_review` in `concepts.json` automatically.
 
 ---
 

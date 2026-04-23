@@ -27,14 +27,18 @@ Plan YAML schema:
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from . import tools_video
+from . import usage as _usage
 from .context import current_session_id
 from .log import get_logger
 from .tools import generate_image
@@ -66,6 +70,9 @@ def _lock_still_in_plan(plan_path: Path, plan: dict, scene_idx: int, still_path:
 def run_plan(folder: str | Path, plan_path: str | Path) -> int:
     folder = Path(folder).expanduser().resolve()
     plan_path = Path(plan_path).expanduser().resolve()
+    # Derive concept ID prefix from folder name (e.g. "0004-hims" → "0004_")
+    _id_match = re.match(r'^(\d{4})', folder.name)
+    concept_prefix = f"{_id_match.group(1)}_" if _id_match else ""
 
     if not folder.is_dir():
         print(f"Error: folder not found: {folder}", file=sys.stderr)
@@ -115,6 +122,7 @@ def run_plan(folder: str | Path, plan_path: str | Path) -> int:
     out_dir = scan["output_dir"]
     version = scan["version"]
     _log(f"output_dir: {out_dir} (v{version})")
+    convention_name = f"{folder.name}-v{version}.mp4"
 
     # 2. Generate stills
     _log(f"generating {len(scenes_raw)} stills — model={model}")
@@ -240,7 +248,7 @@ def run_plan(folder: str | Path, plan_path: str | Path) -> int:
     )
 
     # 6. Ken Burns assemble
-    draft_path = str(Path(out_dir) / "ken_burns_draft.mp4")
+    draft_path = str(Path(out_dir) / f"{concept_prefix}ken_burns_draft.mp4")
     _log(f"ken_burns_assemble → {draft_path}")
     tools_video.ken_burns_assemble(
         scenes_json=aligned_json,
@@ -252,7 +260,7 @@ def run_plan(folder: str | Path, plan_path: str | Path) -> int:
 
     # 7. Burn captions
     if not skip_captions:
-        captioned_path = str(Path(out_dir) / "captioned.mp4")
+        captioned_path = str(Path(out_dir) / f"{concept_prefix}captioned.mp4")
         _log(f"burn_captions → {captioned_path}")
         tools_video.burn_captions(
             video_path=current_video,
@@ -279,7 +287,7 @@ def run_plan(folder: str | Path, plan_path: str | Path) -> int:
             elif "start_s" in t and "end_s" in t:
                 resolved_titles.append({"text": t["text"], "start_s": t["start_s"], "end_s": t["end_s"]})
         if resolved_titles:
-            titled_path = str(Path(out_dir) / "titled.mp4")
+            titled_path = str(Path(out_dir) / f"{concept_prefix}titled.mp4")
             _log(f"burn_titles → {titled_path}")
             tools_video.burn_titles(
                 video_path=current_video,
@@ -291,11 +299,15 @@ def run_plan(folder: str | Path, plan_path: str | Path) -> int:
 
     # 10. Burn headline
     if headline:
-        final_path = str(Path(out_dir) / "final.mp4")
+        final_path = str(Path(out_dir) / f"{concept_prefix}final.mp4")
         _log(f"burn_headline → {final_path}")
-        headline_kwargs: dict[str, Any] = {"video_path": current_video, "text": headline, "output_path": final_path}
-        if headline_fontsize:
-            headline_kwargs["fontsize"] = max(12, int(int(headline_fontsize) * res_scale))
+        h_fontsize = max(12, int(int(headline_fontsize or 64) * res_scale))
+        video_width = int(resolution.split("x")[0])
+        # Wrap long headlines — each char ≈ 0.60× fontsize wide for condensed display fonts
+        max_chars = max(10, int(video_width / (h_fontsize * 0.60)))
+        headline_text = "\n".join(textwrap.wrap(headline, width=max_chars))
+        headline_kwargs: dict[str, Any] = {"video_path": current_video, "text": headline_text, "output_path": final_path}
+        headline_kwargs["fontsize"] = h_fontsize
         if headline_bg:
             headline_kwargs["bg_color"] = headline_bg
         if headline_color:
@@ -323,6 +335,7 @@ def run_plan(folder: str | Path, plan_path: str | Path) -> int:
         y_offset_pct = avatar_cfg.get("y_offset_pct")
         if y_offset_pct is not None:
             y_offset_pct = float(y_offset_pct)
+        crop_px = int(avatar_cfg.get("crop_px", 0))
         full_audio = bool(avatar_cfg.get("full_audio", False))
 
         # Resolve avatar_track_keyed (pre-keyed, has alpha — use directly, no chroma filter)
@@ -395,11 +408,26 @@ def run_plan(folder: str | Path, plan_path: str | Path) -> int:
             kwargs["chroma_key"] = chroma_key
         if y_offset_pct is not None:
             kwargs["y_offset_pct"] = y_offset_pct
+        if crop_px:
+            kwargs["crop_px"] = crop_px
         tools_video.burn_avatar(**kwargs)
         current_video = avatar_out
 
+    # Rename final output to convention: {folder.name}-v{N}.mp4
+    final_out = str(Path(out_dir) / convention_name)
+    if current_video != final_out:
+        Path(current_video).rename(final_out)
+        current_video = final_out
+
+    # Snapshot the plan into the output dir for provenance
+    shutil.copy2(str(plan_path), str(Path(out_dir) / "plan.yaml"))
+
+    # Write session cost summary
+    session_cost = _usage.session_total(current_session_id.get() or "")
+    cost_data = {"session_id": current_session_id.get(), "cost_usd": session_cost, "version": version}
+    (Path(out_dir) / "cost.json").write_text(json.dumps(cost_data, indent=2) + "\n")
+
     print(f"\n✓ {current_video}", flush=True)
-    subprocess.run(["open", current_video])
     return 0
 
 
@@ -493,5 +521,4 @@ def test_scene(folder: str | Path, plan_path: str | Path, scene_index: int) -> i
         return 1
 
     print(f"✓ {out_path}", flush=True)
-    subprocess.run(["open", out_path])
     return 0
