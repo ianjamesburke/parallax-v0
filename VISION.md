@@ -47,6 +47,32 @@ The broader Parallax is intended to wrap as a Plexi app eventually, routing LLM 
 ## Out-of-scope explicitly
 
 - No mask / inpaint / outpaint editing flows in v0.
-- No audio, video, or other modalities.
 - No workflow / state machine / approval gates — that lives in Parallax-proper.
 - No GUI / chat front-end — v0 is CLI-only.
+
+---
+
+## Module Architecture — Target State
+
+`tools_video.py` is a 70KB monolith that accumulated everything during rapid development. The target is clean domain modules with a thin public surface, each of which maps 1:1 to a CLI subcommand group:
+
+| Module | Owns | CLI group |
+|---|---|---|
+| `parallax/audio.py` | TTS generation, Whisper transcription, tempo adjustment, pause trimming | `parallax audio` |
+| `parallax/video.py` | Frame extraction, color sampling, Ken Burns, clip assembly, compositing, avatar overlay | `parallax video` |
+| `parallax/stills.py` | Image generation (FAL), still locking, reference image handling | `parallax stills` |
+
+`tools_video.py` becomes an implementation detail — a private module that the domain modules import from. It is not deleted in one go; it dissolves as functions are touched for real reasons (bug fixes, new features) and migrated into the right domain module.
+
+### Migration strategy
+
+**Phase 1 (now):** Create `parallax/audio.py` and `parallax/video.py` as thin public surfaces. They import from `tools_video.py` and re-export a clean API. No behavior changes. This gives agents and callers the correct namespace immediately.
+
+**Phase 2 (ongoing):** Each time a function in `tools_video.py` is touched for a real reason, move it into the appropriate domain module and update callers. Never migrate a function speculatively — only when you're already in there. The monolith dissolves function-by-function with zero regression risk.
+
+**Priority deferred extraction — the narration pipeline:**
+The TTS/voiceover stack (`generate_voiceover`, `_apply_atempo`, `_trim_long_pauses`, fixed-WPM fallback) is the largest self-contained chunk in `tools_video.py` and the clearest candidate for `parallax/audio.py`. It has no video dependencies. Extract it as a unit when next touching audio behavior.
+
+### Agent-facing benefit
+
+Agents naturally reach for `from parallax.audio import transcribe_words` or `parallax video frame ...`. Making the namespace match that instinct eliminates the discovery loop agents currently run when the function doesn't exist where they expect it.

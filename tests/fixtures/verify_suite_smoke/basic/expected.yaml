@@ -1,0 +1,42 @@
+name: basic
+description: Two-scene smoke fixture exercising every schema branch.
+paid: false
+cost_usd_max: 0.0
+
+final:
+  resolution: 1080x1920
+  duration_s:
+    min: 0.5
+    max: 30.0
+  audio_video_diff_s_max: 0.10
+  scene_count: 2
+
+stages:
+  stills:
+    files_must_exist:
+      - "stills/*.png"
+    resolution: 1080x1920
+  voiceover:
+    files_must_exist:
+      - "audio/voiceover.*"
+      - "audio/vo_words.json"
+  assemble:
+    # With captions: skip and no headline, stage_finalize renames the
+    # ken_burns draft mp4 up to `<folder>-vN.mp4` at out_dir root. We
+    # assert on the renamed file so the contract holds for both cases.
+    files_must_exist:
+      - "*.mp4"
+    resolution: 1080x1920
+    contiguous_cover: true
+
+manifest:
+  keys_required: [model, voice, resolution, scenes]
+  scene_keys_required: [index, vo_text, prompt, start_s, end_s, duration_s]
+
+run_log:
+  # Per-stage log lines come through the Settings.events emitter (stdout),
+  # not the runlog JSONL — the runlog only records run.start, plan.loaded,
+  # external-call events, and run.end. Assertions here target the JSONL log
+  # at ~/.parallax/logs/<run_id>.log.
+  must_not_contain: ["Traceback", "\"level\": \"ERROR\""]
+  must_contain: ["plan.loaded", "run.end"]

@@ -31,7 +31,7 @@ def test_render_mock_image_writes_png(tmp_path):
     assert Path(path).suffix == ".png"
     with Image.open(path) as img:
         assert img.format == "PNG"
-        assert img.size == (1024, 1024)
+        assert img.size == (1080, 1920)
 
 
 def test_render_mock_image_is_deterministic_per_request():

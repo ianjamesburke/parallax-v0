@@ -31,6 +31,7 @@ def usage_log_path() -> Path:
 class UsageRecord:
     ts: str
     session_id: str | None
+    run_id: str | None
     backend: str
     alias: str
     fal_id: str
@@ -54,11 +55,16 @@ def record(
     duration_ms: int,
     cost_usd: float,
     test_mode: bool,
+    run_id: str | None = None,
 ) -> UsageRecord:
     """Append a single usage event to the NDJSON log."""
+    if run_id is None:
+        from . import runlog
+        run_id = runlog.current_run_id()
     rec = UsageRecord(
         ts=datetime.now(timezone.utc).isoformat(),
         session_id=session_id,
+        run_id=run_id,
         backend=backend,
         alias=alias,
         fal_id=fal_id,
@@ -103,6 +109,16 @@ def session_total(session_id: str, include_test: bool = False) -> float:
     """Return total cost_usd for all records matching a given session_id."""
     records = load_records(include_test=include_test)
     return round(sum(float(r.get("cost_usd", 0.0)) for r in records if r.get("session_id") == session_id), 4)
+
+
+def run_total(run_id: str, include_test: bool = False) -> float:
+    """Return total cost_usd for all records matching a given run_id.
+
+    Unlike session_total, run_id is unique per `parallax produce` invocation,
+    so this never bleeds cost across runs that happen to share a session_id.
+    """
+    records = load_records(include_test=include_test)
+    return round(sum(float(r.get("cost_usd", 0.0)) for r in records if r.get("run_id") == run_id), 4)
 
 
 def summarize(include_test: bool = False) -> dict[str, Any]:

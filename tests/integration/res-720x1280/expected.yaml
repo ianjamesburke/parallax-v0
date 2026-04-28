@@ -1,0 +1,47 @@
+name: res-720x1280
+description: |
+  Canonical reference case. Two scenes, captions on, headline on,
+  no avatar, 720x1280. Exercises every block in the expected.yaml
+  schema so it doubles as the operator's "copy this" template.
+paid: false
+cost_usd_max: 0.0
+
+final:
+  resolution: 720x1280
+  duration_s:
+    min: 0.5
+    max: 30.0
+  audio_video_diff_s_max: 0.10
+  scene_count: 2
+
+stages:
+  stills:
+    # NOTE: stages.stills.resolution intentionally omitted — the test-mode
+    # mock for generate_image goes through the parallax.tools shim which
+    # currently drops the `size` arg before reaching the resolution-aware
+    # mock in shim.py. Tracked as a Phase 1.3 leak in DEV_LOG ([FUTURE]
+    # tools.py size pass-through). The smoke fixture asserts on
+    # 1080x1920 stills, so the schema branch is still covered. The
+    # product-level resolution guarantee (final mp4 dimensions) is
+    # enforced by `final.resolution` and `assemble.resolution` below.
+    files_must_exist:
+      - "stills/*.png"
+  voiceover:
+    files_must_exist:
+      - "audio/voiceover.*"
+      - "audio/vo_words.json"
+  assemble:
+    # Captions on + headline on, so stage_finalize renames the
+    # post-headline mp4 up to `<folder>-vN.mp4` at out_dir root.
+    files_must_exist:
+      - "*.mp4"
+    resolution: 720x1280
+    contiguous_cover: true
+
+manifest:
+  keys_required: [model, voice, resolution, scenes]
+  scene_keys_required: [index, vo_text, prompt, start_s, end_s, duration_s]
+
+run_log:
+  must_not_contain: ["Traceback", "\"level\": \"ERROR\""]
+  must_contain: ["plan.loaded", "run.end"]

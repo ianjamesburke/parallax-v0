@@ -64,6 +64,123 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("update", help="Upgrade parallax to the latest release via uv.")
 
+    sub.add_parser(
+        "credits",
+        help="Show OpenRouter credits balance and exit. Useful before kicking off a run.",
+    )
+
+    tail_p = sub.add_parser("tail", help="Print the JSONL event log for a run_id.")
+    tail_p.add_argument("run_id", help="Run id from `parallax produce` (or 'latest').")
+    tail_p.add_argument("-f", "--follow", action="store_true", help="Stream new events as they're appended.")
+
+    verify_p = sub.add_parser(
+        "verify-suite",
+        help="Run case folders against the rich expected.yaml schema (final mp4, "
+             "stages, manifest, run-log, cost guardrail).",
+        description=(
+            "Each case subfolder must contain a plan.yaml + expected.yaml. "
+            "expected.yaml schema (every block optional): "
+            "final.{resolution,duration_s,audio_video_diff_s_max,scene_count}, "
+            "stages.<name>.{files_must_exist,resolution,contiguous_cover}, "
+            "manifest.{keys_required,scene_keys_required}, "
+            "run_log.{must_not_contain,must_contain}, cost_usd_max, paid."
+        ),
+    )
+    verify_p.add_argument("suite_dir", help="Directory containing one or more case subfolders.")
+    verify_p.add_argument(
+        "--paid", action="store_true",
+        help="Run cases marked paid: true (default skips them).",
+    )
+    verify_p.add_argument(
+        "--case", default=None,
+        help="Run only a single case subfolder by name (default: all).",
+    )
+
+    init_p = sub.add_parser(
+        "verify-init",
+        help="Scaffold a new verify-suite case folder (plan.yaml + expected.yaml + README.md).",
+        description=(
+            "Creates a new case folder at <target>. With --from <existing>, "
+            "copies that case verbatim and optionally rewrites the resolution. "
+            "Without --from, writes a minimal one-scene starter that points "
+            "at the canonical reference case for the full schema."
+        ),
+    )
+    init_p.add_argument("target", help="Path to the new case folder.")
+    init_p.add_argument(
+        "--from", dest="from_dir", default=None,
+        help="Copy from an existing case folder (must contain plan.yaml + expected.yaml).",
+    )
+    init_p.add_argument(
+        "--resolution", default=None,
+        help="WxH (e.g. 480x854). Rewrites plan.yaml's resolution and expected.final.resolution.",
+    )
+    init_p.add_argument(
+        "--force", action="store_true",
+        help="Overwrite the target if it already exists (default: refuse).",
+    )
+
+    # --- audio subcommands ---
+    audio_p = sub.add_parser("audio", help="Audio utilities — transcription, processing.")
+    audio_sub = audio_p.add_subparsers(dest="audio_command", required=True)
+
+    transcribe_p = audio_sub.add_parser(
+        "transcribe",
+        help="Transcribe audio or video to word-level timestamps JSON.",
+    )
+    transcribe_p.add_argument("input", help="Audio or video file to transcribe.")
+    transcribe_p.add_argument("--out", required=True, help="Output path for words JSON.")
+
+    detect_p = audio_sub.add_parser(
+        "detect-silences",
+        help="List silent sections in audio — use output to choose a range for trim.",
+    )
+    detect_p.add_argument("input", help="Audio or video file to analyze.")
+    detect_p.add_argument("--min-silence", type=float, default=0.15,
+                          help="Minimum silence duration in seconds to report (default: 0.15).")
+    detect_p.add_argument("--noise-db", type=float, default=-40.0,
+                          help="Noise floor in dB (default: -40).")
+
+    trim_p = audio_sub.add_parser(
+        "trim",
+        help="Remove a specific time range from plan audio, avatar, and words. Updates plan.yaml in-place.",
+    )
+    trim_p.add_argument("--plan", required=True, help="Path to plan.yaml.")
+    trim_p.add_argument("--folder", required=True, help="Project folder (paths in plan are relative to this).")
+    trim_p.add_argument("--start", type=float, required=True, help="Start of range to remove (seconds).")
+    trim_p.add_argument("--end", type=float, required=True, help="End of range to remove (seconds).")
+
+    cap_p = audio_sub.add_parser(
+        "cap-pauses",
+        help=("Cap inter-word gaps to a max length using WhisperX word boundaries — "
+              "trims long pauses without amplitude probing. Pure word-driven."),
+    )
+    cap_p.add_argument("--input", "-i", required=True, help="Audio (or m4a/mp3) file to trim.")
+    cap_p.add_argument("--output", "-o", required=True, help="Output wav path.")
+    cap_p.add_argument("--max-gap", type=float, default=0.75,
+                       help="Max allowed gap between adjacent words, in seconds (default: 0.75). "
+                            "Gaps longer than this are reduced to exactly this value, split half/half "
+                            "across the joint so 0.75 → 0.375s tail of prev word + 0.375s lead-in of next.")
+    cap_p.add_argument("--crossfade", type=float, default=0.05,
+                       help="Crossfade duration at each cut joint, in seconds (default: 0.05).")
+
+    # --- video subcommands ---
+    video_p = sub.add_parser("video", help="Video utilities — frame extraction, color sampling.")
+    video_sub = video_p.add_subparsers(dest="video_command", required=True)
+
+    frame_p = video_sub.add_parser("frame", help="Extract a single frame from a video.")
+    frame_p.add_argument("input", help="Video file.")
+    frame_p.add_argument("time", type=float, help="Timestamp in seconds.")
+    frame_p.add_argument("--out", default=None, help="Output image path (default: temp file).")
+
+    color_p = video_sub.add_parser(
+        "color", help="Sample a pixel color from a video or image. Prints 0xRRGGBB."
+    )
+    color_p.add_argument("input", help="Video or image file.")
+    color_p.add_argument("--time", type=float, default=2.0, help="Timestamp for video frames (default: 2.0).")
+    color_p.add_argument("--x", type=int, default=10, help="X pixel coordinate (default: 10).")
+    color_p.add_argument("--y", type=int, default=10, help="Y pixel coordinate (default: 10).")
+
     args = parser.parse_args(argv)
 
     level: int | None = None
@@ -74,12 +191,22 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(level)
 
     if args.command == "produce":
+        from .openrouter import InsufficientCreditsError
         from .produce import run_plan
-        return run_plan(folder=args.folder, plan_path=args.plan)
+        try:
+            return run_plan(folder=args.folder, plan_path=args.plan)
+        except InsufficientCreditsError as e:
+            print(f"\nError: {e}\n", file=sys.stderr)
+            return 1
 
     if args.command == "test-scene":
+        from .openrouter import InsufficientCreditsError
         from .produce import test_scene
-        return test_scene(folder=args.folder, plan_path=args.plan, scene_index=args.index)
+        try:
+            return test_scene(folder=args.folder, plan_path=args.plan, scene_index=args.index)
+        except InsufficientCreditsError as e:
+            print(f"\nError: {e}\n", file=sys.stderr)
+            return 1
 
     if args.command == "voices":
         return _print_voices(args.voice_filter, args.limit)
@@ -90,6 +217,121 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "update":
         return _run_update()
+
+    if args.command == "credits":
+        from .openrouter import InsufficientCreditsError, check_credits
+        try:
+            balance = check_credits(min_balance_usd=0.0)  # informational; never raise
+            print(
+                f"OpenRouter credits — total ${balance.total:.2f}, "
+                f"used ${balance.used:.2f}, remaining ${balance.remaining:.2f}"
+            )
+            if balance.remaining < 0.50:
+                print(
+                    f"  ⚠ Low. Top up at https://openrouter.ai/settings/credits",
+                    file=sys.stderr,
+                )
+                return 1
+            return 0
+        except InsufficientCreditsError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        except Exception as e:
+            print(f"Error: could not fetch credits ({type(e).__name__}: {e})", file=sys.stderr)
+            return 1
+
+    if args.command == "verify-suite":
+        from .verify_suite import cli_run
+        return cli_run(args.suite_dir, paid=args.paid, case=args.case)
+
+    if args.command == "verify-init":
+        from .verify_suite import cli_init
+        return cli_init(
+            args.target,
+            from_dir=args.from_dir,
+            resolution=args.resolution,
+            force=args.force,
+        )
+
+    if args.command == "tail":
+        from . import runlog
+        rid = args.run_id
+        if rid == "latest":
+            logs = sorted(runlog.logs_dir().glob("*.log"))
+            if not logs:
+                print("no runs found", file=sys.stderr)
+                return 1
+            rid = logs[-1].stem
+        return runlog.tail(rid, follow=args.follow)
+
+    if args.command == "audio":
+        if args.audio_command == "transcribe":
+            from .audio import transcribe_words
+            try:
+                words = transcribe_words(args.input, args.out)
+            except RuntimeError as e:
+                print(f"ERROR: {e}", file=sys.stderr)
+                return 1
+            print(f"{len(words)} words → {args.out}")
+            if words:
+                last = words[-1]
+                print(f"  duration: {last['end']:.2f}s  last word: '{last['word']}' @ {last['end']:.2f}s")
+            return 0
+
+        if args.audio_command == "detect-silences":
+            from .audio import detect_silences
+            silences = detect_silences(args.input, noise_db=args.noise_db, min_silence_s=args.min_silence)
+            if not silences:
+                print("No silences detected.")
+                return 0
+            print(f"{'#':<4} {'start':>8} {'end':>8} {'duration':>10}")
+            print("-" * 36)
+            for i, s in enumerate(silences):
+                print(f"{i:<4} {s['start']:>8.3f} {s['end']:>8.3f} {s['duration']:>10.3f}s")
+            print(f"\nTo remove silence #{0}: parallax audio trim --plan <plan.yaml> --folder <folder> --start {silences[0]['start']} --end {silences[0]['end']}")
+            return 0
+
+        if args.audio_command == "trim":
+            from .audio import trim_silence
+            result = trim_silence(
+                plan_path=args.plan,
+                folder=args.folder,
+                cut_start=args.start,
+                cut_end=args.end,
+            )
+            removed = result["seconds_removed"]
+            print(f"Removed {removed:.3f}s ({args.start:.3f}s–{args.end:.3f}s)")
+            print(f"  audio  → {result['new_audio']}")
+            print(f"  words  → {result['new_words']}")
+            if result["new_avatar"]:
+                print(f"  avatar → {result['new_avatar']}")
+            print(f"plan.yaml updated. Run: parallax produce --folder {args.folder} --plan {args.plan}")
+            return 0
+
+        if args.audio_command == "cap-pauses":
+            from .audio import cap_pauses
+            result = cap_pauses(
+                input_path=args.input,
+                output_path=args.output,
+                max_gap_s=args.max_gap,
+                crossfade_s=args.crossfade,
+            )
+            print(f"cap-pauses: {result['gaps_trimmed']} gaps capped to {result['max_gap_s']:.2f}s")
+            print(f"  duration: {result['original_duration_s']:.2f}s → {result['new_duration_s']:.2f}s "
+                  f"({result['seconds_removed']:.2f}s removed)")
+            print(f"  output  → {result['output']}")
+            return 0
+
+    if args.command == "video":
+        if args.video_command == "frame":
+            from .video import extract_frame
+            out = extract_frame(args.input, args.time, args.out)
+            print(out)
+            return 0
+        if args.video_command == "color":
+            from .video import sample_color
+            print(sample_color(args.input, args.x, args.y, args.time))
+            return 0
 
     return 2
 

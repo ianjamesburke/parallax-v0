@@ -6,14 +6,21 @@ align_scenes → write_manifest → ken_burns_assemble → (optionally)
 burn_captions → burn_headline.
 
 Plan YAML schema:
-  voice: bella          # ElevenLabs voice name (default: george)
-  speed: 1.1            # TTS speed multiplier (default: 1.1)
-  model: nano-banana    # image model alias (default: mid)
-  resolution: 1080x1920 # output resolution (default: 1080x1920)
+  voice: Kore                # Gemini voice (default: Kore). Use 'eleven:<voice_id>'
+                             # for ElevenLabs (e.g. 'eleven:JBFqnCBsd6RMkjVDRZzb').
+  style: rapid_fire          # Gemini TTS pacing preset. Default for ads.
+                             # Options: rapid_fire | fast | calm | natural.
+  style_hint: "..."          # Freeform Gemini directive (overrides `style`).
+                             # Ignored on the ElevenLabs path.
+  speed: 1.0                 # ffmpeg atempo multiplier applied AFTER synthesis
+                             # (default: 1.0 for Gemini, 1.1 for ElevenLabs).
+                             # Use sparingly — prefer `style` for natural speed.
+  model: nano-banana         # image model alias (default: mid)
+  resolution: 1080x1920      # output resolution (default: 1080x1920)
   caption_style: bangers
-  captions: skip        # omit to enable captions
-  headline: THE TITLE   # omit to skip headline
-  character_image: parallax/scratch/ref.png  # relative to --folder; used for reference: true scenes
+  captions: skip             # omit to enable captions
+  headline: THE TITLE        # omit to skip headline
+  character_image: parallax/scratch/ref.png  # relative to --folder
 
   scenes:
     - index: 0
@@ -27,52 +34,27 @@ Plan YAML schema:
 from __future__ import annotations
 
 import json
-import re
-import shutil
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from . import tools_video
-from . import usage as _usage
+from . import runlog
 from .context import current_session_id
+from .ffmpeg_utils import parse_resolution
 from .log import get_logger
-from .tools import generate_image
+from .settings import ProductionMode, _infer_project_resolution, resolve_settings
+from .stages import STAGES, stage_scan, stage_stills
 
 log = get_logger("produce")
 
 
-def _lock_field_in_plan(plan_path: Path, plan: dict, scene_idx: int, field: str, value: str, folder: Path) -> None:
-    """Write an asset path back into the plan YAML so the scene is locked on future runs."""
-    try:
-        try:
-            locked_path = str(Path(value).relative_to(folder))
-        except ValueError:
-            locked_path = value
-        for scene in plan.get("scenes", []):
-            if scene.get("index") == scene_idx:
-                scene[field] = locked_path
-                break
-        with plan_path.open("w") as f:
-            yaml.dump(plan, f, default_flow_style=False, allow_unicode=True, sort_keys=False, width=10000)
-    except Exception as e:
-        log.warning("_lock_field_in_plan: could not write back to plan: %s", e)
-
-
-def _lock_still_in_plan(plan_path: Path, plan: dict, scene_idx: int, still_path: str, folder: Path) -> None:
-    _lock_field_in_plan(plan_path, plan, scene_idx, "still_path", still_path, folder)
-
-
 def run_plan(folder: str | Path, plan_path: str | Path) -> int:
+    """Run the full plan-driven production pipeline."""
     folder = Path(folder).expanduser().resolve()
     plan_path = Path(plan_path).expanduser().resolve()
-    # Derive concept ID prefix from folder name (e.g. "0004-hims" → "0004_")
-    _id_match = re.match(r'^(\d{4})', folder.name)
-    concept_prefix = f"{_id_match.group(1)}_" if _id_match else ""
 
     if not folder.is_dir():
         print(f"Error: folder not found: {folder}", file=sys.stderr)
@@ -89,375 +71,76 @@ def run_plan(folder: str | Path, plan_path: str | Path) -> int:
         print("Error: plan has no scenes", file=sys.stderr)
         return 1
 
-    model = plan.get("model", "mid")
-    voice = plan.get("voice", "george")
-    speed = float(plan.get("speed", 1.1))
-    resolution = plan.get("resolution", "1080x1920")
-    res_scale = int(resolution.split("x")[0]) / 1080  # scale font sizes to output width
-    caption_style = plan.get("caption_style", "anton")
-    fontsize = max(12, int(plan.get("fontsize", 55) * res_scale))
-    words_per_chunk = int(plan.get("words_per_chunk", 1))
-    skip_captions = str(plan.get("captions", "")).lower() == "skip"
-    headline = plan.get("headline")
-    headline_fontsize = plan.get("headline_fontsize")
-    headline_bg = plan.get("headline_bg")
-    headline_color = plan.get("headline_color")
+    try:
+        settings = resolve_settings(plan, folder, plan_path)
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    settings.events("log", {"msg": f"project resolution: {settings.resolution}"})
 
-    # Resolve character_image relative to folder if it's a relative path
-    char_image_raw = plan.get("character_image")
-    character_image: str | None = None
-    if char_image_raw:
-        p = Path(char_image_raw)
-        resolved = p if p.is_absolute() else (folder / p)
-        if not resolved.is_file():
-            print(f"Error: character_image not found: {resolved}", file=sys.stderr)
+    # Pre-flight: in real-mode, check OpenRouter credits before any work runs.
+    # 402 mid-pipeline is brutal (partial spend on stills, then dies on i2v);
+    # checking once at the top fails loud, fails early.
+    if settings.mode == ProductionMode.REAL:
+        try:
+            from . import openrouter
+            balance = openrouter.check_credits(min_balance_usd=0.50)
+            settings.events("log", {
+                "msg": f"openrouter credits: ${balance.remaining:.2f} remaining "
+                       f"(${balance.total:.2f} total, ${balance.used:.2f} used)"
+            })
+        except openrouter.InsufficientCreditsError as e:
+            print(f"\nError: {e}\n", file=sys.stderr)
             return 1
-        character_image = str(resolved)
+        except Exception as e:
+            settings.events("log", {
+                "msg": f"WARNING: credits pre-flight check failed ({type(e).__name__}: {e}); "
+                       f"continuing — first OpenRouter call will surface the real error"
+            })
 
-    current_session_id.set(f"produce-{plan_path.stem}")
+    import uuid as _uuid
+    current_session_id.set(f"produce-{_uuid.uuid4().hex[:8]}")
+    run_id = runlog.start_run()
+    settings.usage.bind(run_id)
+    runlog.event(
+        "plan.loaded",
+        folder=str(settings.folder), plan_path=str(settings.plan_path),
+        scene_count=len(scenes_raw), model=settings.model, voice=settings.voice,
+        resolution=settings.resolution,
+        test_mode=settings.mode == ProductionMode.TEST,
+    )
+    settings.events("log", {"msg": f"run_id: {run_id}  →  parallax tail {run_id}"})
 
-    # 1. Scan project folder → versioned output_dir
-    _log("scan_project_folder")
-    scan = json.loads(tools_video.scan_project_folder(str(folder)))
-    out_dir = scan["output_dir"]
-    version = scan["version"]
-    _log(f"output_dir: {out_dir} (v{version})")
-    convention_name = f"{folder.name}-v{version}.mp4"
-
-    # 2. Generate stills
-    _log(f"generating {len(scenes_raw)} stills — model={model}")
-
-    _warn_unknown_scene_fields(scenes_raw)
-
-    scenes: list[dict[str, Any]] = []
-    for s in scenes_raw:
-        idx = s["index"]
-        prompt = s.get("prompt", "")
-        vo_text = s.get("vo_text", "")
-
-        # If the plan already has a still_path, reuse it and skip generation
-        if "still_path" in s:
-            p = Path(s["still_path"])
-            still_path = str(p if p.is_absolute() else (folder / p))
-            _log(f"  [{idx:02d}] reusing {Path(still_path).name}")
-        else:
-            # Determine reference images
-            if "reference_images" in s:
-                refs = [str(Path(r) if Path(r).is_absolute() else folder / r) for r in s["reference_images"]]
-            elif s.get("reference") and character_image:
-                refs = [character_image]
-            else:
-                refs = None
-
-            _log(f"  [{idx:02d}] {s.get('shot_type', 'broll')} — {vo_text[:55]}...")
-            still_path = generate_image(
-                prompt=prompt,
-                model=model,
-                reference_images=refs,
-                out_dir=out_dir,
-            )
-            _log(f"       → {Path(still_path).name}")
-            _lock_still_in_plan(plan_path, plan, idx, still_path, folder)
-        scene_entry: dict[str, Any] = {
-            "index": idx,
-            "shot_type": s.get("shot_type", "broll"),
-            "vo_text": vo_text,
-            "prompt": prompt,
-            "still_path": still_path,
+    # `stills_only` short-circuits after stage_stills with its own end-of-run
+    # path — no audio/video stages, no convention rename, no full mp4.
+    if settings.stills_only:
+        plan = stage_scan(plan, settings)
+        plan = stage_stills(plan, settings)
+        rt = plan["_runtime"]
+        settings.events("log", {"msg": "stills_only — skipping audio, video, and assembly stages"})
+        run_cost = settings.usage.total_cost_usd
+        cost_data = {
+            "run_id": run_id,
+            "session_id": current_session_id.get(),
+            "cost_usd": run_cost,
+            "version": rt["version"],
         }
-        # Carry forward animation fields from plan
-        if s.get("animate"):
-            scene_entry["animate"] = True
-            if s.get("motion_prompt"):
-                scene_entry["motion_prompt"] = s["motion_prompt"]
-            if s.get("animate_resolution"):
-                scene_entry["animate_resolution"] = s["animate_resolution"]
-        if s.get("clip_path"):
-            cp = Path(s["clip_path"])
-            scene_entry["clip_path"] = str(cp if cp.is_absolute() else folder / cp)
-        if s.get("zoom_direction"):
-            scene_entry["zoom_direction"] = s["zoom_direction"]
-        if s.get("zoom_amount") is not None:
-            scene_entry["zoom_amount"] = float(s["zoom_amount"])
-        scenes.append(scene_entry)
+        (Path(rt["out_dir"]) / "cost.json").write_text(json.dumps(cost_data, indent=2) + "\n")
+        print(f"\n✓ stills → {rt['stills_dir']}", flush=True)
+        runlog.end_run(status="ok", final_video=rt["stills_dir"], cost_usd=run_cost)
+        return 0
 
-    # 2b. Animate selected scenes (image-to-video)
-    animate_model = plan.get("animate_model", "xai/grok-imagine-video/image-to-video")
-    animate_resolution = "720p" if plan.get("hq") else "480p"
-    animated_count = sum(1 for s in scenes if s.get("animate") and not s.get("clip_path"))
-    if animated_count:
-        _log(f"animate_scenes — {animated_count} scenes via {animate_model} @ {animate_resolution}")
-        scenes = json.loads(tools_video.animate_scenes(
-            scenes_json=json.dumps(scenes),
-            out_dir=out_dir,
-            video_model=animate_model,
-            resolution=animate_resolution,
-        ))
-        for s in scenes:
-            if s.get("clip_path"):
-                _log(f"  [{s['index']:02d}] → {Path(s['clip_path']).name}")
-                _lock_field_in_plan(plan_path, plan, s["index"], "clip_path", s["clip_path"], folder)
-    else:
-        locked = sum(1 for s in scenes if s.get("clip_path"))
-        if locked:
-            _log(f"reusing {locked} animated clip(s)")
+    for stage in STAGES:
+        plan = stage(plan, settings)
 
-    # 3. Generate voiceover (skip if audio_path + words_path already set in plan)
-    if plan.get("audio_path") and plan.get("words_path"):
-        audio_path = str((folder / plan["audio_path"]) if not Path(plan["audio_path"]).is_absolute() else Path(plan["audio_path"]))
-        words_path = str((folder / plan["words_path"]) if not Path(plan["words_path"]).is_absolute() else Path(plan["words_path"]))
-        words_data = json.loads(Path(words_path).read_text())
-        vo_result = {"words": words_data if isinstance(words_data, list) else words_data.get("words", []),
-                     "audio_path": audio_path, "words_path": words_path}
-        _log(f"reusing voiceover: {Path(audio_path).name}")
-    else:
-        full_script = " ".join(s.get("vo_text", "") for s in scenes_raw)
-        _log(f"generate_voiceover — voice={voice} speed={speed}")
-        vo_result = json.loads(tools_video.generate_voiceover(
-            text=full_script, voice=voice, speed=speed, out_dir=out_dir,
-        ))
-        audio_path = vo_result["audio_path"]
-        words_path = vo_result["words_path"]
-        _log(f"  audio: {Path(audio_path).name}  ({vo_result['total_duration_s']:.1f}s)")
-
-    # 4. Align scenes
-    _log("align_scenes")
-    aligned_json = tools_video.align_scenes(
-        scenes_json=json.dumps(scenes),
-        words_json=json.dumps(vo_result["words"]),
-    )
-    aligned = json.loads(aligned_json)
-    for s in aligned:
-        _log(f"  [{s['index']:02d}] {s.get('start_s', 0):.2f}s – {s.get('end_s', 0):.2f}s ({s.get('duration_s', 0):.2f}s)")
-
-    # 5. Write manifest
-    manifest_path = str(Path(out_dir) / "manifest.yaml")
-    _log(f"write_manifest → {manifest_path}")
-    tools_video.write_manifest(
-        manifest_json=json.dumps({
-            "version": version,
-            "model": model,
-            "voice": voice,
-            "speed": speed,
-            "resolution": resolution,
-            "audio_path": audio_path,
-            "words_path": words_path,
-            "scenes": aligned,
-        }),
-        manifest_path=manifest_path,
-    )
-
-    # 6. Ken Burns assemble
-    draft_path = str(Path(out_dir) / f"{concept_prefix}ken_burns_draft.mp4")
-    _log(f"ken_burns_assemble → {draft_path}")
-    tools_video.ken_burns_assemble(
-        scenes_json=aligned_json,
-        audio_path=audio_path,
-        output_path=draft_path,
-        resolution=resolution,
-    )
-    current_video = draft_path
-
-    # 7. Burn captions
-    if not skip_captions:
-        captioned_path = str(Path(out_dir) / f"{concept_prefix}captioned.mp4")
-        _log(f"burn_captions → {captioned_path}")
-        tools_video.burn_captions(
-            video_path=current_video,
-            words_json=words_path,
-            output_path=captioned_path,
-            caption_style=caption_style,
-            fontsize=fontsize,
-            words_per_chunk=words_per_chunk,
-        )
-        current_video = captioned_path
-
-    # 8. Burn section titles
-    titles_cfg = plan.get("titles", [])
-    if titles_cfg:
-        scene_map = {s["index"]: s for s in aligned}
-        resolved_titles: list[dict] = []
-        for t in titles_cfg:
-            if "scene" in t:
-                sc = scene_map.get(t["scene"])
-                if sc:
-                    start = sc["start_s"]
-                    end = start + float(t.get("duration_s", 2.5))
-                    resolved_titles.append({"text": t["text"], "start_s": start, "end_s": end})
-            elif "start_s" in t and "end_s" in t:
-                resolved_titles.append({"text": t["text"], "start_s": t["start_s"], "end_s": t["end_s"]})
-        if resolved_titles:
-            titled_path = str(Path(out_dir) / f"{concept_prefix}titled.mp4")
-            _log(f"burn_titles → {titled_path}")
-            tools_video.burn_titles(
-                video_path=current_video,
-                titles=resolved_titles,
-                output_path=titled_path,
-                fontsize=max(12, int(72 * res_scale)),
-            )
-            current_video = titled_path
-
-    # 10. Burn headline
-    if headline:
-        final_path = str(Path(out_dir) / f"{concept_prefix}final.mp4")
-        _log(f"burn_headline → {final_path}")
-        h_fontsize = max(12, int(int(headline_fontsize or 64) * res_scale))
-        video_width = int(resolution.split("x")[0])
-        # Wrap long headlines — each char ≈ 0.60× fontsize wide for condensed display fonts
-        max_chars = max(10, int(video_width / (h_fontsize * 0.60)))
-        headline_text = "\n".join(textwrap.wrap(headline, width=max_chars))
-        headline_kwargs: dict[str, Any] = {"video_path": current_video, "text": headline_text, "output_path": final_path}
-        headline_kwargs["fontsize"] = h_fontsize
-        if headline_bg:
-            headline_kwargs["bg_color"] = headline_bg
-        if headline_color:
-            headline_kwargs["text_color"] = headline_color
-        if aligned:
-            headline_kwargs["end_time_s"] = aligned[0].get("end_s")
-        tools_video.burn_headline(**headline_kwargs)
-        current_video = final_path
-
-    # 11. Avatar overlay (optional)
-    avatar_cfg = plan.get("avatar")
-    if avatar_cfg:
-        avatar_img_raw = avatar_cfg.get("image") or plan.get("character_image")
-        if not avatar_img_raw:
-            print("Error: avatar.image or character_image required for avatar overlay", file=sys.stderr)
-            return 1
-        av_img_p = Path(avatar_img_raw)
-        avatar_img = str(av_img_p if av_img_p.is_absolute() else folder / av_img_p)
-
-        av_scene_indices: list[int] = avatar_cfg.get("scenes", [])
-        position = avatar_cfg.get("position", "bottom_left")
-        size = float(avatar_cfg.get("size", 0.22))
-        chroma_key = avatar_cfg.get("chroma_key")
-        aurora_prompt = avatar_cfg.get("aurora_prompt")
-        y_offset_pct = avatar_cfg.get("y_offset_pct")
-        if y_offset_pct is not None:
-            y_offset_pct = float(y_offset_pct)
-        crop_px = int(avatar_cfg.get("crop_px", 0))
-        full_audio = bool(avatar_cfg.get("full_audio", False))
-
-        # Resolve avatar_track_keyed (pre-keyed, has alpha — use directly, no chroma filter)
-        avatar_track_keyed_raw = avatar_cfg.get("avatar_track_keyed")
-        avatar_track_keyed: str | None = None
-        if avatar_track_keyed_raw:
-            p = Path(avatar_track_keyed_raw)
-            avatar_track_keyed = str(p if p.is_absolute() else folder / p)
-            _log(f"reusing avatar_track_keyed: {Path(avatar_track_keyed).name}")
-
-        # Resolve or generate raw avatar_track
-        avatar_track_raw = avatar_cfg.get("avatar_track")
-        if avatar_track_raw:
-            av_track_p = Path(avatar_track_raw)
-            avatar_track = str(av_track_p if av_track_p.is_absolute() else folder / av_track_p)
-            track_start_s = float(avatar_cfg.get("track_start_s", 0.0))
-            _log(f"reusing avatar_track: {Path(avatar_track).name} (starts at {track_start_s:.2f}s)")
-        else:
-            mode_desc = "full-audio" if full_audio else f"{len(av_scene_indices)} scenes"
-            _log(f"generate_avatar_clips — {mode_desc}")
-            av_result = json.loads(tools_video.generate_avatar_clips(
-                scenes_json=aligned_json,
-                audio_path=audio_path,
-                character_image=avatar_img,
-                avatar_scene_indices=av_scene_indices,
-                out_dir=out_dir,
-                aurora_prompt=aurora_prompt,
-                full_audio=full_audio,
-            ))
-            avatar_track = av_result["avatar_track"]
-            track_start_s = av_result["track_start_s"]
-            _log(f"  track: {Path(avatar_track).name} starts at {track_start_s:.2f}s")
-            out_ver = Path(out_dir).name
-            _log(
-                f"  → lock in plan to skip future Aurora calls:\n"
-                f"    avatar:\n"
-                f"      avatar_track: parallax/output/{out_ver}/{Path(avatar_track).name}\n"
-                f"      track_start_s: {track_start_s:.1f}"
-            )
-
-        # Pre-key: if no keyed version exists yet and chroma_key is set, key it now and save
-        if not avatar_track_keyed and chroma_key:
-            keyed_path = str(Path(out_dir) / "avatar_track_keyed.mov")
-            _log(f"key_avatar_track → {keyed_path}")
-            avatar_track_keyed = tools_video.key_avatar_track(
-                avatar_track=avatar_track,
-                chroma_key=chroma_key,
-                output_path=keyed_path,
-            )
-            out_ver = Path(out_dir).name
-            _log(
-                f"  → lock in plan to skip future chroma-key calls:\n"
-                f"    avatar:\n"
-                f"      avatar_track_keyed: parallax/output/{out_ver}/avatar_track_keyed.mov"
-            )
-
-        # Composite — use pre-keyed track if available (no chroma filter needed)
-        composite_track = avatar_track_keyed or avatar_track
-        avatar_out = str(Path(out_dir) / "avatar.mp4")
-        _log(f"burn_avatar ({position}) → {avatar_out}")
-        kwargs: dict[str, Any] = dict(
-            video_path=current_video,
-            avatar_track=composite_track,
-            track_start_s=track_start_s,
-            output_path=avatar_out,
-            position=position,
-            size=size,
-        )
-        if not avatar_track_keyed and chroma_key:
-            kwargs["chroma_key"] = chroma_key
-        if y_offset_pct is not None:
-            kwargs["y_offset_pct"] = y_offset_pct
-        if crop_px:
-            kwargs["crop_px"] = crop_px
-        tools_video.burn_avatar(**kwargs)
-        current_video = avatar_out
-
-    # Rename final output to convention: {folder.name}-v{N}.mp4
-    final_out = str(Path(out_dir) / convention_name)
-    if current_video != final_out:
-        Path(current_video).rename(final_out)
-        current_video = final_out
-
-    # Snapshot the plan into the output dir for provenance
-    shutil.copy2(str(plan_path), str(Path(out_dir) / "plan.yaml"))
-
-    # Write session cost summary
-    session_cost = _usage.session_total(current_session_id.get() or "")
-    cost_data = {"session_id": current_session_id.get(), "cost_usd": session_cost, "version": version}
-    (Path(out_dir) / "cost.json").write_text(json.dumps(cost_data, indent=2) + "\n")
-
-    print(f"\n✓ {current_video}", flush=True)
+    rt = plan["_runtime"]
+    print(f"\n✓ {rt['current_video']}", flush=True)
+    runlog.end_run(status="ok", final_video=str(rt["current_video"]), cost_usd=rt["run_cost"])
     return 0
-
-
-def _log(msg: str) -> None:
-    print(f"==> {msg}", flush=True)
-
-
-_KNOWN_SCENE_FIELDS = {
-    "index", "shot_type", "vo_text", "prompt",
-    "still_path", "reference", "reference_images",
-    "animate", "motion_prompt", "clip_path", "animate_resolution",
-    "zoom_direction", "zoom_amount",
-}
-
-
-def _warn_unknown_scene_fields(scenes_raw: list[dict[str, Any]]) -> None:
-    for s in scenes_raw:
-        unknown = set(s.keys()) - _KNOWN_SCENE_FIELDS
-        if unknown:
-            print(
-                f"  [WARNING] scene {s.get('index', '?')}: unrecognized fields "
-                f"(will be silently ignored): {', '.join(sorted(unknown))}",
-                flush=True,
-            )
 
 
 def test_scene(folder: str | Path, plan_path: str | Path, scene_index: int) -> int:
     """Apply the video filter for one scene and open the result — no full pipeline."""
-    import subprocess
-
     folder = Path(folder).expanduser().resolve()
     plan_path = Path(plan_path).expanduser().resolve()
 
@@ -466,10 +149,9 @@ def test_scene(folder: str | Path, plan_path: str | Path, scene_index: int) -> i
         return 1
 
     with plan_path.open() as f:
-        import yaml
         plan: dict[str, Any] = yaml.safe_load(f)
 
-    resolution = plan.get("resolution", "1080x1920")
+    resolution = plan.get("resolution") or _infer_project_resolution(plan, folder)
     scenes_raw = plan.get("scenes", [])
     scene = next((s for s in scenes_raw if s.get("index") == scene_index), None)
     if scene is None:
@@ -488,15 +170,16 @@ def test_scene(folder: str | Path, plan_path: str | Path, scene_index: int) -> i
         if not src.exists():
             print(f"Error: clip_path not found: {src}", file=sys.stderr)
             return 1
-        # Probe duration
         probe = subprocess.run(
             ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
              "-show_entries", "stream=duration", "-of", "csv=p=0", str(src)],
             capture_output=True, text=True,
         )
         duration = float(probe.stdout.strip() or "5.0")
-        w, h = resolution.split("x")
-        from .tools_video import _zoom_filter, _get_ffmpeg
+        w_i, h_i = parse_resolution(resolution)
+        w, h = str(w_i), str(h_i)
+        from .assembly import _zoom_filter
+        from .ffmpeg_utils import _get_ffmpeg
         ffmpeg = _get_ffmpeg()
         vf = _zoom_filter(zoom_dir, zoom_amount, duration, w, h)
         subprocess.run(
@@ -513,7 +196,7 @@ def test_scene(folder: str | Path, plan_path: str | Path, scene_index: int) -> i
             print(f"Error: still_path not found: {src}", file=sys.stderr)
             return 1
         duration = 4.0
-        from .tools_video import _make_kb_clip
+        from .assembly import _make_kb_clip
         _make_kb_clip(str(src), duration, out_path, resolution=resolution,
                       scene_index=scene_index, zoom_direction=zoom_dir, zoom_amount=zoom_amount)
     else:

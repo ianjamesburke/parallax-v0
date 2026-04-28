@@ -2,6 +2,550 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+---
+
+## Work block & phase template
+
+Larger pieces of work are scoped as **work blocks** at the top of this file. Each block has a name, a date, a master `[INCOMPLETE]` / `[COMPLETE]` flag, and one or more **phases**. Each phase has its own `[INCOMPLETE]` / `[COMPLETE]` flag, a detailed description, a validation section, and an updates log appended as the phase progresses.
+
+### Why blocks and phases
+
+A single PR is a unit of code. A single block is a unit of *intent* — usually too big for one PR, often too big for one session. Phases inside a block are sequenced PR-sized deliverables. The structure makes it easy for a future agent (or human) to (a) see what's in flight, (b) resume mid-block without losing context, and (c) verify each phase landed cleanly before the block closes.
+
+### Flow per block
+
+1. **Scope.** Head agent + user agree on the block's name, master flag, and phase breakdown. Each phase is detailed thoroughly (acceptance criteria, validation steps, what's *not* in scope). Block + phases all start `[INCOMPLETE]`. Any open questions are surfaced as WHY-prompts to the user before the block locks; the goal is to favor structural rewrites over patchwork unless we have a deliberate reason to patch.
+2. **Execute one phase at a time.** Head agent spawns a focused subagent for the phase. The subagent self-verifies aggressively before reporting back — runs `uv run pytest`, runs the affected CLI command end-to-end, uses Playwright when there's a UI, etc. The bar: never surface broken code to the user.
+3. **Surface to user.** Subagent returns a list of human-side verification steps. The user runs them, then either approves with "move on", returns notes/critiques, or asks for a follow-up phase to be added. Notes that warrant changes loop back into the subagent.
+4. **Close the phase.** Once the user signs off, head agent flips the phase flag to `[COMPLETE]`, appends a final update line, and confirms the next phase is ready.
+5. **Close the block.** When all phases are `[COMPLETE]`, the master block flag flips and the block migrates from "WORK BLOCK" to a normal `[CHANGED]` / `[DECISION]` entry summarizing what shipped and the `Breaks if:` line for the assembled deliverable.
+
+### Template
+
+```markdown
+## YYYY-MM-DD — [INCOMPLETE] WORK BLOCK: <Block Name>
+
+**Goal:** <one paragraph on what this block delivers and why it matters now>
+
+**Why this scope, why now:** <answers to the WHY-prompts asked during scoping; locks in the rewrite-vs-patch posture>
+
+**Out of scope:** <bulleted list of things explicitly not being addressed; protects the block from creep>
+
+### Phase 1 — <Phase Name>  [INCOMPLETE]
+
+**Description:** <what this phase delivers, in detail; should read like a brief>
+
+**Acceptance:**
+- <observable criterion 1>
+- <observable criterion 2>
+- ...
+
+**Self-verification (subagent):** <commands the subagent runs to confirm the work before returning>
+
+**Human verification steps:** <what the user runs / observes after the subagent reports done>
+
+**Updates:**
+- YYYY-MM-DD — kicked off subagent (commit <sha>)
+- YYYY-MM-DD — subagent reported done; awaiting user verification
+- YYYY-MM-DD — user signed off ("move on"); flag flipped to [COMPLETE]
+
+### Phase 2 — <Phase Name>  [INCOMPLETE]
+
+...
+```
+
+When a phase or block flips to `[COMPLETE]`, the flag is updated *in place* — the entry stays where it is until the whole block closes, at which point it migrates to the normal newest-first stream as a regular `[CHANGED]` entry.
+
+---
+
+## 2026-04-28 — [FIX] `crop_to_aspect` deletes source after writing cropped variant
+`stills.crop_to_aspect` left the pandoc-extracted original in place after writing the `_aWxH` variant, so downstream readers of the concept's `media/` dir saw both files and the agent passed every reference twice (original + cropped) into the next image-edit call. Added `src.unlink(missing_ok=True)` after the save (and after the cached-out early-return), mirroring the pattern already used in `normalize_aspect`. Single source of truth for cleanup is the function that creates the variant; no need for periodic dedup sweeps in narrative-parallax.
+**Breaks if:** a concept folder's `media/` ends up containing both `imageN.png` and `imageN_a720x1280.png` after a stills_pending tick — should only ever see the cropped variant.
+
+## 2026-04-28 — [FIX] Retry transient network errors in `_with_fallback` before falling through
+
+A single SSL alert during scene 4's image generation aborted a 4-scene render in narrative-parallax run `20260428T172336Z-cebff9`, pushing the concept to `blocked_assets`. Root cause: `_with_fallback` treated *every* exception as model-level and immediately fell through to the next spec in the chain. A network blip (TLS read error, connection reset, 5xx) is the network's fault — retrying a different model on the same network is wasted spend, and worse, silently swaps visual style mid-render.
+
+Wrapped the per-spec call in `_call_with_transient_retry`: 3 attempts with exponential backoff (1s, 2s) gated by `_is_transient_network_error` (TLS / connection / read / protocol class names + 5xx-shaped messages). Non-transient errors (validation, safety, "no images returned") raise immediately so `_with_fallback` can move on to the next model as before. `InsufficientCreditsError` still re-raises loud — wallet errors don't get retried.
+
+**Breaks if:** a single `httpx.ReadError` / `SSLError` / `ConnectError` from `_image_real` jumps straight to the fallback spec (it should now log `openrouter.image.error` with `transient: true` and retry the same alias up to 3 times before falling through); the runlog should show repeated `attempt` numbers for the same `model_id` on a transient blip.
+
+## 2026-04-28 — [FUTURE] `parallax.tools.generate_image` drops `size` arg
+Phase 1.3 threaded `size` through `parallax.openrouter.generate_image` so test-mode mocks could honor requested resolution. The thin compatibility shim at `parallax.tools.generate_image` (used by `stage_stills`) was missed — it accepts no `size` param and so always lands on `render_mock_image` with `resolution="1080x1920"` regardless of the plan. Real-mode is unaffected (the underlying image-gen path goes through the openrouter dispatcher with size set elsewhere), but it means verify-suite cases at non-1080x1920 resolution can't assert `stages.stills.resolution`. The Phase 1.4 canonical case (`tests/integration/res-720x1280/`) works around this by omitting that one assertion and relying on `final.resolution` + `assemble.resolution` for the product-level guarantee. Fix is a 2-line shim update — accept `size`, forward to `_generate_image` — but it touches the `produce` path so it gets its own pass. Do this before Phase 2.1 lands so the resolution-adaptation cases can assert at every stage.
+
+## 2026-04-28 — [CHANGED] verify-suite shipped — three schema deviations from the draft
+The Phase 1.2 `expected.yaml` schema diverged from the DEV_LOG draft in three places, all surfaced during smoke-fixture iteration. Documenting them here so the schema-of-record is the one in `src/parallax/verify_suite.py` / `AGENTS.md`, not the original spec block.
+
+1. **`stages.assemble.files_must_exist` cannot reliably target `video/ken_burns_draft.mp4`.** `stage_finalize` calls `Path(current_video).rename(out_dir / convention_name)` — when captions are skipped and no headline/avatar runs, the draft mp4 is *moved up* to `<folder>-vN.mp4` at the out_dir root and no longer exists at `video/`. Smoke fixture asserts `*.mp4` so it works for both the captions-on (draft persists) and captions-off (draft renamed) paths.
+2. **`stages.voiceover.files_must_exist` uses `audio/voiceover.*` not `audio/voiceover.wav`.** The mock voiceover writes `voiceover.mp3` (silent libmp3lame), and the real Gemini path also writes `.mp3`. Only the ElevenLabs path produces `.wav`. Wildcard suffix keeps the schema backend-agnostic.
+3. **`run_log.must_contain` cannot match per-stage log lines.** `_log()` in `stages.py` emits via `Settings.events` (default → stdout `==>`), not `runlog.event()`. The runlog JSONL only contains `run.start`, `plan.loaded`, external-call records, and `run.end`. Smoke fixture asserts `plan.loaded` / `run.end` instead of `align_scenes` / `ken_burns_assemble`. Worth wiring `_log()` through `runlog.event()` later (see [FUTURE] below) so stage tracing lands in both channels — but that's an architectural change to `Settings.events`, out of scope for Phase 1.2.
+
+**Breaks if:** `parallax verify-suite tests/fixtures/verify_suite_smoke/` does not print `[PASS] basic` and exit 0 in `PARALLAX_TEST_MODE=1`.
+
+## 2026-04-28 — [FUTURE] Mirror per-stage `_log()` lines into the runlog JSONL
+Phase 1.2 hit this when wiring `run_log.must_contain` assertions: stage progress lines (`align_scenes`, `ken_burns_assemble`, `generate_voiceover —`) emit only via `Settings.events` (stdout). The runlog has `run.start` / `plan.loaded` / openrouter call records / `run.end` and nothing in between, so stage-level smoke checks via `run_log` aren't possible. Fix shape: `_log()` in `stages.py` calls `runlog.event("stage.log", msg=...)` in addition to `settings.events("log", ...)`, OR `Settings.events` default emitter writes to runlog as well. Holding because (a) verify-suite already gets per-stage assertions through `stages.<name>.files_must_exist` + `resolution`, which is more precise than substring matching log text, and (b) changing `Settings.events` semantics needs a deliberate pass — it's the seam every test in Phase 1.1+ depends on. Revisit if a verify-suite case can't be expressed without it.
+
+## 2026-04-28 — [FUTURE] Lower-level modules still read `PARALLAX_TEST_MODE` directly
+Stages now thread `settings.mode` and never touch `os.environ`, but the utility modules they call (`assembly`, `project`, `voiceover`, `openrouter`, `shim`) still resolve test-mode via `is_test_mode()` from `shim.py`. That's deliberately out of scope for Phase 1.1 — those signature changes would cascade through every stage call site and contradict "stages wrap existing module functions, they don't redesign them". When the verify-suite needs to alternate REAL/TEST in one process at the utility level (e.g. testing voiceover.real-vs-mock paths in a single pytest run), thread `settings` through their public APIs and drop `is_test_mode()`. Worth revisiting if/when verify-suite cases need that capability.
+
+## 2026-04-28 — [FUTURE] Default `_log` emitter still prints — verify-suite needs a structured event taxonomy
+`Settings.events` is wired but the default emitter just prints `==> {msg}`. Stages call `_log(settings, msg)` everywhere with human-readable strings; the structured event surface (`stage.stills.start`, `stage.stills.scene.lock`, `stage.assemble.draft.written`, etc.) isn't defined yet. Phase 1.2 (`expected.yaml` schema + verify-suite) will need that taxonomy to assert per-stage activity. Land in lockstep with the schema design — defining events in isolation of what verify-suite asserts would be premature.
+
+## 2026-04-28 — [INCOMPLETE] WORK BLOCK: Parallax CLI Integration Test Suite
+
+**Goal:** Build an integration-test harness that lets us validate the entire `parallax produce` pipeline at multiple resolutions, with multiple model combinations, and through every conditional branch (locked vs unlocked assets, captions on/off, headline on/off, avatar pipeline, voice routing). Most cases run free in `PARALLAX_TEST_MODE=1`; a small smoke set runs paid against real APIs. The deliverable is the runner + the reference matrix of cases — once it's in place, every change to the CLI gets validated against the matrix instead of by manual eyeballing of a single demo project.
+
+**Why this scope, why now:**
+- The CLI is approaching feature-complete; integration tests are the last big investment before attention pivots to the `narrative-parallax` agent layer. The contract this block locks is the contract every future change has to honor.
+- The expanded `expected.yaml` schema (final + per-stage + per-asset + contiguity + manifest + run-log) is rich enough to catch every regression class we've shipped fixes for in the last 24 hours (aspect stretch, voiceover-tail clip, scene-cover invariants, hardcoded resolutions). Locking it thinly and reving later would force two test-rewrite passes; locking it rich now means new fields are additive only.
+- Decomposing `produce.py` into staged callables is folded *into* this block (Phase 1.1), not deferred. Doing it before the matrix means every test in Block 2 can target a single stage — dramatically faster (no full-pipeline re-run per branch) and dramatically more diagnostic (failure pinpoints to a stage, not a 700-line trace). Holding the line was a speed hedge; the user's instruction was "rewire now if it sets us up for success", which it does.
+
+**Out of scope:**
+- Testing the `narrative-parallax` agent layer (separate work block — parallax CLI must be solid before we sit on top of it).
+- CI integration (GitHub Actions, etc.) — this block delivers a local runner; CI wiring is a follow-up once the matrix is stable.
+- Visual quality assertions (pixel comparison, OCR of captions). These tests verify dimensions, durations, file existence, contiguity invariants — not aesthetics.
+- Refactoring beyond `produce.py` decomposition. Other modules that get touched during the rewire stay as-is; refactor smells captured as `[FUTURE]` entries in DEV_LOG.
+
+### Block 1 — Test Harness Foundation  [COMPLETE]
+
+The scaffolding everything else builds on. After Block 1, you can write a single test case folder by hand and run it with `parallax verify-suite <folder>`. Block 1 also locks the rewire of `produce.py` into staged callables so the test matrix can target individual stages instead of always running the whole pipeline.
+
+#### Phase 1.1 — Decompose `produce.py` into staged callables (full rewire)  [COMPLETE]
+
+**Description:** Six coordinated sub-deliverables that together make the pipeline testable stage-by-stage. Doing them as one phase rather than six because they're load-bearing for each other (Settings depends on parse_resolution; stage decomposition depends on Settings + ProductionMode + logger + cost-session). One subagent run, ~18 commits, full test suite green between each. The 181-test characterization safety net is the spotter; the lumawrap end-to-end (locked assets → free) is the second spotter.
+
+The rationale for folding all six into one phase comes from the audit on 2026-04-28 that surfaced testability blockers around shared global state (`is_test_mode()` reads, module-global `_log`, global `_usage.record`). Splitting any of these to a follow-up phase would force two test-rewrite passes — once against a half-rewired surface and once against the final shape.
+
+**Sub-deliverables (in order; each its own commit batch):**
+
+1. **`Settings` dataclass + `parse_resolution` helper.** `run_plan` reads ~30 plan keys at the top before doing work, then passes them as positional args downstream. Replace with a frozen `Settings` dataclass returned by `resolve_settings(plan, folder) -> Settings`, threaded through every stage. `parse_resolution(s) -> tuple[int, int]` lives in `ffmpeg_utils`; replaces 6 duplicated `resolution.split("x")` sites.
+
+2. **`ProductionMode` enum threaded through stages.** `is_test_mode()` is called from 6 modules. Each reads `os.environ["PARALLAX_TEST_MODE"]` inline — two cases with different test-mode semantics can't run in the same process. Add `class ProductionMode(Enum): REAL, TEST` and `Settings.mode: ProductionMode`. Stages take it via `settings`. The env var resolves once at `run_plan` / `verify-suite` entry, never inside a stage.
+
+3. **Logger / event-emitter injection.** `_log` is a module-global wrapper that prints + emits runlog events. Stages can't be tested in isolation while they call into a module-global. Add `Settings.events: Callable[[str, dict], None] | None`; default → existing `_log`. Verify-suite installs its own callback to capture per-stage activity.
+
+4. **Cost-session aggregator.** `_usage.record(...)` writes to a global usage log; `cost_usd_max` assertions in `expected.yaml` need a clean per-run total. Add a `usage_session()` context manager (or `UsageSession` field on Settings); aggregates spend, exposes `session.total_cost_usd`. Existing global usage log keeps working as the default sink.
+
+5. **Decompose `run_plan` into ~10 staged callables.** With Settings + ProductionMode + events + UsageSession in place, the rewrite is mechanical. Stages: `stage_stills`, `stage_animate`, `stage_voiceover`, `stage_align`, `stage_manifest`, `stage_assemble`, `stage_captions`, `stage_titles`, `stage_headline`, `stage_avatar`, `stage_finalize`. Each takes `(plan, settings) -> updated_plan` and mutates disk. `run_plan` becomes "resolve_settings → for stage in STAGES: plan = stage(plan, settings)". One commit per extracted stage, full pytest suite + lumawrap-locked produce smoke between each.
+
+6. **Migrate `produce.py` imports off `tools_video` shim.** `produce.py` still imports a lot from `tools_video` (the 72-line compat shim from Block 4 Phase 2). After decomposition, those imports should reference the actual extracted modules (`assembly`, `captions.burn`, `headline`, etc.). Pure rename; no behaviour change.
+
+**Acceptance:**
+- `produce.py` ≤200 lines (orchestrator + glue only).
+- `Settings` dataclass exported, exhaustively typed, frozen.
+- Zero `os.environ` reads inside any stage (only at `run_plan` / `verify-suite` entry).
+- Zero references to module-global `_log` inside any stage.
+- `uv run pytest -q` stays at 181 passing throughout the rewire (every commit).
+- `uv run parallax produce --folder ~/Documents/parallax-demo/lumawrap --plan .../scratch/plan.yaml` produces a final mp4 with identical resolution, duration ±0.05s, scene count, and manifest keys before vs after the rewire.
+- Each stage has a one-line docstring + a `Breaks if:` line.
+
+**Self-verification (subagent):**
+- `uv run pytest -q` after every commit. Hard fail-fast on the first regression.
+- Pre-rewire baseline: capture `ffprobe` output of `lumawrap-v1.mp4` + `manifest.yaml` to `/tmp/pre_rewire_baseline.txt`.
+- Post-rewire: re-run `parallax produce` against the same locked-asset plan. Diff against baseline. Any divergence (other than version-dir bump) blocks reporting done.
+- Spot-test `Settings` immutability: attempt to mutate a field, expect `FrozenInstanceError`.
+- Spot-test mode threading: invoke `stage_stills` with `settings.mode = ProductionMode.TEST` from a test, assert no network call.
+
+**Human verification steps:**
+1. From repo root: `uv run pytest -q` — expect `181 passed`.
+2. From repo root: `wc -l src/parallax/produce.py` — expect ≤200 (currently 187).
+3. From repo root: `grep -n "os.environ\|os\.getenv" src/parallax/stages.py src/parallax/produce.py` — expect no matches.
+4. From repo root: `grep -n "tools_video" src/parallax/produce.py src/parallax/stages.py` — expect no matches.
+5. Settings immutability spot-check (one-liner): `uv run python -c "from parallax.settings import resolve_settings; from pathlib import Path; from dataclasses import FrozenInstanceError; s = resolve_settings({'scenes':[{'index':0}]}, Path('/tmp'), Path('/tmp/p.yaml')); s.model='cheat'"` — expect `FrozenInstanceError`.
+6. Mode threading spot-check: `PARALLAX_TEST_MODE=1 uv run python -c "from parallax.settings import resolve_settings, ProductionMode; from pathlib import Path; s=resolve_settings({'scenes':[{'index':0}]}, Path('/tmp'), Path('/tmp/p.yaml')); assert s.mode == ProductionMode.TEST; print('OK')"` — expect `OK`.
+7. Lumawrap end-to-end smoke (free, ~15s): `uv run parallax produce --folder ~/Documents/parallax-demo/lumawrap --plan ~/Documents/parallax-demo/lumawrap/parallax/scratch/plan.yaml` — expect a final `lumawrap-vN.mp4` printed.
+8. Probe the produced mp4 against baseline: `ffprobe -v error -show_entries stream=width,height,duration,nb_frames -show_entries format=duration ~/Documents/parallax-demo/lumawrap/parallax/output/v<N>/lumawrap-v<N>.mp4` — expect `width=720`, `height=1280`, `duration=12.166667`, `nb_frames=365` for video stream and `nb_frames=286` for audio. Compare to `/tmp/pre_rewire_baseline.txt`.
+
+**Updates:**
+- 2026-04-28 — subagent ran 6 sub-deliverables in sequence; commits 1ae014e..8ef9e1b. 181 tests green between every commit. Lumawrap end-to-end produced byte-equivalent structural output (only run_id/session_id/version-dir differ). Lumawrap plan was updated once at the start of the run to add `audio_path`/`words_path` locks pointing at the existing v1 voiceover so the baseline runs free (no Gemini TTS spend) — this is now the canonical state of the lumawrap demo plan.
+- 2026-04-28 — user verified all 8 steps live (181 passing, produce.py 187 lines, no env reads in stages, no tools_video imports, FrozenInstanceError on mutation, ProductionMode.TEST threaded, lumawrap-v7 structural-equivalent to baseline). Said "move on". Flag flipped to [COMPLETE].
+
+---
+
+**Side fixes shipped during Phase 1.1 verification (commit `989bf63`)** — surfaced by the live gloam test that exposed two real defects beyond Phase 1.1's brief:
+
+1. **Gemini was returning landscape stills** despite `aspect_ratio: "9:16"` in the body. `stills.normalize_aspect` was silently center-cropping the landscape into portrait, discarding subject content (the lamp got cut off in the gloam v1 final). Replaced silent-crop with a hard validator: stills mismatching by >2% raise `AspectMismatchError`. `stage_stills` retries once with a sterner prompt prefix, then raises if still wrong. Plus a textual aspect cue (`"Vertical 9:16 portrait orientation, taller than wide..."`) is now prepended automatically by `_image_real` when the model spec carries `portrait_args`. Verified 5/5 reliability against gemini-3-flash with credits funded.
+2. **Every OpenRouter call was 402'ing silently** because the wallet was exhausted, and `_with_fallback` was catching the 402 as a generic exception and trying alternates on the same wallet — guaranteed-fail noise. Added `InsufficientCreditsError`, pre-flight `check_credits()` at the top of `run_plan`, special-casing 402 in `_raise_for_credits_or_status`, and a `parallax credits` CLI to probe balance.
+
+Both side fixes get filed under Phase 1.1 because they were discovered + fixed during its live verification cycle, not in a separate phase.
+
+#### Phase 1.2 — `expected.yaml` schema + `parallax verify-suite` command  [COMPLETE]
+
+**Description:** Define the assertion schema and ship a runner subcommand. The schema is rich enough to catch every regression class we've shipped fixes for in the last 24 hours — final-state, per-stage artifacts, per-asset aspect, contiguity, manifest contract, run-log smoke, cost guardrail. Runner takes a directory containing one or more case subfolders (each with `plan.yaml` + `expected.yaml` + optional `README.md` + optional pre-locked `assets/`), runs `produce` on each, asserts every field present in the case's `expected.yaml`, and prints `[PASS] <name> (Xs)` or `[FAIL] <name> — <field>: expected <X>, got <Y>`. Exit non-zero on any failure. `--paid` opts in to cases marked `paid: true`.
+
+**Schema (full):**
+```yaml
+name: res-720x1280
+description: One-line summary.
+paid: false                          # default false; --paid required for true
+cost_usd_max: 0.0                    # exceeded → fail (catches API leaks in test mode)
+
+final:
+  resolution: 720x1280
+  duration_s: { min: 5.0, max: 12.0 }
+  audio_video_diff_s_max: 0.05
+  scene_count: 4
+
+stages:                              # per-stage outputs (each block optional)
+  stills:
+    files_must_exist: ["stills/*.png", "stills/*.jpg"]
+    aspect_within_pct_of_project: 0.5
+  voiceover:
+    files_must_exist: ["audio/voiceover.wav", "audio/vo_words.json"]
+    word_count_min: 1
+    word_total_matches_wav_within_s: 0.05
+  assemble:
+    files_must_exist: ["video/ken_burns_draft.mp4"]
+    resolution: 720x1280              # frame size preserved through assemble
+    contiguous_cover: true            # scene_0.start=0; consecutive; last.end=total
+  captions:
+    files_must_exist: ["video/captioned.mp4"]
+    resolution: 720x1280
+  headline:
+    files_must_exist: ["video/final.mp4"]
+    resolution: 720x1280
+
+manifest:
+  keys_required: [model, voice, resolution, scenes]
+  scene_keys_required: [index, vo_text, prompt, start_s, end_s, duration_s]
+
+run_log:
+  must_not_contain: ["Traceback", "ERROR"]
+  must_contain: ["align_scenes", "ken_burns_assemble"]
+```
+
+**Acceptance:**
+- `parallax verify-suite --help` documents every flag and the schema.
+- Empty directory → exit 0, `0 cases run`.
+- Single-case run asserts every present field; missing fields are silently skipped.
+- Each failure prints the exact assertion that failed with expected vs actual values.
+- `--paid` flag is required to run cases marked `paid: true`; otherwise they're skipped with `[SKIP] <name> — paid (use --paid)`.
+
+**Self-verification (subagent):** `uv run pytest -q`, hand-crafted single-case fixture in `tests/fixtures/verify_suite_smoke/`, deliberate failure injection (mutate one field) to confirm the runner reports clearly.
+
+**Human verification steps:**
+
+```sh
+# 1. All tests green (187 + 16 new = 203):
+uv run pytest -q
+
+# 2. Help text renders the schema summary:
+uv run parallax verify-suite --help
+
+# 3. Smoke fixture passes:
+PARALLAX_TEST_MODE=1 uv run parallax verify-suite tests/fixtures/verify_suite_smoke/
+# → [PASS] basic (~1s)   exit 0
+
+# 4. Deliberate-fail rendering — mutate, run, restore:
+sed -i '' 's/^  resolution: 1080x1920$/  resolution: 9999x9999/' \
+  tests/fixtures/verify_suite_smoke/basic/expected.yaml
+PARALLAX_TEST_MODE=1 uv run parallax verify-suite tests/fixtures/verify_suite_smoke/ ; echo "exit=$?"
+# → [FAIL] basic — final.resolution: expected 9999x9999, got 1080x1920 …  exit=1
+git checkout -- tests/fixtures/verify_suite_smoke/basic/expected.yaml
+
+# 5. Single-case filter:
+PARALLAX_TEST_MODE=1 uv run parallax verify-suite tests/fixtures/verify_suite_smoke/ --case basic
+
+# 6. Paid gating:
+yq -i '.paid = true' tests/fixtures/verify_suite_smoke/basic/expected.yaml   # or hand-edit
+PARALLAX_TEST_MODE=1 uv run parallax verify-suite tests/fixtures/verify_suite_smoke/
+# → [SKIP] basic — paid (use --paid)   exit 0
+PARALLAX_TEST_MODE=1 uv run parallax verify-suite tests/fixtures/verify_suite_smoke/ --paid
+# → [PASS] basic
+git checkout -- tests/fixtures/verify_suite_smoke/basic/expected.yaml
+```
+
+**Updates:**
+- 2026-04-28 — Shipped `src/parallax/verify_suite.py` (`load_expected`, `run_case`, `run_suite`, `cli_run`), `parallax verify-suite` subcommand, `tests/fixtures/verify_suite_smoke/basic/`, and 16 pytest cases. 203/203 tests green. Schema mostly matches the draft, with three deliberate adjustments noted in the [GOTCHA]/[CHANGED] entry at the top of this log.
+- 2026-04-28 — user verified all 4 steps live (203 passing, --help renders schema summary, smoke fixture [PASS] basic exit 0, deliberate-fail [FAIL] basic — final.resolution mismatch + exit 1). Said "move on". Flag flipped to [COMPLETE].
+
+#### Phase 1.3 — Test-mode mocks honor requested resolution  [COMPLETE]
+
+**Description:** `shim.render_mock_image` and `shim.render_mock_video` currently emit fixed-size placeholders. Make them respect the requested resolution (image: portrait still at the project's aspect ratio via PIL; video: clip at the project's exact resolution via lavfi). Without this, resolution-adaptation cases either need real spend or pass false-positive against 1080×1920 placeholders.
+
+**Acceptance:**
+- Mock still output: aspect ratio matches project resolution within 0.5%; cropped from a square base, not stretched. ✅
+- Mock video output: dimensions match project resolution exactly. ✅
+- Mock voiceover: returns word timestamps that sum to the requested duration ±0.05s. ✅ (existing impl already satisfied this; guard test added)
+- All existing 203 tests stay green. ✅ (210/210 after the new tests)
+
+**Self-verification (subagent):** `uv run pytest -q`, plus three new tests asserting mock dimensions track plan resolution at 480x854 / 720x1280 / 1080x1920.
+
+**Implementation notes:**
+- `render_mock_image` now takes `resolution: str = "1080x1920"`. Renders a square base canvas (so prompt text stays at the same visual scale across resolutions), center-crops to the requested aspect, then resizes to exact target pixels with LANCZOS.
+- `render_mock_video` already accepted `resolution`; openrouter dispatchers now thread `size` from `generate_image` / `generate_video` into the test_call lambdas (default `"1080x1920"` when unset, preserving back-compat).
+- `_mock_voiceover` left unchanged — it was already emitting `anullsrc -t total` where `total` matches the synthesized word timestamps. New `tests/test_mocks_resolution.py::test_mock_voiceover_silence_matches_word_timestamps` guards this.
+- `project.animate_scenes` still calls `render_mock_video` without a `resolution` kwarg; left as-is (its `resolution` param is `"480p"`-style not `WxH`, separate concern).
+
+**Human verification steps:**
+```sh
+uv run pytest tests/test_mocks_resolution.py -v          # 7/7 pass
+uv run pytest -q                                         # 210/210 pass
+PARALLAX_TEST_MODE=1 uv run parallax verify-suite tests/fixtures/verify_suite_smoke/   # [PASS] basic
+```
+
+**Updates:**
+- 2026-04-28 — Phase 1.3 complete on `refactor/openrouter-cli`. Commits: `24a462c` (shim) + `7e2f62a` (tests). +7 tests (210 total). All local; awaiting user signoff before flipping to merge-ready.
+- 2026-04-28 — user signed off ("move on"); flag flipped to [COMPLETE].
+
+#### Phase 1.4 — Reference test case + scaffolder  [COMPLETE]
+
+**Description:** Ship one canonical test case at `tests/integration/res-720x1280/` — `plan.yaml`, `README.md`, `expected.yaml` populated with the full schema from Phase 1.2. Add `parallax verify-init <name> [--from <existing>]` to scaffold a new case folder by copying an existing one and rewriting its plan + expected. Lets new cases ship with a one-liner.
+
+**Acceptance:**
+- `parallax verify-suite tests/integration/res-720x1280/` passes in test mode (free, exit 0).
+- `parallax verify-init res-480x854 --from res-720x1280` creates a new folder with `plan.yaml` resolution rewritten to 480x854 and `expected.yaml` updated to match.
+- README in the reference case explains: how the schema works, how to author a new case by hand, how `--paid` interacts, where `parallax-demo/test_*` cases live and how they share the schema.
+
+**Self-verification (subagent):** `uv run pytest -q`, scaffolder roundtrip (`verify-init res-480x854 --from res-720x1280`, `verify-suite res-480x854`, expect PASS), README readability check.
+
+**Human verification steps:**
+1. `uv run pytest -q` — expect `224 passed` (210 baseline + 14 new in `tests/test_verify_init.py`).
+2. `PARALLAX_TEST_MODE=1 uv run parallax verify-suite tests/integration/res-720x1280/` — expect `[PASS] res-720x1280` and exit 0.
+3. `uv run parallax verify-init --help` — expect a documented subcommand with `--from`, `--resolution`, `--force` flags.
+4. Roundtrip:
+   ```sh
+   rm -rf /tmp/_p14_demo
+   uv run parallax verify-init /tmp/_p14_demo --from tests/integration/res-720x1280/
+   PARALLAX_TEST_MODE=1 uv run parallax verify-suite /tmp/_p14_demo/
+   # expect [PASS] res-720x1280, exit 0
+   ```
+5. Resolution rewrite + roundtrip:
+   ```sh
+   rm -rf /tmp/_p14_480
+   uv run parallax verify-init /tmp/_p14_480 --from tests/integration/res-720x1280/ --resolution 480x854
+   PARALLAX_TEST_MODE=1 uv run parallax verify-suite /tmp/_p14_480/
+   # expect [PASS] _p14_480, exit 0
+   ```
+6. Negative — re-run `verify-init /tmp/_p14_demo --from ...` without `--force`, expect `Error: target directory already exists` and exit 1. Re-run with `--force`, expect success.
+7. Read `tests/integration/res-720x1280/README.md` — confirm it explains the full schema, the by-hand and `--from` authoring flows, `--paid` semantics, and the dual-folder convention.
+
+**Updates:**
+- 2026-04-28 — kicked off subagent.
+- 2026-04-28 — subagent reported done. Commits on `refactor/openrouter-cli` (all local, none pushed):
+  - reference case at `tests/integration/res-720x1280/` with full-schema `expected.yaml`, 720x1280 plan with captions+headline, operator-facing README.
+  - `verify-init` scaffolder in `verify_suite.py` with `--from` / `--resolution` / `--force`. CLI subcommand wired. `--resolution` rewrites plan.yaml `resolution:`, `expected.final.resolution`, every per-stage `stages.<name>.resolution`, and the `name:` field — so a rewrite produces a working case, not one that needs hand-edits.
+  - `run_suite` accepts a single case folder directly (single-case shortcut) so operators can iterate on one case without wrapping in a parent dir.
+  - 14 new pytest tests in `tests/test_verify_init.py` (224 total, was 210). Includes a roundtrip test that scaffolds with `--resolution` and runs verify-suite to PASS.
+  - AGENTS.md updated with `verify-init` doc + single-case shortcut for `verify-suite`.
+
+**Phase 1.4 carry-overs:**
+- `stages.stills.resolution` is intentionally omitted from the canonical case's `expected.yaml`. See [FUTURE] entry below: `parallax.tools.generate_image` shim drops the `size` arg before reaching the resolution-aware mock, so test-mode stills always come back 1080×1920. The smoke fixture covers the schema branch (asserts 1080x1920); the canonical case relies on `final.resolution` + `assemble.resolution` for the product-level guarantee.
+
+- 2026-04-28 — user signed off ("move on"); flag flipped to [COMPLETE]. Block 1 (Test Harness Foundation) closes — all 4 phases [COMPLETE]. Block 2 + Block 3 of the Integration Test Suite work block remain [INCOMPLETE] and are deferred per the 6-hour pivot to live agent-driven e2e (narrative-parallax Block 5).
+
+### Block 2 — Test Case Matrix  [INCOMPLETE]
+
+Populate the matrix using the Block 1 harness. Most of these are scaffolder + plan-edit work; the harness does the heavy lifting.
+
+#### Phase 2.1 — Resolution adaptation (3 cases)  [INCOMPLETE]
+`tests/integration/res-480x854/`, `res-720x1280/` (already exists from 1.3), `res-1080x1920/`. All free, test-mode. Each is a 2-scene plan with captions + headline. Verifies fontsize scaling, frame-size preservation through every burn pass, and that downstream stages don't hard-code dimensions.
+
+#### Phase 2.2 — Image-model parity (3 cases)  [INCOMPLETE]
+`img-gemini-3-flash/`, `img-nano-banana/`, `img-seedream/`. Marked `paid: true`. Each generates one still + one i2v clip + assembles + asserts that the final clip's first frame's aspect matches the project resolution within 0.5%. This is the case set that catches "model X stops honoring aspect_ratio" regressions.
+
+#### Phase 2.3 — Pipeline-step coverage (5 cases)  [INCOMPLETE]
+`pipeline-no-captions/`, `pipeline-no-headline/`, `pipeline-locked-stills/` (assets pre-committed in folder), `pipeline-locked-clips/`, `pipeline-avatar/` (lavfi-generated blue source). All free, test-mode. Verifies each conditional branch in `produce.py` runs cleanly in isolation.
+
+#### Phase 2.4 — Voice routing (2 cases)  [INCOMPLETE]
+`voice-gemini/` (default Gemini path), `voice-elevenlabs/` (`voice: eleven:<id>`). Free in test mode (mocks WhisperX + voice synth); `--paid` triggers real synth.
+
+### Block 3 — Smoke + Documentation  [INCOMPLETE]
+
+#### Phase 3.1 — Paid full-fidelity smoke  [INCOMPLETE]
+One 4-scene case at house defaults run against real APIs end-to-end. The thing to run before any release. Exists in the matrix as `smoke-full/`, marked `paid: true`. Phase delivers the case + a `parallax verify-suite tests/integration/smoke-full/ --paid` invocation that's documented as the canonical pre-release sanity check.
+
+#### Phase 3.2 — AGENTS.md + dual-folder docs  [INCOMPLETE]
+Document the verify-suite workflow in AGENTS.md (commands, flags, schema, how to author a new case). Cover the dual-folder convention: `tests/integration/` for repo-versioned free cases, `~/Documents/parallax-demo/test_<n>/` for ad-hoc paid playgrounds the operator points at manually. The latter borrow the same `expected.yaml` schema so the runner works on both.
+
+### WHY-prompts (open questions before this block locks)
+
+1. **Long-term role of parallax CLI.** Is this the final big investment in the CLI before attention pivots to the `narrative-parallax` agent layer, or will the CLI keep evolving in parallel? Recommendation: assume the former and design the test contract to be *strict* (exact resolutions, exact scene counts, contiguous-coverage invariants asserted hard). If the CLI is going to keep moving, we'd loosen some assertions and lean harder on Phase 3.2's docs so future-you can author new cases as the surface grows.
+
+2. **In-repo `tests/integration/` vs `~/Documents/parallax-demo/test_*`.** I scoped both above, but they serve different purposes — in-repo cases are version-controlled regression scenarios you run on every change; `parallax-demo` cases are operator playgrounds you point at when you want to manually validate something specific. Recommendation: do both, with the same `expected.yaml` schema. In-repo for free CI-style cases, `parallax-demo` for paid real-asset scenarios that don't belong in git history.
+
+3. **Patchwork or rewire — `produce.py` posture.** Building real integration tests will expose every weak spot in `produce.py`'s 700-line procedure (missing flags, hard-coded assumptions, branches we can't currently invoke in isolation). Recommendation: hold the line in this block — document gaps as `[FUTURE]` entries in DEV_LOG, ship the test harness against the surface that exists today, and scope a separate `produce.py refactor` block once the matrix is in place. Otherwise this block balloons. If you'd rather treat integration testing as the forcing function for the refactor, we'd merge this with a `produce.py` decomposition phase and double the size of the block.
+
+The 1,979-line `tools_video.py` was extracted into eight focused modules in eight separate commits, each running the full 165-test suite green before moving on:
+
+1. `parallax.captions/` subpackage — `styles`, `chunker`, `animation`, `drawtext`, `pillow`, `burn`.
+2. `parallax.manifest` — `write_manifest`, `read_manifest`.
+3. `parallax.ffmpeg_utils` — `_get_ffmpeg`, `_ffmpeg_has_drawtext`, `_probe_fps`, `_parse_color`, `_FFMPEG_FULL`.
+4. `parallax.assembly` — `align_scenes`, `ken_burns_assemble`, `assemble_clip_video`, `_zoom_filter`, `_make_kb_clip`, `_make_clip_segment`.
+5. `parallax.avatar` — `generate_avatar_clips`, `key_avatar_track`, `burn_avatar`.
+6. `parallax.headline` — `burn_titles`, `burn_headline`.
+7. `parallax.voiceover` — `generate_voiceover`, `_apply_atempo`, `_trim_long_pauses`, `_mock_voiceover`.
+8. `parallax.project` — `scan_project_folder`, `animate_scenes`.
+
+`tools_video.py` is now a 72-line compat shim that re-exports the public surface — kept (not deleted) because external imports may still reference `parallax.tools_video.<name>`. New code should import from the extracted module directly. AGENTS.md gained a "Module map" section enumerating which functions live where.
+
+Pure mechanical move — no signatures changed, no helpers combined, no renames. Phase-1 characterization tests (added in `0e51f29`) were the safety net; running `uv run pytest -q` between every move surfaced any breakage immediately.
+
+`headline.py` imports `CAPTION_STYLES` and `_FONTS_DIR` from `captions.styles` — that's an inherent pre-existing dependency (titles share the font/style presets), not a new one introduced by the split. Flagged for review post-split: the import surface between `headline` and `captions.styles` could be tightened to a thin "fonts" interface if we ever want to make captions truly leaf.
+
+**Breaks if:**
+- Final mp4 is shorter than the wav (assembly tail-cover regression — `align_scenes` + `ken_burns_assemble` mux step)
+- Captions display at wrong size or wrong position (`_style_drawtext_filter` filter graph regression)
+- Avatar appears as a blue rectangle instead of being keyed (chroma-key chain — `key_avatar_track` ProRes 4444 alpha or `burn_avatar` overlay format=auto)
+- `parallax produce` errors on import (a module move broke a consumer import — most likely `produce.py`'s inline `from .tools_video import _zoom_filter, _get_ffmpeg, _make_kb_clip` paths, which now resolve via `assembly` and `ffmpeg_utils` directly)
+
+## 2026-04-28 — [CHANGED] TTS style presets + plan YAML support; rapid_fire is the ad default
+
+Gemini Flash TTS has no numeric speed/rate parameter — speech control is **prompt-based only**. Live A/B (verified): the bare prompt produces 13.13 s for a chocolate-bar ad script; prefixing `"Read this as a rapid-fire commercial — talk fast, no pauses, urgent, energetic. Speak quickly: "` brings the same script to **8.45 s, a 36 % speedup with no audible distortion**.
+
+Codified as `STYLE_PRESETS` in `parallax/gemini_tts.py`:
+- `rapid_fire` — the verified-aggressive directive. **DEFAULT**, applied automatically when no `style` / `style_hint` is passed to `generate_tts(alias='gemini-flash-tts')`.
+- `fast` — milder energy bump.
+- `calm` — measured / conversational.
+- `natural` — empty directive (opt out of the ad-default for non-ad copy).
+
+Threading: `gemini_tts.synthesize(style=, style_hint=)` → `openrouter.generate_tts(style=, style_hint=)` → `tools_video.generate_voiceover(style=, style_hint=)` → plan YAML fields `style:` / `style_hint:`. `style_hint` (freeform string) wins over `style` (preset name) when both are given. Unknown style names raise loudly so plan YAML typos don't silently fall back to `natural`.
+
+Parallax CLI defaults flipped to align with the user's primary path:
+- `voice` default `george` (ElevenLabs) → `Kore` (Gemini)
+- `speed` default `1.1` (atempo for ElevenLabs) → `1.0` for Gemini, `1.1` retained when `voice` starts with `eleven:`
+- `tools_video.generate_voiceover` now routes by voice prefix: `eleven:<id>` → ElevenLabs path; anything else → Gemini path
+
+Five new tests in `test_gemini_tts.py`: rapid_fire is the default through the production path, `style='natural'` skips the directive, `style_hint` overrides preset, unknown style raises, response missing audio parts raises. Total: 68 passed.
+
+Live re-verification at 8.45 s (default-no-style path through `openrouter.generate_tts`) confirms the production default matches the verified A/B winner.
+
+**Breaks if:** `generate_tts(alias='gemini-flash-tts')` without explicit `style` produces audio noticeably longer than ~9 s for the chocolate-ad script (the rapid_fire directive isn't being prepended); plan YAML `style: rapid_fire` produces a different cadence than no-arg (the YAML field isn't being read or threaded); or `style: <typo>` silently falls back to natural (must raise `ValueError: Unknown TTS style`).
+
+## 2026-04-28 — [CHANGED] Gemini Flash TTS wired as primary voiceover (direct Google API)
+
+OpenRouter does **not** host Gemini TTS (verified: `/api/v1/models` audio-output filter shows only Lyria music + OpenAI gpt-audio, none with per-word alignment). Wired Gemini Flash Preview TTS via the `google-genai` SDK directly: new `parallax/gemini_tts.py` exposes `synthesize(text, voice, out_dir, api_key)` returning `(wav_path, words, duration)`. Audio is 24 kHz mono 16-bit PCM wrapped as WAV.
+
+`generate_tts` now routes by alias: `voice='eleven:<id>'` → ElevenLabs (escape hatch with native alignment); alias starts with `gemini` → direct Gemini API; anything else falls into the OpenRouter `_tts_real` path (still raises until OpenRouter ships an alignment-emitting TTS model). Default voice is `Kore`; ~30 prebuilt voices documented in the module.
+
+`pricing.py` simplified — removed `gpt-4o-mini-tts` and `voxtral` aliases. They pointed at OpenRouter slugs that either don't exist or don't emit alignment; ElevenLabs (per-voice fidelity) and Gemini (free preview, default) cover the actual use cases. The Gemini ModelSpec uses a sentinel `model_id="gemini-direct/gemini-2.5-flash-preview-tts"` to mark it as out-of-OpenRouter.
+
+**Gotcha — Gemini does not return word timestamps.** Per-word `start`/`end` are evenly distributed across total duration. For tighter caption sync, layer forced alignment (whisper) on the produced wav, or use `voice='eleven:<id>'`.
+
+Five new tests in `test_gemini_tts.py`: even-distribution math, empty-input handling, missing-key raises, mocked-client wav-format roundtrip, missing-audio-parts raises. Updated `test_pricing.py` to expect only `gemini-flash-tts` in TTS_MODELS. Total: 64 passed.
+
+Live demo verified: 10s "Tokyo neon" narration via `voice='Kore'` produced a clean 481 KB wav at `~/Documents/narrative-demo/`.
+
+**Breaks if:** `generate_tts(alias='gemini-flash-tts')` calls OpenRouter instead of Google's Gemini API; the produced wav is not 24 kHz mono 16-bit; missing `AI_VIDEO_GEMINI_KEY`/`GEMINI_API_KEY` produces a stub or `ModuleNotFoundError` instead of a clear `RuntimeError` mentioning the env var; or Gemini TTS pricing leaves preview and the `cost_usd=0.0` ModelSpec leaks free-tier costs into usage records.
+
+## 2026-04-28 — [FIX] Real-mode media gotchas codified in tests; size/aspect_ratio knobs wired
+
+Live API verification surfaced four wire-shape bugs and gaps in the previous round. Each is now locked into `test_openrouter_request_shapes.py` (10 tests using fake httpx) so a future regression fails loudly instead of producing a runtime ZodError 400 in front of the user:
+
+1. **`frame_images` must be an array, not an object.** First impl shipped `{"first_frame": {...}}`; correct shape is `[{"type": "image_url", "frame_type": "first_frame", "image_url": {"url": ...}}]`. `frame_type` ∈ `{"first_frame", "last_frame"}` per model spec — last-frame conditioning is supported by every video model that lists it in `supported_frame_images`. (veo-3.1-fast supports both; seedance and kling support first_frame.)
+2. **`model_id` namespace stripping.** pricing.py prefixes everything with `openrouter/` so the dispatcher can tell at a glance which backend a row belongs to. The wire `model` parameter strips the leading `openrouter/`. Locked in via `test_*_strips_openrouter_prefix_from_model_id`.
+3. **`size` and `aspect_ratio` passthrough.** `generate_image(size=...)` and `generate_video(size=..., aspect_ratio=...)` now pass through to the API. Each video model's `supported_sizes` is enumerable via `/api/v1/videos/models`; submit-time validation surfaces "size not in supported list" errors with the request id intact.
+4. **`gemini-2.5-flash-image` ignores size hints.** Verified live: `size='1080x720'`, `aspect_ratio='3:2'`, `width/height` — all silently produce 1024×1024. Documented as a model-level limitation in the `generate_image` docstring; for exact-dimension output use a different image model or post-process resize via `tools_video`.
+
+`pricing.py` `model_id`s for video aliases corrected against the live `/api/v1/videos/models` catalog: `kling` → `kwaivgi/kling-video-o1`, `seedance` → `bytedance/seedance-2.0-fast`, `wan` → `alibaba/wan-2.7`. `veo` and `sora` were already correct.
+
+Capability matrix per video model (from `/api/v1/videos/models`, retain inline so a fresh agent doesn't have to re-query):
+
+| alias | model_id | aspects | sizes (subset) | durations | first_frame | last_frame |
+|-------|----------|---------|----------------|-----------|-------------|------------|
+| veo | google/veo-3.1 | 16:9, 9:16 | 1280×720, 1080×1920, 1920×1080, 720×1280, 4K | 4, 6, 8 | ✓ | ✓ |
+| seedance | bytedance/seedance-2.0-fast | 1:1, 3:4, 9:16, 4:3, 16:9, 21:9, 9:21 | 480p–720p variants | 4–15 | ✓ | ✗ |
+| kling | kwaivgi/kling-video-o1 | 16:9, 9:16, 1:1 | 1280×720, 720×1280, 720×720 | 5, 10 | ✓ | ✗ |
+| wan | alibaba/wan-2.7 | per spec | per spec | per spec | per spec | per spec |
+| sora | openai/sora-2-pro | per spec | per spec | per spec | per spec | per spec |
+
+Querying the live catalog with `httpx.get("https://openrouter.ai/api/v1/videos/models")` is the source of truth — quarterly cross-check recommended.
+
+Live end-to-end demo: vertical Tokyo-street still (`google/gemini-2.5-flash-image`) animated to 4-second video (`bytedance/seedance-2.0-fast`, $0.48), narrated 10s via `voice='Kore'` Gemini Flash TTS. All four artifacts in `~/Documents/narrative-demo/`.
+
+**Breaks if:** `frame_images` is sent as an object; the wire `model` parameter still has the `openrouter/` prefix; `size`/`aspect_ratio` are sent on requests where they weren't asked for (must be omitted, not null); or any of the corrected video model_ids drifts again. The capability matrix above is a snapshot — re-query `/api/v1/videos/models` if a model's behavior changes unexpectedly.
+
+## 2026-04-28 — [CHANGED] Real OpenRouter HTTP wired for image AND video; pricing.py model_ids corrected
+
+Verified live against the user's `OPENROUTER_API_KEY`:
+
+- **Image:** `_image_real` POSTs `/api/v1/chat/completions` with `modalities=["image","text"]`. Response carries `message.images[0].image_url.url` as a base64 data URL. Verified end-to-end against `google/gemini-2.5-flash-image` — returns 1024×1024 RGB PNG. Reference images supported as `image_url` content parts.
+
+- **Video:** discovered via `/api/v1/videos/models` (11 models). `_video_real` now wires the verified async contract: POST `/api/v1/videos` `{model, prompt, duration, frame_images?}` → 202 `{id, polling_url}` → poll until `status=="completed"` → GET `unsigned_urls[0]` for the mp4 bytes. Verified live with `bytedance/seedance-2.0-fast` (4s clip, ~2 min wall, $0.48 per call). Default poll interval 5 s, timeout 10 min.
+
+- **TTS:** `_tts_real` still raises with a clear "use `voice='eleven:<id>'`" message — OpenRouter's audio-output models (gpt-audio, lyria) are conversational/musical and lack per-word alignment.
+
+`pricing.py` model_ids corrected to match the actually-hosted slugs from `/api/v1/videos/models`:
+
+- `kling` was `kuaishou/kling-video-o1` → now `kwaivgi/kling-video-o1`
+- `seedance` was `bytedance/seedance` → now `bytedance/seedance-2.0-fast`
+- `wan` was `alibaba/wan-2.5` → now `alibaba/wan-2.7`
+- `veo`, `sora` already correct (`google/veo-3.1`, `openai/sora-2-pro`)
+
+Earlier `[GOTCHA]` entry retracted: I queried only `/api/v1/models` (which lists synchronous chat-style models) and saw zero video output_modalities — false negative. OpenRouter's video models live on a separate listing endpoint with submit-poll-download semantics, not the chat endpoint.
+
+Three new tests in `test_openrouter.py`: live `test_image_real_mode_round_trip` (skipped without `OPENROUTER_API_KEY`); fake-key fallback for video and TTS to confirm error wrapping. Total: 51 passed.
+
+Rejected: a synchronous `_video_real` returning a Future. The polling loop is internal because callers expect a Path return — exposing async would force every handler in the dispatcher (`_with_fallback`, `_record_usage`) to become async. Internal poll keeps the contract synchronous.
+
+**Breaks if:** `_video_real` exits the polling loop without raising on `status=="failed"` or `"error"`; the produced mp4 is 0 bytes (likely the `unsigned_urls[0]` requires the auth header — currently we send it); video poll exceeds 10 min and the timeout doesn't surface as a `RuntimeError` mentioning the last status; or any of the four corrected `model_id`s drifts again (cross-check `/api/v1/videos/models` quarterly).
+
+## 2026-04-27 — [CHANGED] ElevenLabs synthesis migrated into `parallax/elevenlabs.py`
+
+Carved a dedicated `parallax/elevenlabs.py` module out of `tools_video.generate_voiceover`. It owns three things only: the `VOICE_IDS` shorthand table, `resolve_voice(voice, api_key)`, and `synthesize(text, voice_id, out_dir, api_key) -> (raw_path, words, duration)`. The HTTP call to `convert_with_timestamps` and the character-alignment-to-word-timestamps derivation now live here, with no parallax-pipeline assumptions baked in.
+
+`openrouter._tts_elevenlabs` is now the canonical narrative-facing entry point: it handles the test-mode shim, validates `AI_VIDEO_ELEVENLABS_KEY`/`ELEVENLABS_API_KEY`, calls `elevenlabs.synthesize`, and records usage via `_usage.record(backend="elevenlabs", ...)`. The previous `NotImplementedError` placeholder is gone. `tools_video.generate_voiceover` is now a thin orchestration layer: it resolves the voice, calls `openrouter.generate_tts(voice="eleven:<id>")`, applies `_apply_atempo` + `_trim_long_pauses`, writes `vo_words.json`, and returns the JSON-string contract that `produce.py` already expects.
+
+Six new tests in `tests/test_elevenlabs.py` cover: alias short-circuit (no API call for known names), raw-id pass-through, `cost_for` math, character-alignment word grouping (acoustic-end vs. fallback), test-mode runs without a key, and real-mode missing-key surfaces a clear `RuntimeError`. Total: 48/48 passing.
+
+Rejected: leaving the synthesis path in `tools_video` and having `_tts_elevenlabs` call back into it. That would have been a circular ownership loop — the agent-facing entry point (`openrouter.generate_tts`) calling into a video-pipeline tool to get raw audio. Now ownership flows the right way: `elevenlabs` (synthesis primitive) ← `openrouter` (canonical wrapper, usage recording) ← `tools_video` (parallax-pipeline pacing on top).
+
+**Breaks if:** `voice="eleven:<id>"` in real mode raises `NotImplementedError` instead of calling ElevenLabs; `tools_video.generate_voiceover` still imports `from elevenlabs.client`; `~/.parallax/usage.ndjson` records the ElevenLabs spend with `backend="tools_video"` instead of `backend="elevenlabs"`; or `_apply_atempo` / `_trim_long_pauses` no longer run after a real-mode synthesis (the `vo_words.json` `total_duration_s` should be ~`speed×` shorter than the raw mp3 duration).
+
+## 2026-04-27 — [FIX] cost_usd aggregation now keyed by run_id, not session_id
+
+`run.end` was reporting cost from previous runs because `session_id` collides across `parallax produce` invocations of the same plan (`produce-<plan_stem>`), so `_usage.session_total()` summed every run that had ever touched that plan. Added a `run_id` field to `UsageRecord` (auto-populated from `runlog.current_run_id()` when not passed), introduced `usage.run_total(run_id)`, and switched `produce.py` to compute `run_cost` via `run_total(run_id)`. `cost.json` now records both `run_id` and `session_id`; `runlog.end_run` and `cost.json.cost_usd` no longer leak prior-run spend.
+
+session_id is kept on the record for back-compat with existing `parallax usage` aggregates and the by-session reporting it does — only the per-run summary at end-of-produce switched.
+
+**Breaks if:** running `parallax produce` twice in a row in real mode shows the second run's `run.end cost_usd` equal to the sum of both runs (it should equal only the second run's spend); `~/.parallax/usage.ndjson` records written after this change are missing the `run_id` field.
+
+## 2026-04-27 — [DECISION] FAL → OpenRouter unified seam; ElevenLabs as escape hatch
+
+Replaced the FAL-direct image/video pipe with `openrouter.py` — one client with three entry points (`generate_image`, `generate_video`, `generate_tts`), one alias table per kind in `pricing.py` (image: draft/mid/premium/nano-banana/seedream; video: kling/veo/seedance/wan/sora; tts: gemini-flash-tts/gpt-4o-mini-tts/voxtral). Each spec carries a `fallback_alias`; `_with_fallback` walks the chain on RuntimeError. `tools.py` is now a 1-call delegate; `fal.py` deleted. ElevenLabs is retained only as `voice: eleven:<voice_id>`.
+
+Real-mode HTTP for OpenRouter is intentionally NOT implemented yet — `_image_real`/`_video_real`/`_tts_real` raise `NotImplementedError` with a clear hint. Rationale: fetching the OpenRouter media-API contract returned 404, and shipping speculative request bodies risks silent breakage when a real key is wired. The seam is the value; the HTTP body gets verified the moment OPENROUTER_API_KEY is set. Test mode (`PARALLAX_TEST_MODE=1`) routes everything through `shim.py` (PIL stills, ffmpeg-looped stub mp4s, sine-wave WAVs with wpm-derived word timings) and exercises the full pipeline end-to-end.
+
+Also landed in this sprint: `runlog.py` per-run JSONL event log at `~/.parallax/logs/<run_id>.log`; `parallax tail <run_id>` (and `tail latest -f`) subcommand; per-scene timing-override fields (`duration_s`, `start_offset_s`, `fade_in_s`, `fade_out_s`) with cascade. Stale tests for deleted backends/sessions/dispatcher/update_check removed; new `test_openrouter.py` covers every alias × every kind in test mode plus fallback-exhaustion in real mode.
+
+**Breaks if:** `PARALLAX_TEST_MODE=1 parallax produce --folder fixtures/test_concept --plan fixtures/test_concept/plan.yaml` does not produce a final mp4 in <5s; `parallax tail latest` does not show `run.start` → `plan.loaded` → `run.end` events; `uv run pytest` reports anything other than 42/42; or an `OPENROUTER_API_KEY` set in real-mode produces a render (it must still raise `NotImplementedError` until the HTTP impl lands).
+
+## 2026-04-24 — [CHANGED] trim_silence: avatar track is audio source of truth
+
+`trim_silence` now trims the avatar track (video+audio together) first, then extracts audio FROM the trimmed avatar. Previously it trimmed audio and avatar independently, which left open the possibility of drift. Since the avatar track already carries the correct audio, extracting it directly guarantees sync. Output audio is now named after the avatar (e.g. `avatar_track_trimmed_v3.mp3`) rather than the old standalone `avatar_audio_trimmed_v2.mp3`.
+
+**Why:** the avatar track is a sync-locked video+audio pair. Trimming them as separate streams with independent filters can produce subtle clock drift. Extracting audio from the already-trimmed video eliminates that path entirely.
+
+## 2026-04-24 — [GOTCHA] _trim_video with H.264 breaks downstream chromakey
+
+Encoding avatar track to H.264 (`libx264 -pix_fmt yuv420p`) during silence removal caused the chroma key in `key_avatar_track` to key out the entire frame (100% transparent output). The original avatar had `unknown` color range; H.264 re-encode tags the output `color_range=tv` (limited). This changes how `format=yuva444p12le,chromakey` interprets Cb/Cr values relative to what the key color `0x78C2C9` expects.
+
+**Fix:** `_trim_video` now outputs ProRes 422 HQ (`.mov`) with `prores_ks -profile:v 3`. ProRes preserves pixel data at high fidelity and has consistent color range metadata that `key_avatar_track` handles correctly.
+
+**What NOT to do:** never re-encode an avatar track to H.264 mid-pipeline. If you need a container change, use ProRes or FFV1. Any codec that alters color range metadata will silently break the chroma key.
+
+## 2026-04-24 — [FIX] produce.py required avatar.image even when avatar_track was pre-provided
+
+`avatar.image` (or `character_image`) was checked unconditionally at the top of the avatar block in `run_plan()`, but `avatar_img` is only used in the `generate_avatar_clips` branch (when no `avatar_track` is given). Any plan with a pre-recorded `avatar_track` but no `character_image` would error out with "avatar.image or character_image required for avatar overlay." Moved the image check inside the `else` branch (generate path only).
+
+**Root cause:** image check was added before the `if avatar_track_raw / else` branch, so it fired regardless of which path was taken.
+
+## 2026-04-24 — [CHANGED] parallax audio trim-silence — new first-class command
+
+Added `parallax audio detect-silences` and `parallax audio trim` to replace the ad-hoc FFmpeg split/concat approach agents were using. Uses `aselect`/`select` filters for frame-accurate removal without keyframe alignment issues. Updates `plan.yaml` in-place with versioned new file references. See `audio.py: detect_silences`, `trim_silence`, `_trim_audio`, `_trim_video`, `_adjust_words`.
+
+**Why the old approach failed:** Splitting a video at a non-keyframe boundary with `-c:v copy` cuts at the nearest GOP, producing wrong durations. Concatenating re-encoded parts creates PTS discontinuities at the join that manifest as a freeze frame. `select` filter decodes every frame and removes ranges precisely with no concat.
+
+## 2026-04-23 — [FUTURE] tools_video.py module breakup — deferred, thin API first
+
+`tools_video.py` grew to 70KB during rapid video pipeline development. Target module structure is documented in `VISION.md` (Module Architecture section): `parallax/audio.py`, `parallax/video.py`, `parallax/stills.py` as domain-namespaced public surfaces over the monolith.
+
+**Why deferred:** The monolith is working production code. A big-bang refactor risks regressions across every caller in `produce.py`. Phase 1 (thin public API) gives agents and callers the correct namespace immediately with zero risk. Full extraction happens function-by-function as code is touched for real reasons.
+
+**Priority target:** The narration pipeline (`generate_voiceover`, `_apply_atempo`, `_trim_long_pauses`, fixed-WPM fallback) is the largest self-contained chunk and has no video dependencies — extract it as a unit into `parallax/audio.py` when next touching audio behavior.
+
+**How to apply:** When adding any new utility (transcribe, extract_frame, sample_color, etc.), put it in the domain module directly — not in `tools_video.py`. Only move existing functions when you're already editing them for another reason.
+
 ## 2026-04-21 — [CHANGED] Removed agent backends; CLI is now produce-only
 
 Deleted `claude-code` and `anthropic-api` backends along with session tracking, the `parallax run` command, and the update-check nag. The CLI now has exactly one pipeline entry point: `parallax produce --folder <path> --plan <plan.yaml>`. `current_backend` ContextVar removed — usage records hardcode `backend="produce"`. AGENTS.md and env var table updated to remove all agent/backend references.

@@ -1,0 +1,23 @@
+# Canonical reference test case for verify-suite.
+# Two scenes, captions on, headline on, no avatar, 720x1280.
+# Runs free in PARALLAX_TEST_MODE=1 (no real APIs).
+voice: Kore
+speed: 1.0
+model: mid
+resolution: 720x1280
+caption_style: bangers
+fontsize: 40
+words_per_chunk: smart
+headline: REFERENCE CASE
+headline_fontsize: 48
+headline_bg: white
+headline_color: black
+scenes:
+  - index: 0
+    shot_type: broll
+    vo_text: Reference opening line for the canonical case.
+    prompt: A sunlit kitchen counter with a single ceramic mug.
+  - index: 1
+    shot_type: broll
+    vo_text: A second beat that closes the moment cleanly.
+    prompt: Steam curling above the rim of the mug, soft focus.

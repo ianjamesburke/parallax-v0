@@ -1,0 +1,14 @@
+voice: Kore
+speed: 1.0
+model: mid
+resolution: 1080x1920
+captions: skip
+scenes:
+  - index: 0
+    shot_type: broll
+    vo_text: A short opening line.
+    prompt: Stub still — placeholder content.
+  - index: 1
+    shot_type: broll
+    vo_text: A short closing line.
+    prompt: Stub still — second placeholder.

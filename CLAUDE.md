@@ -25,6 +25,10 @@ Never write ad-hoc Python scripts to run pipeline steps. Everything must go thro
 
 If a use case can't be handled by the CLI, add the capability to the CLI first, then use it.
 
+## Module architecture — read before touching tools_video.py
+
+`tools_video.py` is a temporary monolith, not the target architecture. Before adding anything to it, read the Module Architecture section of `VISION.md`. New utilities go into the appropriate domain module (`parallax/audio.py`, `parallax/video.py`, `parallax/stills.py`) — not into `tools_video.py`. The migration strategy and priority deferred extractions are documented in `VISION.md` and `DEV_LOG.md`.
+
 ## Plan YAML is the iteration artifact
 
 When working on a video project, the plan YAML (typically in `parallax/scratch/`) is the single file to edit between versions. Lock approved stills with `still_path`, lock approved audio with `audio_path`/`words_path`. Never bypass the plan to regenerate individual assets ad-hoc.
