@@ -2,6 +2,27 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-29 — [CHANGED] Logging overhaul — output-dir runlog, runs.ndjson index, `parallax log`
+- Run log moved from `~/.parallax/logs/<run_id>.log` to `<output_dir>/run.log`
+  — single canonical location, no symlinks, no duplication. Pre-output_dir
+  events are buffered in memory and flushed at stage_scan.
+- New `~/.parallax/runs.ndjson` index: one append-only line per run with
+  run_id / short_id / output_dir / started / ended / status / cost_usd /
+  scene_count. Powers `parallax log latest` / `log list`.
+- DEBUG events emitted at every stage entry/exit and every ffmpeg subprocess
+  invocation. Level field already on every event; the display layer filters
+  by --level.
+- Output mp4 filename now `<folder>-v<N>-<short_id>.mp4` so the run is
+  traceable from the artifact alone.
+- `parallax tail` replaced by `parallax log <spec> [--level] [--summary]
+  [--follow]` and `parallax log list`. Summary view is the default —
+  operator-readable digest with stage timings and provider call list.
+- Cost rollup bug fixed: `run.end` now sums `usage.run_total(run_id)` instead
+  of reporting $0.
+**Breaks if:** `parallax tail` still resolves; `~/.parallax/logs/` is created
+on a new run; `parallax log latest` doesn't find the most recent run; the
+final mp4 filename lacks the `-<short_id>` suffix.
+
 ## 2026-04-29 — [CHANGED] Cleanup pass — Plan model, field renames, provider consolidation
 - Pydantic `Plan` model in `src/parallax/plan.py` — strict (extra="forbid"),
   single load point in `produce.run_plan`. Mirrors `Brief`.
