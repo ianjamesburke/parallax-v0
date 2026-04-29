@@ -210,6 +210,8 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
         }
         if s.get("animate"):
             scene_entry["animate"] = True
+            if s.get("animate_model"):
+                scene_entry["animate_model"] = s["animate_model"]
             if s.get("motion_prompt"):
                 scene_entry["motion_prompt"] = s["motion_prompt"]
             if s.get("animate_resolution"):
@@ -238,7 +240,13 @@ def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     project.animate_scenes which uses the FAL grok-imagine-video model.
 
     OpenRouter routing supports `end_frame_path` on scenes for last-frame
-    conditioning (model interpolates between start and end image).
+    conditioning (model interpolates between start and end image), and
+    `video_references` for character/style consistency in text-to-video scenes
+    (passed as input_references; ignored when a still drives frame_images).
+
+    Model note: Seedance 2.0 (alias: seedance) is the recommended model for
+    reference-to-video — it has the strongest documented input_references
+    character consistency support per OpenRouter docs.
 
     Breaks if: animated scenes are not augmented with `clip_path` after
     this stage, or pre-locked clips aren't reported as reused.
@@ -284,13 +292,27 @@ def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
                 if end_frame and not Path(end_frame).exists():
                     _log(settings, f"  [{idx:02d}] WARNING: end_frame_path not found ({end_frame}), ignoring")
                     end_frame = None
+
+                # video_references: resolve paths relative to project folder.
+                # Only effective for text-to-video (no still); when image_path is
+                # set, frame_images takes precedence and input_references is ignored.
+                video_refs_raw = s.get("video_references")
+                input_references: list[Path] | None = None
+                if video_refs_raw:
+                    input_references = [
+                        (Path(r) if Path(r).is_absolute() else settings.folder / r)
+                        for r in video_refs_raw
+                    ]
+
                 _log(settings, f"  [{idx:02d}] openrouter {scene_model}"
-                     + (f" + end_frame" if end_frame else ""))
+                     + (f" + end_frame" if end_frame else "")
+                     + (f" + {len(input_references)} ref(s)" if input_references else ""))
                 clip_path = _openrouter.generate_video(
                     prompt=motion_prompt,
                     alias=scene_model,
                     image_path=Path(still),
                     end_image_path=Path(end_frame) if end_frame else None,
+                    input_references=input_references,
                     out_dir=Path(rt["video_dir"]),
                     aspect_ratio=aspect_ratio,
                 )
@@ -369,7 +391,10 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
         _log(settings, f"  aligned {len(words)} words ({words[0]['start']:.2f}s – {words[-1]['end']:.2f}s)")
     else:
         scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
-        full_script = " ".join(s.get("vo_text", "") for s in scenes_raw)
+        full_script = " ".join(s.get("vo_text", "") for s in scenes_raw).strip()
+        if not full_script:
+            _log(settings, "generate_voiceover — no vo_text on any scene, skipping")
+            return plan
         _log(settings, f"generate_voiceover — voice={settings.voice} speed={settings.speed} style={settings.style or settings.style_hint or '<gemini default>'}")
         vo_result = json.loads(generate_voiceover(
             text=full_script, voice=settings.voice, speed=settings.speed, out_dir=rt["audio_dir"],
@@ -393,8 +418,27 @@ def stage_align(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     """
     rt = _runtime(plan)
     _log(settings, "align_scenes")
-    vo_result = rt["vo_result"]
     scenes = rt["scenes"]
+
+    # When there's no VO (stage_voiceover skipped due to empty script), fall
+    # back to per-scene duration_s overrides or a default clip length.
+    if "vo_result" not in rt:
+        scenes_raw = plan.get("scenes", [])
+        raw_map = {s["index"]: s for s in scenes_raw}
+        t = 0.0
+        aligned = []
+        for s in scenes:
+            dur = float(raw_map.get(s["index"], {}).get("duration_s", 5.0))
+            aligned.append({**s, "start_s": t, "end_s": t + dur, "duration_s": dur})
+            t += dur
+        aligned = _apply_timing_overrides(aligned, scenes_raw)
+        for s in aligned:
+            _log(settings, f"  [{s['index']:02d}] {s.get('start_s', 0):.2f}s – {s.get('end_s', 0):.2f}s ({s.get('duration_s', 0):.2f}s)")
+        rt["aligned"] = aligned
+        rt["aligned_json"] = json.dumps(aligned)
+        return plan
+
+    vo_result = rt["vo_result"]
     words_payload = {
         "words": vo_result["words"],
         "total_duration_s": vo_result.get("total_duration_s",
@@ -429,8 +473,8 @@ def stage_manifest(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
             "voice": settings.voice,
             "speed": settings.speed,
             "resolution": settings.resolution,
-            "audio_path": rt["audio_path"],
-            "words_path": rt["words_path"],
+            "audio_path": rt.get("audio_path"),
+            "words_path": rt.get("words_path"),
             "scenes": rt["aligned"],
         }),
         manifest_path=manifest_path,
@@ -451,7 +495,7 @@ def stage_assemble(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     _log(settings, f"ken_burns_assemble → {draft_path}")
     ken_burns_assemble(
         scenes_json=rt["aligned_json"],
-        audio_path=rt["audio_path"],
+        audio_path=rt.get("audio_path"),
         output_path=draft_path,
         resolution=settings.resolution,
     )
@@ -703,6 +747,11 @@ _KNOWN_SCENE_FIELDS = {
     "still_path", "reference", "reference_images",
     "animate", "animate_model", "motion_prompt", "clip_path", "animate_resolution",
     "end_frame_path",
+    # video_references: character/style reference images passed to OpenRouter as
+    # input_references for text-to-video consistency. Only effective when there is
+    # no still_path driving frame_images (i.e. pure text-to-video scenes). Distinct
+    # from reference_images, which is the image-gen still-frame reference field.
+    "video_references",
     "zoom_direction", "zoom_amount",
     # Timing overrides — null/absent = derive from VO. Future graphical editor writes here.
     "duration_s", "start_offset_s", "fade_in_s", "fade_out_s",

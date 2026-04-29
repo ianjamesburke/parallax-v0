@@ -106,6 +106,7 @@ def generate_video(
     *,
     image_path: Path | None = None,
     end_image_path: Path | None = None,
+    input_references: list[Path] | None = None,
     duration_s: float = 5.0,
     out_dir: Path | None = None,
     size: str | None = None,
@@ -119,6 +120,11 @@ def generate_video(
     `end_image_path` — when set, is sent as a `last_frame` conditioning image
     alongside the `first_frame` start image, directing the model to interpolate
     between the two.
+
+    `input_references` — character/style reference images for visual consistency
+    throughout the clip. Mutually exclusive with `image_path` (frame_images):
+    when `image_path` is set, the model uses frame_images and ignores
+    input_references. Only pass input_references when there is no image_path.
     """
     return _dispatch(
         kind="video",
@@ -127,6 +133,7 @@ def generate_video(
             prompt, spec, image_path, duration_s, out_dir,
             size=size, aspect_ratio=aspect_ratio,
             end_image_path=end_image_path,
+            input_references=input_references,
         ),
         test_call=lambda spec: render_mock_video(
             prompt=prompt, model=spec.alias, duration_s=duration_s, out_dir=out_dir,
@@ -687,6 +694,7 @@ def _video_real(
     prompt: str, spec: ModelSpec, image_path: Path | None, duration_s: float, out_dir: Path | None,
     *, size: str | None = None, aspect_ratio: str | None = None,
     end_image_path: Path | None = None,
+    input_references: list[Path] | None = None,
 ) -> Path:
     """Generate a video via OpenRouter's `/api/v1/videos` async endpoint.
 
@@ -740,6 +748,23 @@ def _video_real(
                 "image_url": {"url": f"data:image/{end_suffix};base64,{end_b64}"},
             })
         body["frame_images"] = frame_images
+    elif input_references:
+        # input_references: character/style consistency anchors for text-to-video.
+        # Mutually exclusive with frame_images — only sent when image_path is None.
+        # Per OpenRouter docs, frame_images takes precedence and silently suppresses
+        # input_references when both are present; the guard above makes this explicit.
+        body["input_references"] = [
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": (
+                        f"data:image/{Path(ref_path).suffix.lstrip('.').lower() or 'png'}"
+                        f";base64,{base64.b64encode(Path(ref_path).read_bytes()).decode('ascii')}"
+                    )
+                },
+            }
+            for ref_path in input_references
+        ]
 
     headers = {
         "Authorization": f"Bearer {key}",
