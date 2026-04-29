@@ -10,3 +10,7 @@ build/
 output/
 .wtp.yml
 worktrees/
+
+# Test smoke artifacts — fixtures' brief/plan stay in git, runtime output does not.
+fixtures/**/parallax/
+.DS_Store
