@@ -1,18 +1,24 @@
-aspect: "9:16"
-voice: Kore
+aspect: '9:16'
+voice: nova
 voice_speed: 1.0
+voice_model: tts-mini
 image_model: mid
 video_model: draft
 caption_style: anton
 fontsize: 55
-headline: "FIRST REAL RUN"
+words_per_chunk: smart
+caption_shift_s: 0.0
+headline: FIRST REAL RUN
 headline_fontsize: 64
 headline_bg: white
 headline_color: black
+stills_only: false
 scenes:
-  - index: 0
-    shot_type: broll
-    animate: true
-    vo_text: "A glossy red apple rolls slowly across a sunlit wooden countertop in golden morning light."
-    prompt: "Cinematic close-up of a glossy red apple on a sunlit wooden kitchen countertop, golden morning light, shallow depth of field, photorealistic 9:16 portrait."
-    motion_prompt: "The apple rolls slowly from left to right across the wooden countertop. Smooth gentle motion, sunlight glinting off the apple's surface."
+- index: 0
+  shot_type: broll
+  vo_text: A glossy red apple rolls slowly across a sunlit wooden countertop in golden morning light.
+  prompt: Cinematic close-up of a glossy red apple on a sunlit wooden kitchen countertop, golden morning light, shallow depth of field, photorealistic 9:16 portrait.
+  animate: true
+  motion_prompt: The apple rolls slowly from left to right across the wooden countertop. Smooth gentle motion, sunlight glinting off the apple's surface.
+  still_path: parallax/output/v1/stills/openrouter_mid_1777499445476_n1080x1920.png
+  clip_path: parallax/output/v1/video/openrouter_draft_1777499588555.mp4
