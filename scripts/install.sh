@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
 # Parallax one-shot installer for macOS.
-# Installs uv if missing, installs/upgrades parallax, prompts for FAL_KEY once,
-# persists it to ~/.zshrc, and runs a smoke test in test mode.
+# Installs uv if missing, installs/upgrades parallax, prompts for
+# OPENROUTER_API_KEY once, persists it to ~/.zshrc, and runs a smoke
+# test that doesn't spend any credits.
 #
 # Usage:
 #   curl -LsSf https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/scripts/install.sh | sh
@@ -50,42 +51,25 @@ ENV_ADDS=""
 if grep -qF "$MARKER_START" "$RC" 2>/dev/null; then
   info "Parallax env block already present in $RC — not re-prompting. Edit the file directly to update keys."
 else
-  # FAL_KEY (required for real image gen)
-  if [ -z "${FAL_KEY:-}" ]; then
-    info "Parallax needs a FAL_KEY to generate real images."
-    info "Get one at: https://fal.ai/dashboard/keys"
-    FAL_KEY_INPUT=$(prompt_tty "Paste your FAL_KEY (or press Enter to skip and use test mode): ")
-    if [ -n "$FAL_KEY_INPUT" ]; then
-      ENV_ADDS="${ENV_ADDS}export FAL_KEY=${FAL_KEY_INPUT}
+  # OPENROUTER_API_KEY is the single required credential — every model
+  # (image, video, TTS) routes through OpenRouter.
+  if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+    info "Parallax needs an OPENROUTER_API_KEY for real-mode runs."
+    info "Get one at: https://openrouter.ai/settings/keys"
+    info "(Skip and use PARALLAX_TEST_MODE=1 for stub-mode dry runs.)"
+    OR_KEY_INPUT=$(prompt_tty "Paste your OPENROUTER_API_KEY (or press Enter to skip): ")
+    if [ -n "$OR_KEY_INPUT" ]; then
+      ENV_ADDS="${ENV_ADDS}export OPENROUTER_API_KEY=${OR_KEY_INPUT}
 "
-      export FAL_KEY="$FAL_KEY_INPUT"
+      export OPENROUTER_API_KEY="$OR_KEY_INPUT"
     else
-      warn "No FAL_KEY entered — real image generation will fail until you set one."
+      warn "No OPENROUTER_API_KEY entered — real-mode runs will fail until you set one."
+      warn "  export OPENROUTER_API_KEY=sk-or-..."
+      warn "Or use PARALLAX_TEST_MODE=1 for stub-mode dry runs."
     fi
   fi
 
-  # Backend auth — if claude CLI is present, you're set. If not, prompt for ANTHROPIC_API_KEY
-  # so parallax's auto-fallback can route through the raw API backend.
-  if command -v claude >/dev/null 2>&1; then
-    info "Claude Code CLI detected — parallax will use your Claude subscription by default."
-  else
-    if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-      info "The 'claude' CLI is not installed."
-      info "Parallax can fall back to the raw Anthropic API if you provide an API key."
-      info "Get one at: https://console.anthropic.com/settings/keys"
-      info "(Alternatively, install Claude Code: https://claude.com/claude-code)"
-      ANTHROPIC_KEY_INPUT=$(prompt_tty "Paste your ANTHROPIC_API_KEY (or press Enter to skip): ")
-      if [ -n "$ANTHROPIC_KEY_INPUT" ]; then
-        ENV_ADDS="${ENV_ADDS}export ANTHROPIC_API_KEY=${ANTHROPIC_KEY_INPUT}
-"
-        export ANTHROPIC_API_KEY="$ANTHROPIC_KEY_INPUT"
-      else
-        warn "No ANTHROPIC_API_KEY entered and no 'claude' CLI — parallax will not be able to run until you set up one of the two."
-      fi
-    fi
-  fi
-
-  # Persist everything we collected in a single marker block so the whole set is idempotent.
+  # Persist what we collected in a single marker block so the whole set is idempotent.
   if [ -n "$ENV_ADDS" ]; then
     {
       printf '\n%s\n' "$MARKER_START"
@@ -96,18 +80,16 @@ else
   fi
 fi
 
-# 4. Smoke test — test mode, no FAL spend. Auto-selects whichever backend is available.
-info "Running smoke test (PARALLAX_TEST_MODE=1, no spend)..."
-if command -v claude >/dev/null 2>&1 || [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  if PARALLAX_TEST_MODE=1 parallax run --brief "install smoke test: one small red cube" >/dev/null 2>&1; then
-    info "Smoke test passed."
-  else
-    warn "Smoke test failed. Run manually to see the error:"
-    warn "  PARALLAX_TEST_MODE=1 parallax run --brief 'hello'"
-  fi
+# 4. Smoke test — confirms the install resolved + the CLI runs.
+# `parallax models list` exercises the catalog loader and CLI plumbing
+# without spending credits or requiring an API key.
+info "Running smoke test (no spend)..."
+if PARALLAX_TEST_MODE=1 parallax models list >/dev/null 2>&1; then
+  info "Smoke test passed."
 else
-  info "Skipping smoke test (no backend configured yet — install Claude Code or set ANTHROPIC_API_KEY)."
+  warn "Smoke test failed. Run manually to see the error:"
+  warn "  PARALLAX_TEST_MODE=1 parallax models list"
 fi
 
 info "Done. Open a new terminal (or run: source $RC), then try:"
-printf "   parallax run --brief 'a red cube, cheapest option'\n"
+printf "   parallax produce --folder ./my-project --brief ./my-project/brief.yaml\n"
