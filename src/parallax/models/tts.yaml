@@ -1,46 +1,28 @@
-# Text-to-speech models. Single primary: Gemini Flash Preview TTS via OpenRouter.
+# Text-to-speech models. Routed through OpenRouter chat-completions
+# audio modality (gpt-audio-mini streams pcm16 audio + transcript). Verified
+# live against /api/v1/models 2026-04-29.
 #
-# Voices are Gemini 2.5 Flash Preview TTS prebuilts. Pass the voice name verbatim
-# (e.g. `voice: Kore`). The voice list lives here so the CLI / agent can browse
-# without hitting the network.
+# Voices: pass the OpenAI voice name verbatim (e.g. `voice: nova`). The list
+# below covers the full set OpenAI exposes for gpt-audio-mini.
 
-- alias: gemini-flash-tts
-  model_id: openrouter/google/gemini-2.5-flash-preview-tts
+- alias: tts-mini
+  model_id: openrouter/openai/gpt-audio-mini
   tier: default
   cost: 0.0
   unit: 1k_chars
-  description: Default TTS. Gemini 2.5 Flash Preview TTS via OpenRouter. Free during preview.
+  description: Default TTS. OpenAI gpt-audio-mini via OpenRouter (chat audio modality).
   fallback: null
   capabilities:
     aspect_ratios: []
   voices:
-    - Zephyr
-    - Puck
-    - Charon
-    - Kore
-    - Fenrir
-    - Leda
-    - Orus
-    - Aoede
-    - Callirrhoe
-    - Autonoe
-    - Enceladus
-    - Iapetus
-    - Umbriel
-    - Algieba
-    - Despina
-    - Erinome
-    - Algenib
-    - Rasalgethi
-    - Laomedeia
-    - Achernar
-    - Alnilam
-    - Schedar
-    - Gacrux
-    - Pulcherrima
-    - Achird
-    - Zubenelgenubi
-    - Vindemiatrix
-    - Sadachbia
-    - Sadaltager
-    - Sulafat
+    - alloy
+    - ash
+    - ballad
+    - coral
+    - echo
+    - fable
+    - nova
+    - onyx
+    - sage
+    - shimmer
+    - verse

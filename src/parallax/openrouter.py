@@ -165,48 +165,43 @@ def generate_tts(
 ) -> tuple[Path, list[dict[str, Any]], float]:
     """Returns (audio_path, words [{word, start, end}], total_duration_s).
 
-    All TTS routes through OpenRouter — Gemini 2.5 Flash Preview TTS via
-    `/api/v1/audio/speech`. The `voice` arg is a prebuilt voice name (e.g.
-    'Kore', 'Puck'); the full list is on `models show gemini-flash-tts`.
+    All TTS routes through OpenRouter — OpenAI gpt-audio-mini via the
+    chat-completions audio modality (`modalities=["text","audio"]` +
+    streaming pcm16). The `voice` arg is an OpenAI voice name (e.g.
+    'nova', 'alloy'); full list via `parallax models show tts-mini`.
     """
     out = out_dir or output_dir()
+    spec = resolve(alias, kind="tts")
     if is_test_mode():
-        spec = resolve(alias, kind="tts")
         runlog.event("openrouter.tts.test", alias=alias, chars=len(text), voice=voice)
         return render_mock_tts(text=text, voice=voice, out_dir=out)
 
-    if alias.startswith("gemini"):
-        from . import gemini_tts as _gtts
-        gemini_voice = voice if voice and voice != "default" else _gtts.DEFAULT_VOICE
-        # Default style applies only when neither style nor style_hint was
-        # explicitly passed — passing style=None means "natural" (no prefix).
-        effective_style = style if (style or style_hint) else _gtts.DEFAULT_STYLE
-        runlog.event(
-            "openrouter.tts.call", alias=alias, voice=gemini_voice, chars=len(text),
-            style=effective_style, style_hint=style_hint,
-        )
-        t0 = time.monotonic()
-        path, words, duration = _gtts.synthesize(
-            text, voice=gemini_voice, out_dir=out,
-            style=effective_style, style_hint=style_hint,
-        )
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        runlog.event(
-            "openrouter.tts.response",
-            alias=alias, voice=gemini_voice, duration_ms=duration_ms, ok=True,
-            audio_seconds=round(duration, 3),
-        )
-        spec = resolve(alias, kind="tts")
-        # Cost recording — Gemini Flash Preview TTS is free during preview;
-        # set 0.0 here, revisit when GA pricing lands.
-        _record_usage(spec, text, str(path), duration_ms=duration_ms, cost_usd=0.0, test=False)
-        return path, words, duration
-
-    return _with_fallback(
-        kind="tts",
-        alias=alias,
-        primary_call=lambda spec: _tts_real(text, spec, voice, voice_description, out),
+    from . import openrouter_tts as _ortts
+    chosen_voice = voice if voice and voice != "default" else _ortts.DEFAULT_VOICE
+    # Default style applies only when neither style nor style_hint was
+    # explicitly passed — passing style=None means "natural" (no prefix).
+    effective_style = style if (style or style_hint) else _ortts.DEFAULT_STYLE
+    runlog.event(
+        "openrouter.tts.call", alias=alias, voice=chosen_voice, chars=len(text),
+        style=effective_style, style_hint=style_hint,
     )
+    t0 = time.monotonic()
+    # Strip the `openrouter/` prefix from the catalog model_id so we pass the
+    # bare provider slug to the streaming endpoint.
+    model_id = _strip_or_prefix(spec.model_id)
+    path, words, duration = _ortts.synthesize(
+        text, voice=chosen_voice, out_dir=out,
+        style=effective_style, style_hint=style_hint,
+        model=model_id,
+    )
+    duration_ms = int((time.monotonic() - t0) * 1000)
+    runlog.event(
+        "openrouter.tts.response",
+        alias=alias, voice=chosen_voice, duration_ms=duration_ms, ok=True,
+        audio_seconds=round(duration, 3),
+    )
+    _record_usage(spec, text, str(path), duration_ms=duration_ms, cost_usd=0.0, test=False)
+    return path, words, duration
 
 
 # ---------------------------------------------------------------------------
