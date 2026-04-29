@@ -23,15 +23,24 @@ def main(argv: list[str] | None = None) -> int:
 
     produce_p = sub.add_parser(
         "produce",
-        help="Run a pre-planned scene manifest directly — no agent, no replanning.",
+        help="Run a plan.yaml or brief.yaml end-to-end.",
+        description=(
+            "Run from a plan.yaml (--plan) OR a brief.yaml (--brief). "
+            "Briefs are materialized into a plan first, then produced."
+        ),
     )
     produce_p.add_argument(
         "--folder", required=True,
         help="Path to the project folder.",
     )
-    produce_p.add_argument(
-        "--plan", required=True,
+    produce_src = produce_p.add_mutually_exclusive_group(required=True)
+    produce_src.add_argument(
+        "--plan",
         help="Path to a plan YAML file with scenes, prompts, voice, and model settings.",
+    )
+    produce_src.add_argument(
+        "--brief",
+        help="Path to a brief.yaml. Materialized into plan.yaml via the planner first.",
     )
     produce_p.add_argument(
         "--aspect",
@@ -40,91 +49,83 @@ def main(argv: list[str] | None = None) -> int:
         help="Output aspect ratio. Overrides plan.aspect when set. "
              "Falls back to plan.aspect, then 9:16.",
     )
+    produce_p.add_argument(
+        "--scene", type=int, default=None,
+        help="If set, render only this scene index (no full pipeline). "
+             "Scene must have clip_path or still_path in the plan.",
+    )
 
-    test_scene_p = sub.add_parser(
-        "test-scene",
-        help="Apply the video filter for one scene and open the result. No full pipeline.",
+    plan_p = sub.add_parser(
+        "plan",
+        help="Translate a brief.yaml into a plan.yaml.",
     )
-    test_scene_p.add_argument("--folder", required=True, help="Project folder path.")
-    test_scene_p.add_argument("--plan", required=True, help="Plan YAML path.")
-    test_scene_p.add_argument(
-        "--index", required=True, type=int,
-        help="Scene index to test (must have clip_path or still_path in the plan).",
+    plan_p.add_argument("--folder", required=True, help="Project root.")
+    plan_p.add_argument(
+        "--brief", default=None,
+        help="Path to brief.yaml (default: <folder>/brief.yaml).",
     )
-    test_scene_p.add_argument(
-        "--aspect",
-        choices=("9:16", "16:9", "1:1", "4:3", "3:4"),
+    plan_p.add_argument(
+        "--out", default=None,
+        help="Override plan.yaml output path "
+             "(default: <folder>/parallax/scratch/plan.yaml).",
+    )
+    plan_p.add_argument(
+        "--model", default="mid",
+        help="Image model alias for the plan (default: mid).",
+    )
+    plan_p.add_argument(
+        "--caption-style", default="anton",
+        help="Caption preset name written into the plan (default: anton).",
+    )
+
+    ingest_p = sub.add_parser(
+        "ingest",
+        help="Index footage into a searchable JSON.",
+    )
+    ingest_p.add_argument("path", help="Clip file or directory of clips.")
+    ingest_p.add_argument(
+        "--out", default=None,
+        help="Override the index.json output path.",
+    )
+    ingest_p.add_argument(
+        "--visual", action="store_true",
+        help="Also tag sampled frames via vision (currently not implemented).",
+    )
+    ingest_p.add_argument(
+        "--estimate", action="store_true",
+        help="Dry-run: report duration + cost estimate, no transcription.",
+    )
+    ingest_p.add_argument(
+        "--parallel", type=int, default=4,
+        help="Max concurrent transcription workers (default: 4).",
+    )
+
+    # `models` group — browse the alias catalog.
+    models_p = sub.add_parser(
+        "models", help="Browse the model catalog (image / video / tts aliases)."
+    )
+    models_sub = models_p.add_subparsers(dest="models_command", required=True)
+    models_list_p = models_sub.add_parser("list", help="List every alias grouped by kind.")
+    models_list_p.add_argument(
+        "--kind",
+        choices=("image", "video", "tts"),
         default=None,
-        help="Output aspect ratio. Overrides plan.aspect when set.",
+        help="Filter to a single kind.",
     )
-
-    usage_p = sub.add_parser("usage", help="Summarize per-model and per-session usage.")
-    usage_p.add_argument(
-        "--include-test",
-        action="store_true",
-        help="Include PARALLAX_TEST_MODE records (excluded by default).",
+    models_list_p.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON instead of a table."
     )
-
-    sub.add_parser("update", help="Upgrade parallax to the latest release via uv.")
-
-    sub.add_parser(
-        "credits",
-        help="Show OpenRouter credits balance and exit. Useful before kicking off a run.",
-    )
-
-    tail_p = sub.add_parser("tail", help="Print the JSONL event log for a run_id.")
-    tail_p.add_argument("run_id", help="Run id from `parallax produce` (or 'latest').")
-    tail_p.add_argument("-f", "--follow", action="store_true", help="Stream new events as they're appended.")
-
-    verify_p = sub.add_parser(
-        "verify-suite",
-        help="Run case folders against the rich expected.yaml schema (final mp4, "
-             "stages, manifest, run-log, cost guardrail).",
-        description=(
-            "Each case subfolder must contain a plan.yaml + expected.yaml. "
-            "expected.yaml schema (every block optional): "
-            "final.{resolution,duration_s,audio_video_diff_s_max,scene_count}, "
-            "stages.<name>.{files_must_exist,resolution,contiguous_cover}, "
-            "manifest.{keys_required,scene_keys_required}, "
-            "run_log.{must_not_contain,must_contain}, cost_usd_max, paid."
-        ),
-    )
-    verify_p.add_argument("suite_dir", help="Directory containing one or more case subfolders.")
-    verify_p.add_argument(
-        "--paid", action="store_true",
-        help="Run cases marked paid: true (default skips them).",
-    )
-    verify_p.add_argument(
-        "--case", default=None,
-        help="Run only a single case subfolder by name (default: all).",
-    )
-
-    init_p = sub.add_parser(
-        "verify-init",
-        help="Scaffold a new verify-suite case folder (plan.yaml + expected.yaml + README.md).",
-        description=(
-            "Creates a new case folder at <target>. With --from <existing>, "
-            "copies that case verbatim and optionally rewrites the resolution. "
-            "Without --from, writes a minimal one-scene starter that points "
-            "at the canonical reference case for the full schema."
-        ),
-    )
-    init_p.add_argument("target", help="Path to the new case folder.")
-    init_p.add_argument(
-        "--from", dest="from_dir", default=None,
-        help="Copy from an existing case folder (must contain plan.yaml + expected.yaml).",
-    )
-    init_p.add_argument(
-        "--resolution", default=None,
-        help="WxH (e.g. 480x854). Rewrites plan.yaml's resolution and expected.final.resolution.",
-    )
-    init_p.add_argument(
-        "--force", action="store_true",
-        help="Overwrite the target if it already exists (default: refuse).",
+    models_show_p = models_sub.add_parser("show", help="Show capabilities for one alias.")
+    models_show_p.add_argument("alias", help="Model alias (e.g. 'mid', 'kling', 'gemini-flash-tts').")
+    models_show_p.add_argument(
+        "--kind",
+        choices=("image", "video", "tts"),
+        default=None,
+        help="Disambiguate when an alias exists in multiple kinds.",
     )
 
     # --- audio subcommands ---
-    audio_p = sub.add_parser("audio", help="Audio utilities — transcription, processing.")
+    audio_p = sub.add_parser("audio", help="Audio utilities.")
     audio_sub = audio_p.add_subparsers(dest="audio_command", required=True)
 
     transcribe_p = audio_sub.add_parser(
@@ -168,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
                        help="Crossfade duration at each cut joint, in seconds (default: 0.05).")
 
     # --- video subcommands ---
-    video_p = sub.add_parser("video", help="Video utilities — frame extraction, color sampling.")
+    video_p = sub.add_parser("video", help="Video utilities.")
     video_sub = video_p.add_subparsers(dest="video_command", required=True)
 
     frame_p = video_sub.add_parser("frame", help="Extract a single frame from a video.")
@@ -184,29 +185,69 @@ def main(argv: list[str] | None = None) -> int:
     color_p.add_argument("--x", type=int, default=10, help="X pixel coordinate (default: 10).")
     color_p.add_argument("--y", type=int, default=10, help="Y pixel coordinate (default: 10).")
 
-    # `models` group — browse the alias catalog.
-    models_p = sub.add_parser(
-        "models", help="Browse the model catalog (image / video / tts aliases)."
+    usage_p = sub.add_parser("usage", help="Per-model / per-session cost summary.")
+    usage_p.add_argument(
+        "--include-test",
+        action="store_true",
+        help="Include PARALLAX_TEST_MODE records (excluded by default).",
     )
-    models_sub = models_p.add_subparsers(dest="models_command", required=True)
-    models_list_p = models_sub.add_parser("list", help="List every alias grouped by kind.")
-    models_list_p.add_argument(
-        "--kind",
-        choices=("image", "video", "tts"),
-        default=None,
-        help="Filter to a single kind.",
+
+    sub.add_parser(
+        "credits",
+        help="OpenRouter balance.",
     )
-    models_list_p.add_argument(
-        "--json", action="store_true", help="Emit machine-readable JSON instead of a table."
+
+    tail_p = sub.add_parser("tail", help="Stream a run log.")
+    tail_p.add_argument("run_id", help="Run id from `parallax produce` (or 'latest').")
+    tail_p.add_argument("-f", "--follow", action="store_true", help="Stream new events as they're appended.")
+
+    verify_p = sub.add_parser(
+        "verify-suite",
+        help="Run case folders against expected.yaml.",
+        description=(
+            "Each case subfolder must contain a plan.yaml + expected.yaml. "
+            "expected.yaml schema (every block optional): "
+            "final.{resolution,duration_s,audio_video_diff_s_max,scene_count}, "
+            "stages.<name>.{files_must_exist,resolution,contiguous_cover}, "
+            "manifest.{keys_required,scene_keys_required}, "
+            "run_log.{must_not_contain,must_contain}, cost_usd_max, paid."
+        ),
     )
-    models_show_p = models_sub.add_parser("show", help="Show capabilities for one alias.")
-    models_show_p.add_argument("alias", help="Model alias (e.g. 'mid', 'kling', 'gemini-flash-tts').")
-    models_show_p.add_argument(
-        "--kind",
-        choices=("image", "video", "tts"),
-        default=None,
-        help="Disambiguate when an alias exists in multiple kinds.",
+    verify_p.add_argument("suite_dir", help="Directory containing one or more case subfolders.")
+    verify_p.add_argument(
+        "--paid", action="store_true",
+        help="Run cases marked paid: true (default skips them).",
     )
+    verify_p.add_argument(
+        "--case", default=None,
+        help="Run only a single case subfolder by name (default: all).",
+    )
+
+    init_p = sub.add_parser(
+        "verify-init",
+        help="Scaffold a new verify-suite case.",
+        description=(
+            "Creates a new case folder at <target>. With --from <existing>, "
+            "copies that case verbatim and optionally rewrites the resolution. "
+            "Without --from, writes a minimal one-scene starter that points "
+            "at the canonical reference case for the full schema."
+        ),
+    )
+    init_p.add_argument("target", help="Path to the new case folder.")
+    init_p.add_argument(
+        "--from", dest="from_dir", default=None,
+        help="Copy from an existing case folder (must contain plan.yaml + expected.yaml).",
+    )
+    init_p.add_argument(
+        "--resolution", default=None,
+        help="WxH (e.g. 480x854). Rewrites plan.yaml's resolution and expected.final.resolution.",
+    )
+    init_p.add_argument(
+        "--force", action="store_true",
+        help="Overwrite the target if it already exists (default: refuse).",
+    )
+
+    sub.add_parser("update", help="Upgrade parallax via uv.")
 
     args = parser.parse_args(argv)
 
@@ -218,22 +259,13 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(level)
 
     if args.command == "produce":
-        from .openrouter import InsufficientCreditsError
-        from .produce import run_plan
-        try:
-            return run_plan(folder=args.folder, plan_path=args.plan, aspect=args.aspect)
-        except InsufficientCreditsError as e:
-            print(f"\nError: {e}\n", file=sys.stderr)
-            return 1
+        return _run_produce(args)
 
-    if args.command == "test-scene":
-        from .openrouter import InsufficientCreditsError
-        from .produce import test_scene
-        try:
-            return test_scene(folder=args.folder, plan_path=args.plan, scene_index=args.index, aspect=args.aspect)
-        except InsufficientCreditsError as e:
-            print(f"\nError: {e}\n", file=sys.stderr)
-            return 1
+    if args.command == "plan":
+        return _run_plan_command(args)
+
+    if args.command == "ingest":
+        return _run_ingest_command(args)
 
     if args.command == "usage":
         _print_usage(usage.summarize(include_test=args.include_test))
@@ -366,6 +398,132 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
     return 2
+
+
+def _run_produce(args) -> int:
+    """Dispatch `parallax produce` — handles --plan, --brief, and --scene."""
+    from pathlib import Path
+
+    from .openrouter import InsufficientCreditsError
+    from .produce import run_plan, test_scene
+
+    # Resolve plan path: either passed directly or materialized from a brief.
+    if args.brief is not None:
+        from .planner import plan_from_brief
+
+        brief_path = Path(args.brief).expanduser()
+        if not brief_path.is_file():
+            print(f"Error: brief not found: {brief_path}", file=sys.stderr)
+            return 1
+        try:
+            result = plan_from_brief(brief_path, folder=args.folder)
+        except Exception as e:
+            print(f"Error: failed to plan from brief: {e}", file=sys.stderr)
+            return 1
+        if not result.ok:
+            print(
+                f"✗ {len(result.missing_assets)} required asset(s) missing — "
+                f"see {result.questions_path}",
+                file=sys.stderr,
+            )
+            for path in result.missing_assets:
+                print(f"  - {path}", file=sys.stderr)
+            return 1
+        plan_path = str(result.plan_path)
+    else:
+        plan_path = args.plan
+
+    try:
+        if args.scene is not None:
+            return test_scene(
+                folder=args.folder,
+                plan_path=plan_path,
+                scene_index=args.scene,
+                aspect=args.aspect,
+            )
+        return run_plan(folder=args.folder, plan_path=plan_path, aspect=args.aspect)
+    except InsufficientCreditsError as e:
+        print(f"\nError: {e}\n", file=sys.stderr)
+        return 1
+
+
+def _run_plan_command(args) -> int:
+    """Dispatch `parallax plan` — translate a brief.yaml into a plan.yaml."""
+    from pathlib import Path
+
+    from .planner import plan_from_brief
+
+    folder = Path(args.folder).expanduser()
+    brief_path = (
+        Path(args.brief).expanduser()
+        if args.brief is not None
+        else folder / "brief.yaml"
+    )
+    if not brief_path.is_file():
+        print(f"Error: brief not found: {brief_path}", file=sys.stderr)
+        return 1
+
+    try:
+        result = plan_from_brief(
+            brief_path,
+            folder=folder,
+            out_path=args.out,
+            image_model=args.model,
+            caption_style=args.caption_style,
+        )
+    except Exception as e:
+        print(f"Error: failed to plan from brief: {e}", file=sys.stderr)
+        return 1
+
+    if not result.ok:
+        print(
+            f"✗ {len(result.missing_assets)} required asset(s) missing — "
+            f"see {result.questions_path}",
+            file=sys.stderr,
+        )
+        for path in result.missing_assets:
+            print(f"  - {path}", file=sys.stderr)
+        return 1
+
+    print(
+        f"✓ Wrote plan.yaml ({result.scene_count} scenes) → {result.plan_path}"
+    )
+    return 0
+
+
+def _run_ingest_command(args) -> int:
+    """Dispatch `parallax ingest` — index a clip or directory."""
+    from .ingest import ingest
+
+    try:
+        result = ingest(
+            args.path,
+            out_path=args.out,
+            visual=args.visual,
+            estimate=args.estimate,
+            parallel=args.parallel,
+        )
+    except NotImplementedError:
+        print(
+            "Error: --visual is not implemented yet; rerun without it.",
+            file=sys.stderr,
+        )
+        return 1
+    except (ValueError, FileNotFoundError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    if args.estimate:
+        print(
+            f"{len(result.clips)} clips, {result.total_duration_s:.1f}s total, "
+            f"est cost ${result.estimated_cost_usd:.2f}"
+        )
+        return 0
+    print(
+        f"✓ Indexed {len(result.clips)} clips ({result.total_duration_s:.1f}s) → "
+        f"{result.index_path}"
+    )
+    return 0
 
 
 def _print_models_list(models_pkg, kind: str | None, as_json: bool) -> int:

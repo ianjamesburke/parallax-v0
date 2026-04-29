@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-29 — [CHANGED] Phase 1.7 — CLI wiring (plan / ingest / --brief)
+Added `parallax plan` and `parallax ingest` subcommands; `--brief` on `parallax produce` runs the planner first then produces from the materialized plan. `parallax test-scene` collapsed into `parallax produce --scene <N>`. Aspirational V2 commands (`generate`, `script`, `edit`, `compose`, `setup`, `status`, `web`, `project`, `publish`) intentionally NOT added — they have no implementation and stub commands create dead surface area. Help-text order matches the V2 namespace.
+**Breaks if:** `parallax test-scene` is still a registered subcommand, or `parallax plan --folder X` succeeds when X has no brief.yaml, or `parallax produce --brief` and `parallax produce --plan` can both be passed simultaneously without an error.
+
 ## 2026-04-29 — [CHANGED] Layer 2 — generic SKILL.md slimmed to ≤3K
 Reduced SKILL.md from ~41K to ≤3K. Stripped narrative-specific content (concepts.json, frame.io, sheets, drive, brand presets, narrative orchestrator workflows) and obsolete provider content (ElevenLabs, fal, Aurora avatar gen). The slim skill covers: brief→plan→produce loop, plan-yaml locking conventions, model alias tiers, aspect ratio knob, response terseness rule, single env var. The packaged copy at `src/parallax/skills/parallax-cli.skill.md` mirrors the same content.
 **Breaks if:** SKILL.md grows back over 3K, mentions any forbidden term (frame.io, concepts.json, etc.), or stops naming brief.yaml/plan.yaml as the iteration artifacts.
