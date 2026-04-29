@@ -106,13 +106,15 @@ def test_normalize_aspect_raises_on_landscape(tmp_path):
 
 
 def test_normalize_aspect_micro_trims_within_tolerance(tmp_path):
-    """768x1376 (Gemini natural) → micro-trim to 768x1365 (true 9:16)."""
+    """768x1376 (Gemini natural) → micro-trim to true 9:16, then resize
+    to the requested project resolution (720x1280). The original source
+    is removed; the `_n720x1280.png` sibling is the canonical output."""
     src = tmp_path / "near_portrait.png"
     _make_png(src, 768, 1376)
     out = normalize_aspect(src, "720x1280")
     assert out != src, "expected a micro-trimmed copy"
     w, h = _probe_size(out)
-    assert (w, h) == (768, 1365), "should produce true 9:16 crop"
+    assert (w, h) == (720, 1280), "should resize to exact target after trim"
 
 
 def test_normalize_aspect_returns_unchanged_when_exact(tmp_path):
