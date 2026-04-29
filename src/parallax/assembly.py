@@ -182,15 +182,19 @@ def ken_burns_assemble(
             check=True,
         )
 
-        # Mux with voiceover
-        subprocess.run(
-            [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-             "-i", str(no_audio),
-             "-i", str(audio_path),
-             "-c:v", "copy", "-c:a", "aac", "-shortest",
-             str(out)],
-            check=True,
-        )
+        # Mux with voiceover (skip if no audio provided)
+        if audio_path:
+            subprocess.run(
+                [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                 "-i", str(no_audio),
+                 "-i", str(audio_path),
+                 "-c:v", "copy", "-c:a", "aac", "-shortest",
+                 str(out)],
+                check=True,
+            )
+        else:
+            import shutil as _shutil
+            _shutil.copy2(no_audio, out)
 
     log.info("ken_burns_assemble: wrote %s", out)
     return str(out)
