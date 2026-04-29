@@ -16,6 +16,7 @@ from pathlib import Path
 
 from .log import get_logger
 from .shim import is_test_mode, output_dir
+from .ffmpeg_utils import run_ffmpeg
 
 log = get_logger(__name__)
 
@@ -105,7 +106,7 @@ def generate_voiceover(
 
 
 def _apply_atempo(raw_path: Path, words: list[dict], out_path: Path, speed: float) -> tuple[list[dict], float]:
-    result = subprocess.run(
+    result = run_ffmpeg(
         ["ffmpeg", "-y", "-hide_banner", "-loglevel", "warning",
          "-i", str(raw_path), "-af", f"atempo={speed}",
          "-c:a", "libmp3lame", "-b:a", "128k", str(out_path)],
@@ -150,7 +151,7 @@ def _trim_long_pauses(
         shutil.copy2(audio_path, out_path)
         return list(words), words[-1]["end"] if words else 0.0
 
-    probe = subprocess.run(
+    probe = run_ffmpeg(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)],
         capture_output=True, text=True,
@@ -175,7 +176,7 @@ def _trim_long_pauses(
     concat_in = "".join(f"[s{i}]" for i in range(n))
     parts.append(f"{concat_in}concat=n={n}:v=0:a=1[out]")
 
-    result = subprocess.run(
+    result = run_ffmpeg(
         ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
          "-i", str(audio_path),
          "-filter_complex", ";".join(parts),
@@ -206,6 +207,15 @@ def _trim_long_pauses(
     total_removed = sum(e - s for s, e in gaps)
     log.info("_trim_long_pauses: %d gaps removed (%.2fs total), duration %.2fs→%.2fs",
              len(gaps), total_removed, total_dur, new_dur)
+    from . import runlog
+    runlog.event(
+        "audio.trim_pauses",
+        level="DEBUG",
+        gap_count=len(gaps),
+        seconds_removed=round(total_removed, 3),
+        duration_before_s=round(total_dur, 3),
+        duration_after_s=round(new_dur, 3),
+    )
     return adjusted, new_dur
 
 
@@ -221,7 +231,7 @@ def _mock_voiceover(text: str, dest: Path) -> str:
 
     # Silence mp3
     audio_path = dest / "voiceover.mp3"
-    subprocess.run(
+    run_ffmpeg(
         ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
          "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=mono",
          "-t", str(total), "-c:a", "libmp3lame", str(audio_path)],

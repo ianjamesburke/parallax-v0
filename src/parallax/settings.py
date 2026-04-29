@@ -167,6 +167,10 @@ class Settings:
     events: EventEmitter = field(default=_default_emitter)
     usage: UsageSession = field(default_factory=UsageSession)
     titles_cfg: list[dict[str, Any]] = field(default_factory=list)
+    # Run identity — set late by `produce.run_plan` after `runlog.start_run()`.
+    # Threaded through so stages can derive deterministic, traceable artifact
+    # names (e.g. `<folder>-vN-<short_id>.mp4`).
+    run_id: str | None = None
 
 
 def _infer_project_resolution(plan: dict, folder: Path, aspect: str = "9:16") -> str:
@@ -211,6 +215,16 @@ def _infer_project_resolution(plan: dict, folder: Path, aspect: str = "9:16") ->
             f"valid choices: {sorted(_ASPECT_TO_RESOLUTION)}"
         )
     return _ASPECT_TO_RESOLUTION[aspect]
+
+
+def with_run_id(settings: "Settings", run_id: str) -> "Settings":
+    """Return a copy of `settings` with `run_id` populated.
+
+    `Settings` is frozen by design, so callers swap the whole object once
+    `runlog.start_run()` returns the run id.
+    """
+    from dataclasses import replace
+    return replace(settings, run_id=run_id)
 
 
 def resolve_settings(plan: dict[str, Any], folder: Path, plan_path: Path) -> Settings:

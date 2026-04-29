@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .styles import _FONTS_DIR
+from ..ffmpeg_utils import run_ffmpeg
 
 
 def _burn_captions_pillow(
@@ -28,7 +29,7 @@ def _burn_captions_pillow(
     from ..ffmpeg_utils import _parse_color
 
     # Probe video for width/height/fps
-    probe = subprocess.run(
+    probe = run_ffmpeg(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=width,height,r_frame_rate",
          "-of", "csv=p=0", video_path],
@@ -157,7 +158,7 @@ def _burn_captions_pillow(
             err_msg = enc_stderr.read(300).decode(errors="replace") if enc_stderr else ""
             raise RuntimeError(f"Pillow caption encode failed: {err_msg}")
 
-        result = subprocess.run(
+        result = run_ffmpeg(
             ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
              "-i", str(no_audio), "-i", video_path,
              "-map", "0:v", "-map", "1:a",

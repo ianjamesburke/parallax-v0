@@ -47,7 +47,7 @@ fixture), then resolves every asserted path relative to the run's
       keys_required: [model, voice, resolution, scenes]
       scene_keys_required: [index, vo_text, prompt, start_s, end_s, duration_s]
 
-    run_log:                    # JSONL run log (~/.parallax/logs/<run_id>.log)
+    run_log:                    # JSONL run log (<output_dir>/run.log)
       must_not_contain: ["Traceback", "ERROR"]
       must_contain: ["align_scenes", "ken_burns_assemble"]
 
@@ -287,9 +287,11 @@ def _isolated_case(case_dir: Path) -> Iterator[tuple[Path, Path]]:
         yield dest, dest / "plan.yaml"
 
 
-def _read_run_log(run_id: str) -> str:
-    from . import runlog
-    log_path = runlog.logs_dir() / f"{run_id}.log"
+def _read_run_log(run_id: str, out_dir: Path | None) -> str:
+    """Read the per-run log from `<output_dir>/run.log`."""
+    if out_dir is None:
+        return ""
+    log_path = out_dir / "run.log"
     if not log_path.exists():
         return ""
     return log_path.read_text(errors="replace")
@@ -371,7 +373,7 @@ def run_case(case_dir: Path, paid: bool = False,
                 failures.append(f"produce returned non-zero exit code: {rc}")
 
             # Snapshot the run log BEFORE the temp dir is cleaned up.
-            run_log_text = _read_run_log(run_id) if run_id else ""
+            run_log_text = _read_run_log(run_id, out_dir) if run_id else ""
 
             if out_dir is not None:
                 _assert_all(expected, out_dir, run_log_text, cost_usd, failures)

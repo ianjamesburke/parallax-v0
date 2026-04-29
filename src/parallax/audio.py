@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 import yaml
+from .ffmpeg_utils import run_ffmpeg
 
 _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 
@@ -32,7 +33,7 @@ def transcribe_words(input_path: str, out_path: str) -> list[dict]:
 
     if Path(input_path).suffix.lower() in _VIDEO_EXTS:
         tmp_audio = tempfile.mktemp(suffix=".wav")
-        subprocess.run(
+        run_ffmpeg(
             ["ffmpeg", "-y", "-i", input_path, "-vn", "-ar", "44100", "-ac", "1", tmp_audio],
             check=True,
             capture_output=True,
@@ -41,7 +42,7 @@ def transcribe_words(input_path: str, out_path: str) -> list[dict]:
     else:
         # Ensure we have a wav for WhisperX (handles m4a, mp3, etc.)
         tmp_audio = tempfile.mktemp(suffix=".wav")
-        subprocess.run(
+        run_ffmpeg(
             ["ffmpeg", "-y", "-i", input_path, "-ar", "44100", "-ac", "1", tmp_audio],
             check=True,
             capture_output=True,
@@ -120,7 +121,7 @@ def detect_silences(
 
     Runs ffmpeg silencedetect filter. Silences shorter than min_silence_s are excluded.
     """
-    result = subprocess.run(
+    result = run_ffmpeg(
         [
             "ffmpeg", "-i", audio_path,
             "-af", f"silencedetect=noise={noise_db}dB:d={min_silence_s}",
@@ -234,7 +235,7 @@ def _build_aselect_expr(silences: list[tuple[float, float]]) -> str:
 
 def _trim_audio(src: Path, dst: Path, silences: list[tuple[float, float]]) -> None:
     expr = _build_aselect_expr(silences)
-    subprocess.run(
+    run_ffmpeg(
         [
             "ffmpeg", "-y", "-i", str(src),
             "-af", f"aselect='{expr}',asetpts=N/SR/TB",
@@ -254,7 +255,7 @@ def _trim_video(src: Path, dst: Path, silences: list[tuple[float, float]]) -> Pa
     """
     expr = _build_aselect_expr(silences)
     out = dst.with_suffix(".mov")
-    subprocess.run(
+    run_ffmpeg(
         [
             "ffmpeg", "-y", "-i", str(src),
             "-vf", f"select='{expr}',setpts=N/FRAME_RATE/TB",
@@ -271,7 +272,7 @@ def _trim_video(src: Path, dst: Path, silences: list[tuple[float, float]]) -> Pa
 
 def _extract_audio(src: Path, dst: Path) -> None:
     """Extract audio stream from a video file to MP3."""
-    subprocess.run(
+    run_ffmpeg(
         ["ffmpeg", "-y", "-i", str(src), "-vn", "-c:a", "libmp3lame", "-q:a", "0", str(dst)],
         check=True,
         capture_output=True,
@@ -340,7 +341,7 @@ def cap_pauses(
     # care about variable-bitrate containers.
     with tempfile.TemporaryDirectory() as tmpdir:
         wav_for_align = Path(tmpdir) / "for_align.wav"
-        subprocess.run(
+        run_ffmpeg(
             ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
              "-i", str(src), "-ar", "44100", "-ac", "1", str(wav_for_align)],
             check=True, capture_output=True,
@@ -353,7 +354,7 @@ def cap_pauses(
     # Probe the source for total duration so the trailing tail (after the
     # last word) is preserved — we never want to cut sound past the last
     # word, only inter-word silence.
-    probe = subprocess.run(
+    probe = run_ffmpeg(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(src)],
         capture_output=True, text=True,
@@ -375,7 +376,7 @@ def cap_pauses(
         log.info("cap_pauses: no gaps > %.2fs — copying input unchanged", max_gap_s)
         # Re-encode to wav for output consistency rather than copying the
         # source format unchanged (callers expect wav).
-        subprocess.run(
+        run_ffmpeg(
             ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
              "-i", str(src), "-ar", "44100", "-ac", "1", str(dst)],
             check=True, capture_output=True,
@@ -422,7 +423,7 @@ def cap_pauses(
 
     filter_str = ";".join(filter_parts)
 
-    subprocess.run(
+    run_ffmpeg(
         ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
          "-i", str(src),
          "-filter_complex", filter_str,

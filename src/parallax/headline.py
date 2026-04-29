@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 
 from .captions.styles import CAPTION_STYLES, _FONTS_DIR
-from .ffmpeg_utils import _get_ffmpeg
+from .ffmpeg_utils import _get_ffmpeg, run_ffmpeg
 from .log import get_logger
 
 log = get_logger(__name__)
@@ -61,7 +61,7 @@ def burn_titles(
             f":enable='gte(t,{start_s})*lt(t,{end_s})'"
         )
 
-    result = subprocess.run(
+    result = run_ffmpeg(
         [_get_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
          "-i", video_path,
          "-vf", ",".join(filters),
@@ -127,7 +127,7 @@ def burn_headline(
         )
     filter_str = ",".join(filters)
 
-    result = subprocess.run(
+    result = run_ffmpeg(
         [_get_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
          "-i", video_path,
          "-vf", filter_str,

@@ -11,6 +11,7 @@ import subprocess
 from pathlib import Path
 
 from .styles import _FONTS_DIR
+from ..ffmpeg_utils import run_ffmpeg
 
 
 def _style_drawtext_filter(
@@ -71,7 +72,7 @@ def _burn_captions_drawtext(
         )
         for c in chunks
     ]
-    result = subprocess.run(
+    result = run_ffmpeg(
         [_get_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
          "-i", video_path,
          "-vf", ",".join(filters),

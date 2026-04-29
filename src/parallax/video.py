@@ -4,6 +4,7 @@ from __future__ import annotations
 import subprocess
 import tempfile
 from pathlib import Path
+from .ffmpeg_utils import run_ffmpeg
 
 _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 
@@ -16,7 +17,7 @@ def extract_frame(video_path: str, time_s: float, out_path: str | None = None) -
     if out_path is None:
         out_path = str(Path(tempfile.mktemp(suffix=".jpg")))
 
-    subprocess.run(
+    run_ffmpeg(
         ["ffmpeg", "-y", "-ss", str(time_s), "-i", video_path, "-vframes", "1", out_path],
         check=True,
         capture_output=True,

@@ -49,7 +49,7 @@ from .ffmpeg_utils import parse_resolution
 from .log import get_logger
 from .plan import Plan
 from .settings import ProductionMode, _infer_project_resolution, resolve_settings
-from .stages import STAGES, stage_scan, stage_stills
+from .stages import STAGES, _wrap_stage, stage_scan, stage_stills
 
 log = get_logger("produce")
 
@@ -120,6 +120,10 @@ def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = Non
     current_session_id.set(f"produce-{_uuid.uuid4().hex[:8]}")
     run_id = runlog.start_run()
     settings.usage.bind(run_id)
+    # Settings is frozen — swap the whole struct so stages see the run_id.
+    from .settings import with_run_id
+    settings = with_run_id(settings, run_id)
+    runlog.record_run_meta(plan_path=str(settings.plan_path), scene_count=len(scenes_raw))
     runlog.event(
         "plan.loaded",
         folder=str(settings.folder), plan_path=str(settings.plan_path),
@@ -129,13 +133,13 @@ def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = Non
         resolution=settings.resolution,
         test_mode=settings.mode == ProductionMode.TEST,
     )
-    settings.events("log", {"msg": f"run_id: {run_id}  →  parallax tail {run_id}"})
+    settings.events("log", {"msg": f"run_id: {run_id}  →  parallax log {run_id}"})
 
     # `stills_only` short-circuits after stage_stills with its own end-of-run
     # path — no audio/video stages, no convention rename, no full mp4.
     if settings.stills_only:
-        plan = stage_scan(plan, settings)
-        plan = stage_stills(plan, settings)
+        plan = _wrap_stage(stage_scan)(plan, settings)
+        plan = _wrap_stage(stage_stills)(plan, settings)
         rt = plan["_runtime"]
         settings.events("log", {"msg": "stills_only — skipping audio, video, and assembly stages"})
         run_cost = settings.usage.total_cost_usd
@@ -147,7 +151,7 @@ def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = Non
         }
         (Path(rt["out_dir"]) / "cost.json").write_text(json.dumps(cost_data, indent=2) + "\n")
         print(f"\n✓ stills → {rt['stills_dir']}", flush=True)
-        runlog.end_run(status="ok", final_video=rt["stills_dir"], cost_usd=run_cost)
+        runlog.end_run(status="ok", final_video=rt["stills_dir"])
         return 0
 
     for stage in STAGES:
@@ -155,7 +159,7 @@ def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = Non
 
     rt = plan["_runtime"]
     print(f"\n✓ {rt['current_video']}", flush=True)
-    runlog.end_run(status="ok", final_video=str(rt["current_video"]), cost_usd=rt["run_cost"])
+    runlog.end_run(status="ok", final_video=str(rt["current_video"]))
     return 0
 
 

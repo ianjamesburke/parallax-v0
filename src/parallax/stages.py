@@ -22,6 +22,7 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
+from . import runlog
 from .assembly import align_scenes, ken_burns_assemble
 from .avatar import burn_avatar, key_avatar_track
 from .captions import burn_captions
@@ -76,11 +77,24 @@ def stage_scan(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     rt = _runtime(plan)
     rt["out_dir"] = scan["output_dir"]
     rt["version"] = scan["version"]
-    rt["convention_name"] = f"{settings.folder.name}-v{scan['version']}.mp4"
+    # Append the last-6-hex of run_id so the artifact mp4 is traceable back
+    # to the run from filename alone. run_id is required at this point —
+    # `produce.run_plan` calls `runlog.start_run()` before invoking stages.
+    if not settings.run_id:
+        raise RuntimeError(
+            "stage_scan: settings.run_id is unset. produce.run_plan must call "
+            "runlog.start_run() and thread the id through settings before stages run."
+        )
+    short = runlog.short_id(settings.run_id)
+    rt["short_id"] = short
+    rt["convention_name"] = f"{settings.folder.name}-v{scan['version']}-{short}.mp4"
     rt["stills_dir"] = str(Path(rt["out_dir"]) / "stills")
     rt["audio_dir"] = str(Path(rt["out_dir"]) / "audio")
     rt["video_dir"] = str(Path(rt["out_dir"]) / "video")
     _log(settings, f"output_dir: {rt['out_dir']} (v{rt['version']})")
+    # Bind the runlog file to <output_dir>/run.log and flush any buffered events.
+    runlog.bind_output_dir(rt["out_dir"])
+    runlog.record_run_meta(output_dir=rt["out_dir"], scene_count=len(plan.get("scenes", []) or []))
     return plan
 
 
@@ -825,7 +839,41 @@ def _apply_timing_overrides(aligned: list[dict[str, Any]], scenes_raw: list[dict
 # Stage list — order matters
 # --------------------------------------------------------------------------
 
-STAGES = [
+def _wrap_stage(fn):
+    """Wrap a stage callable with DEBUG `stage.<name>.start` / `.end` events.
+
+    Display layers filter by level — full-fidelity timing always lands in
+    the run.log file regardless of console verbosity.
+    """
+    name = fn.__name__.removeprefix("stage_")
+
+    def wrapped(plan, settings):
+        import time as _time
+        scenes = plan.get("scenes", []) or []
+        runlog.event(
+            f"stage.{name}.start",
+            level="DEBUG",
+            scene_count=len(scenes),
+            plan_keys=sorted(plan.keys()),
+        )
+        t0 = _time.monotonic()
+        try:
+            result = fn(plan, settings)
+        finally:
+            duration_ms = int((_time.monotonic() - t0) * 1000)
+            runlog.event(
+                f"stage.{name}.end",
+                level="DEBUG",
+                duration_ms=duration_ms,
+                scene_count=len(plan.get("scenes", []) or []),
+            )
+        return result
+
+    wrapped.__name__ = fn.__name__
+    return wrapped
+
+
+STAGES = [_wrap_stage(s) for s in (
     stage_scan,
     stage_stills,
     stage_animate,
@@ -838,4 +886,4 @@ STAGES = [
     stage_headline,
     stage_avatar,
     stage_finalize,
-]
+)]
