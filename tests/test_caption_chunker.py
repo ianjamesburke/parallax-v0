@@ -8,7 +8,7 @@ behaviour so future tweaks don't accidentally regress the rule.
 
 from __future__ import annotations
 
-from parallax.tools_video import _smart_chunk_words
+from parallax.captions import _smart_chunk_words
 
 
 def _w(word: str, start: float, end: float) -> dict:

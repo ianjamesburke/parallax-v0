@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from parallax import tools_video
+from parallax import assembly
 
 
 def _make_still(path: Path, color: str = "red", w: int = 1080, h: int = 1920) -> None:
@@ -77,14 +77,14 @@ def _probe_resolution(path: Path) -> tuple[int, int]:
 
 
 def test_zoom_filter_none_returns_normalize_only():
-    f = tools_video._zoom_filter(None, 1.25, 5.0, "1080", "1920")
+    f = assembly._zoom_filter(None, 1.25, 5.0, "1080", "1920")
     assert "scale=1080:1920" in f
     assert "fps=30" in f
     assert "zoom" not in f and "crop" not in f
 
 
 def test_zoom_filter_in_centered():
-    f = tools_video._zoom_filter("in", 1.25, 5.0, "1080", "1920")
+    f = assembly._zoom_filter("in", 1.25, 5.0, "1080", "1920")
     assert "crop=1080:1920" in f
     assert "(iw-1080)/2" in f
     assert "(ih-1920)/2" in f
@@ -92,10 +92,10 @@ def test_zoom_filter_in_centered():
 
 def test_zoom_filter_directional_anchors():
     """Each direction uses a distinct crop anchor."""
-    up = tools_video._zoom_filter("up", 1.25, 5.0, "1080", "1920")
-    down = tools_video._zoom_filter("down", 1.25, 5.0, "1080", "1920")
-    left = tools_video._zoom_filter("left", 1.25, 5.0, "1080", "1920")
-    right = tools_video._zoom_filter("right", 1.25, 5.0, "1080", "1920")
+    up = assembly._zoom_filter("up", 1.25, 5.0, "1080", "1920")
+    down = assembly._zoom_filter("down", 1.25, 5.0, "1080", "1920")
+    left = assembly._zoom_filter("left", 1.25, 5.0, "1080", "1920")
+    right = assembly._zoom_filter("right", 1.25, 5.0, "1080", "1920")
     # Each contains its direction's crop coords (not exhaustive — just distinct)
     assert ":0," in up  # cy=0 for up
     assert "(ih-1920)" in down  # cy=(ih-h) for down
@@ -104,7 +104,7 @@ def test_zoom_filter_directional_anchors():
 
 
 def test_zoom_filter_zoom_factor_in_expr():
-    f = tools_video._zoom_filter("in", 1.50, 4.0, "1080", "1920")
+    f = assembly._zoom_filter("in", 1.50, 4.0, "1080", "1920")
     # zoom delta should be 0.5
     assert "0.5000" in f or "+0.5*" in f
     # duration appears as denominator
@@ -114,7 +114,7 @@ def test_zoom_filter_zoom_factor_in_expr():
 def test_zoom_filter_preserves_source_aspect_ratio():
     """Zoom branch must use force_original_aspect_ratio=increase + crop so
     non-9:16 input clips fill the target frame WITHOUT being stretched."""
-    f = tools_video._zoom_filter("in", 1.25, 5.0, "1080", "1920")
+    f = assembly._zoom_filter("in", 1.25, 5.0, "1080", "1920")
     assert "force_original_aspect_ratio=increase" in f, (
         "zoom filter must fit-to-fill source, not stretch it"
     )
@@ -134,7 +134,7 @@ def test_make_kb_clip_writes_mp4_with_correct_duration_and_resolution(tmp_path, 
     still = tmp_path / "in.png"
     _make_still(still, "red", 1080, 1920)
     out = tmp_path / "kb.mp4"
-    tools_video._make_kb_clip(str(still), 1.0, str(out), "1080x1920", scene_index=0)
+    assembly._make_kb_clip(str(still), 1.0, str(out), "1080x1920", scene_index=0)
     assert out.exists() and out.stat().st_size > 0
     w, h = _probe_resolution(out)
     assert w == 1080 and h == 1920
@@ -147,7 +147,7 @@ def test_make_kb_clip_real_path_with_zoom(tmp_path, monkeypatch):
     still = tmp_path / "in.png"
     _make_still(still, "blue", 1080, 1920)
     out = tmp_path / "kb.mp4"
-    tools_video._make_kb_clip(
+    assembly._make_kb_clip(
         str(still), 1.0, str(out), "1080x1920",
         scene_index=0, zoom_direction="in", zoom_amount=1.2,
     )
@@ -176,7 +176,7 @@ def test_ken_burns_assemble_video_and_audio_durations(tmp_path, monkeypatch):
         {"index": 1, "still_path": str(still2), "duration_s": 1.0},
     ]
     out = tmp_path / "assembled.mp4"
-    result_path = tools_video.ken_burns_assemble(
+    result_path = assembly.ken_burns_assemble(
         json.dumps(scenes), str(audio), str(out), "1080x1920",
     )
     assert Path(result_path) == out
@@ -194,7 +194,7 @@ def test_ken_burns_assemble_empty_scenes_raises(tmp_path):
     audio = tmp_path / "n.wav"
     _make_silent_wav(audio, 0.5)
     with pytest.raises(ValueError, match="No scenes"):
-        tools_video.ken_burns_assemble("[]", str(audio), str(tmp_path / "x.mp4"))
+        assembly.ken_burns_assemble("[]", str(audio), str(tmp_path / "x.mp4"))
 
 
 def test_ken_burns_assemble_with_clip_path(tmp_path, monkeypatch):
@@ -212,7 +212,7 @@ def test_ken_burns_assemble_with_clip_path(tmp_path, monkeypatch):
     _make_silent_wav(audio, 1.0)
     scenes = [{"index": 0, "clip_path": str(clip), "duration_s": 1.0}]
     out = tmp_path / "assembled.mp4"
-    tools_video.ken_burns_assemble(
+    assembly.ken_burns_assemble(
         json.dumps(scenes), str(audio), str(out), "1080x1920",
     )
     assert out.exists() and out.stat().st_size > 0

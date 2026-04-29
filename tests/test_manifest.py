@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from parallax.tools_video import read_manifest, write_manifest
+from parallax.manifest import read_manifest, write_manifest
 
 
 def test_write_manifest_creates_file_and_parent_dirs(tmp_path):

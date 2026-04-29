@@ -59,7 +59,7 @@ def generate_image(
     """Generate an image. `size` is a passthrough hint like '1080x720' or
     '1080x1920' — note that some models (e.g. google/gemini-2.5-flash-image)
     silently ignore size and always return 1024×1024. For exact dimensions,
-    pick a model that respects size or post-process via tools_video.
+    pick a model that respects size or post-process via `parallax.stills`.
 
     `aspect_ratio` (e.g. '9:16') is the user-chosen aspect; when set it is
     forwarded to the upstream provider as a top-level body field and used

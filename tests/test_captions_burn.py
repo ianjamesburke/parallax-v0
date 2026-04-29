@@ -23,16 +23,18 @@ from pathlib import Path
 
 import pytest
 
-from parallax import tools_video
-from parallax.tools_video import (
+from parallax import captions
+from parallax.captions import (
     _burn_captions_drawtext,
     _burn_captions_pillow,
+    _style_drawtext_filter,
+    resolve_caption_style,
+)
+from parallax.ffmpeg_utils import (
     _ffmpeg_has_drawtext,
     _get_ffmpeg,
     _parse_color,
     _probe_fps,
-    _style_drawtext_filter,
-    resolve_caption_style,
 )
 
 
@@ -206,7 +208,7 @@ def test_burn_captions_end_to_end(tmp_path):
         {"word": "hello", "start": 0.0, "end": 0.4},
         {"word": "world", "start": 0.4, "end": 0.9},
     ]
-    result = tools_video.burn_captions(
+    result = captions.burn_captions(
         str(v), json.dumps(words), str(out),
         fontsize=50, caption_style="bangers",
     )
@@ -217,7 +219,7 @@ def test_burn_captions_end_to_end(tmp_path):
 def test_burn_captions_no_words_returns_original(tmp_path):
     v = tmp_path / "in.mp4"
     _make_video_with_audio(v, 0.5)
-    out = tools_video.burn_captions(str(v), json.dumps([]))
+    out = captions.burn_captions(str(v), json.dumps([]))
     assert out == str(v)
 
 
@@ -231,7 +233,7 @@ def test_burn_captions_words_path_argument(tmp_path):
         "total_duration_s": 0.4,
     }))
     out = tmp_path / "out.mp4"
-    tools_video.burn_captions(str(v), str(words_path), str(out))
+    captions.burn_captions(str(v), str(words_path), str(out))
     assert out.exists()
 
 
@@ -242,7 +244,7 @@ def test_burn_captions_shift_s_offsets_chunks(tmp_path):
     out = tmp_path / "out.mp4"
     words = [{"word": "hello", "start": 0.5, "end": 0.9}]
     # Shift by -0.3 → chunk should appear at 0.2..0.6
-    tools_video.burn_captions(
+    captions.burn_captions(
         str(v), json.dumps(words), str(out), shift_s=-0.3,
     )
     assert out.exists()
@@ -268,7 +270,7 @@ def test_burn_captions_adapts_to_resolution(tmp_path, w, h):
     ]
     res_scale = w / 1080
     fontsize = max(12, int(55 * res_scale))
-    tools_video.burn_captions(
+    captions.burn_captions(
         str(v), json.dumps(words), str(out),
         fontsize=fontsize, caption_style="bangers",
     )

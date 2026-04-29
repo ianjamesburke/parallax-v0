@@ -13,7 +13,7 @@ import yaml
 
 from .log import get_logger
 
-log = get_logger("tools_video")
+log = get_logger(__name__)
 
 
 def write_manifest(manifest_json: str, manifest_path: str) -> str:

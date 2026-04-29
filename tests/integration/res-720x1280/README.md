@@ -34,12 +34,10 @@ resolution." That's what `final.resolution` and `assemble.resolution`
 verify (via ffprobe of the renamed `<folder>-vN.mp4`). Per-stage
 stills resolution is an internal detail.
 
-In test mode the `parallax.tools.generate_image` shim currently drops
-the `size` arg before it reaches the resolution-aware mock in
-`shim.render_mock_image`, so test-mode stills always come back
-1080×1920 regardless of plan resolution. Real-mode stills DO honor
-the plan resolution (via `parallax.openrouter.generate_image`, which
-threads `size` through). The smoke fixture in
+Test-mode stills are produced via `shim.render_mock_image`, which
+honors the resolution derived from `aspect_ratio` (or an explicit
+`size`). Real-mode stills DO honor the plan resolution via
+`parallax.openrouter.generate_image`. The smoke fixture in
 `tests/fixtures/verify_suite_smoke/basic/` runs at 1080×1920 and
 asserts `stages.stills.resolution: 1080x1920`, so the schema branch
 itself is exercised — just not in this case.

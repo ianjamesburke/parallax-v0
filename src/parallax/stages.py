@@ -91,8 +91,8 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     `still_path` on its in-flight scene entry, or normalize_aspect is
     skipped on freshly-generated PNGs.
     """
+    from .openrouter import generate_image
     from .settings import VALID_ASPECTS
-    from .tools import generate_image
 
     rt = _runtime(plan)
     scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
@@ -178,9 +178,9 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
                 stern_prefix = "" if attempt == 1 else _build_stern_prefix(scene_aspect)
                 raw_still_path = generate_image(
                     prompt=stern_prefix + prompt,
-                    model=scene_image_model,
+                    alias=scene_image_model,
                     reference_images=refs,
-                    out_dir=rt["stills_dir"],
+                    out_dir=Path(rt["stills_dir"]),
                     aspect_ratio=scene_aspect,
                 )
                 check = check_aspect(raw_still_path, settings.resolution)

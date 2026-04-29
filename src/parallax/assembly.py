@@ -19,7 +19,7 @@ from .ffmpeg_utils import _get_ffmpeg, parse_resolution
 from .log import get_logger
 from .shim import is_test_mode, output_dir
 
-log = get_logger("tools_video")
+log = get_logger(__name__)
 
 
 def align_scenes(scenes_json: str, words_json: str) -> str:

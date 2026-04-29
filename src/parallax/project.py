@@ -24,7 +24,7 @@ from .ffmpeg_utils import _get_ffmpeg
 from .log import get_logger
 from .shim import is_test_mode
 
-log = get_logger("tools_video")
+log = get_logger(__name__)
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}

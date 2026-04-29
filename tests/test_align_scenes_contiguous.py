@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 
-from parallax.tools_video import align_scenes
+from parallax.assembly import align_scenes
 
 
 def _word(w: str, start: float, end: float) -> dict:

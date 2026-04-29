@@ -18,7 +18,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from parallax import tools_video
+from parallax import voiceover
 
 
 def _make_silent_mp3(path: Path, duration_s: float) -> None:
@@ -46,7 +46,7 @@ def test_mock_voiceover_writes_silence_mp3_and_words(tmp_path, monkeypatch):
     monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
     monkeypatch.setenv("PARALLAX_OUTPUT_DIR", str(tmp_path))
 
-    out = json.loads(tools_video.generate_voiceover("hello world today", out_dir=str(tmp_path)))
+    out = json.loads(voiceover.generate_voiceover("hello world today", out_dir=str(tmp_path)))
     audio = Path(out["audio_path"])
     words_path = Path(out["words_path"])
     assert audio.exists() and audio.suffix == ".mp3"
@@ -68,7 +68,7 @@ def test_apply_atempo_scales_word_timestamps(tmp_path):
         {"word": "c", "start": 1.0, "end": 2.0},
     ]
     out_path = tmp_path / "sped.mp3"
-    sped, dur = tools_video._apply_atempo(raw, words, out_path, 2.0)
+    sped, dur = voiceover._apply_atempo(raw, words, out_path, 2.0)
 
     # speed=2 → new timestamps are half the originals
     assert sped[0]["start"] == 0.0
@@ -88,7 +88,7 @@ def test_apply_atempo_failure_falls_back_to_raw(tmp_path):
     words = [{"word": "x", "start": 0.0, "end": 1.0}]
     out_path = tmp_path / "sped.mp3"
     # ffmpeg will fail; function falls back to renaming raw -> out
-    sped, dur = tools_video._apply_atempo(raw, words, out_path, 2.0)
+    sped, dur = voiceover._apply_atempo(raw, words, out_path, 2.0)
     # words unchanged on failure
     assert sped == words
     assert dur == 1.0
@@ -105,7 +105,7 @@ def test_trim_long_pauses_no_gaps_passthrough(tmp_path):
         {"word": "b", "start": 0.4, "end": 0.7},  # 0.1s gap, below default 0.4
     ]
     out_path = tmp_path / "out.mp3"
-    adjusted, dur = tools_video._trim_long_pauses(audio, words, out_path)
+    adjusted, dur = voiceover._trim_long_pauses(audio, words, out_path)
     assert adjusted == words
     assert out_path.exists()
 
@@ -120,7 +120,7 @@ def test_trim_long_pauses_collapses_2s_gap(tmp_path):
         {"word": "c", "start": 3.0, "end": 4.0},
     ]
     out_path = tmp_path / "out.mp3"
-    adjusted, dur = tools_video._trim_long_pauses(
+    adjusted, dur = voiceover._trim_long_pauses(
         audio, words, out_path, max_gap_s=0.4, keep_gap_s=0.1,
     )
 
@@ -142,7 +142,7 @@ def test_trim_long_pauses_empty_words(tmp_path):
     audio = tmp_path / "in.mp3"
     _make_silent_mp3(audio, 0.5)
     out_path = tmp_path / "out.mp3"
-    adjusted, dur = tools_video._trim_long_pauses(audio, [], out_path)
+    adjusted, dur = voiceover._trim_long_pauses(audio, [], out_path)
     assert adjusted == []
     assert dur == 0.0
     assert out_path.exists()
@@ -165,7 +165,7 @@ def test_generate_voiceover_routes_to_gemini_by_default(tmp_path, monkeypatch):
     from parallax import openrouter
     monkeypatch.setattr(openrouter, "generate_tts", fake_tts)
 
-    out = json.loads(tools_video.generate_voiceover(
+    out = json.loads(voiceover.generate_voiceover(
         "hi", voice="Kore", speed=1.0, out_dir=str(tmp_path),
     ))
     assert captured["alias"] == "tts-mini"
@@ -189,7 +189,7 @@ def test_generate_voiceover_applies_atempo_when_speed_changes(tmp_path, monkeypa
     from parallax import openrouter
     monkeypatch.setattr(openrouter, "generate_tts", fake_tts)
 
-    out = json.loads(tools_video.generate_voiceover(
+    out = json.loads(voiceover.generate_voiceover(
         "one two", voice="Kore", speed=2.0, out_dir=str(tmp_path),
     ))
     # atempo=2 halves the timestamps
@@ -211,7 +211,7 @@ def test_generate_voiceover_passes_style_through(tmp_path, monkeypatch):
     from parallax import openrouter
     monkeypatch.setattr(openrouter, "generate_tts", fake_tts)
 
-    tools_video.generate_voiceover(
+    voiceover.generate_voiceover(
         "x", voice="Kore", speed=1.0, out_dir=str(tmp_path),
         style="rapid_fire", style_hint="urgent",
     )

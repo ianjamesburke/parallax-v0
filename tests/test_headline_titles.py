@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from parallax import tools_video
-from parallax.tools_video import _ffmpeg_has_drawtext
+from parallax import headline
+from parallax.ffmpeg_utils import _ffmpeg_has_drawtext
 
 
 def _make_video_with_audio(path: Path, duration_s: float = 1.0,
@@ -46,7 +46,7 @@ def _probe_dur(path: Path) -> float:
 def test_burn_titles_empty_returns_input(tmp_path):
     v = tmp_path / "in.mp4"
     _make_video_with_audio(v, 0.5)
-    out = tools_video.burn_titles(str(v), [])
+    out = headline.burn_titles(str(v), [])
     assert out == str(v)
 
 
@@ -57,7 +57,7 @@ def test_burn_titles_writes_video(tmp_path):
     _make_video_with_audio(v, 1.0)
     out = tmp_path / "titled.mp4"
     titles = [{"text": "Chapter 1", "start_s": 0.0, "end_s": 0.5}]
-    result = tools_video.burn_titles(str(v), titles, str(out), fontsize=48)
+    result = headline.burn_titles(str(v), titles, str(out), fontsize=48)
     assert Path(result) == out
     assert out.exists() and out.stat().st_size > 0
     assert abs(_probe_dur(out) - 1.0) < 0.2
@@ -74,7 +74,7 @@ def test_burn_titles_multiple_overlap_windows(tmp_path):
         {"text": "Body", "start_s": 0.5, "end_s": 1.0},
         {"text": "Outro", "start_s": 1.0, "end_s": 1.4},
     ]
-    tools_video.burn_titles(str(v), titles, str(out))
+    headline.burn_titles(str(v), titles, str(out))
     assert out.exists()
 
 
@@ -87,7 +87,7 @@ def test_burn_headline_basic(tmp_path):
     v = tmp_path / "in.mp4"
     _make_video_with_audio(v, 1.0)
     out = tmp_path / "headlined.mp4"
-    result = tools_video.burn_headline(
+    result = headline.burn_headline(
         str(v), "Big News!", str(out), fontsize=48,
     )
     assert Path(result) == out
@@ -101,7 +101,7 @@ def test_burn_headline_multiline(tmp_path):
     v = tmp_path / "in.mp4"
     _make_video_with_audio(v, 1.0)
     out = tmp_path / "headlined.mp4"
-    tools_video.burn_headline(
+    headline.burn_headline(
         str(v), "Line one\nLine two", str(out), fontsize=40,
     )
     assert out.exists()
@@ -114,7 +114,7 @@ def test_burn_headline_end_time_s_bounds_visibility(tmp_path):
     v = tmp_path / "in.mp4"
     _make_video_with_audio(v, 1.0)
     out = tmp_path / "out.mp4"
-    tools_video.burn_headline(
+    headline.burn_headline(
         str(v), "Hello", str(out), fontsize=40, end_time_s=0.5,
     )
     assert out.exists()
@@ -135,7 +135,7 @@ def test_burn_headline_adapts_to_resolution(tmp_path, w, h):
     out = tmp_path / f"out_{w}x{h}.mp4"
     res_scale = w / 1080
     fontsize = max(12, int(72 * res_scale))
-    tools_video.burn_headline(
+    headline.burn_headline(
         str(v), "BIG NEWS", str(out), fontsize=fontsize,
     )
     assert out.exists() and out.stat().st_size > 0
@@ -160,7 +160,7 @@ def test_burn_titles_adapts_to_resolution(tmp_path, w, h):
     res_scale = w / 1080
     fontsize = max(12, int(48 * res_scale))
     titles = [{"text": "Section 1", "start_s": 0.0, "end_s": 0.5}]
-    tools_video.burn_titles(
+    headline.burn_titles(
         str(v), titles, str(out), fontsize=fontsize,
     )
     assert out.exists() and out.stat().st_size > 0

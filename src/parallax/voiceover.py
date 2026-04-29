@@ -17,7 +17,7 @@ from pathlib import Path
 from .log import get_logger
 from .shim import is_test_mode, output_dir
 
-log = get_logger("tools_video")
+log = get_logger(__name__)
 
 
 def generate_voiceover(
