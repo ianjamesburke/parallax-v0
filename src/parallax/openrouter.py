@@ -176,11 +176,10 @@ def generate_tts(
         runlog.event("openrouter.tts.test", alias=alias, chars=len(text), voice=voice)
         return render_mock_tts(text=text, voice=voice, out_dir=out)
 
-    from . import openrouter_tts as _ortts
-    chosen_voice = voice if voice and voice != "default" else _ortts.DEFAULT_VOICE
+    chosen_voice = voice if voice and voice != "default" else _TTS_DEFAULT_VOICE
     # Default style applies only when neither style nor style_hint was
     # explicitly passed — passing style=None means "natural" (no prefix).
-    effective_style = style if (style or style_hint) else _ortts.DEFAULT_STYLE
+    effective_style = style if (style or style_hint) else _TTS_DEFAULT_STYLE
     runlog.event(
         "openrouter.tts.call", alias=alias, voice=chosen_voice, chars=len(text),
         style=effective_style, style_hint=style_hint,
@@ -189,7 +188,7 @@ def generate_tts(
     # Strip the `openrouter/` prefix from the catalog model_id so we pass the
     # bare provider slug to the streaming endpoint.
     model_id = _strip_or_prefix(spec.model_id)
-    path, words, duration = _ortts.synthesize(
+    path, words, duration = _tts_real(
         text, voice=chosen_voice, out_dir=out,
         style=effective_style, style_hint=style_hint,
         model=model_id,
@@ -342,12 +341,51 @@ def _check_key() -> str:
     return key
 
 
-_OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
-_OPENROUTER_CREDITS_ENDPOINT = "https://openrouter.ai/api/v1/credits"
-_OPENROUTER_HEADERS_EXTRA = {
+# ---------------------------------------------------------------------------
+# Shared HTTP client config — single source of truth for endpoint URL +
+# auth headers. Every callsite that hits OpenRouter goes through these
+# helpers so the URL, attribution headers, and key handling live in
+# exactly one place.
+# ---------------------------------------------------------------------------
+
+_BASE = "https://openrouter.ai/api/v1"
+_BASE_HEADERS = {
     "HTTP-Referer": "https://github.com/ianjamesburke/parallax-v0",
     "X-Title": "parallax",
 }
+
+
+def _auth_headers() -> dict[str, str]:
+    return {
+        **_BASE_HEADERS,
+        "Authorization": f"Bearer {_check_key()}",
+        "Content-Type": "application/json",
+    }
+
+
+def _post(path: str, body: dict, *, timeout: float = 300.0) -> "httpx.Response":
+    """POST JSON to <_BASE>/<path>. Returns the raw response."""
+    import httpx
+    return httpx.post(f"{_BASE}{path}", headers=_auth_headers(), json=body, timeout=timeout)
+
+
+def _get(path: str, *, timeout: float = 30.0, auth_only: bool = False) -> "httpx.Response":
+    """GET <_BASE>/<path>. `auth_only` strips Content-Type from headers
+    (some GETs to OpenRouter / signed-URL fetches reject it)."""
+    import httpx
+    headers = _auth_headers()
+    if auth_only:
+        headers.pop("Content-Type", None)
+    return httpx.get(f"{_BASE}{path}", headers=headers, timeout=timeout)
+
+
+def _stream_post(path: str, body: dict, *, timeout: float = 300.0):
+    """Stream a POST to <_BASE>/<path>. Caller uses it as a context manager
+    (`with _stream_post(...) as resp: ...`) and iterates resp.iter_lines()."""
+    import httpx
+    return httpx.stream(
+        "POST", f"{_BASE}{path}", headers=_auth_headers(), json=body, timeout=timeout,
+    )
 
 
 class InsufficientCreditsError(RuntimeError):
@@ -374,13 +412,7 @@ def check_credits(min_balance_usd: float = 0.50) -> CreditsBalance:
     of stills + i2v + TTS); raise it for longer projects. Set to 0.0 to make
     the check informational only.
     """
-    import httpx
-    key = _check_key()
-    resp = httpx.get(
-        _OPENROUTER_CREDITS_ENDPOINT,
-        headers={"Authorization": f"Bearer {key}", **_OPENROUTER_HEADERS_EXTRA},
-        timeout=15.0,
-    )
+    resp = _get("/credits", timeout=15.0)
     _raise_for_credits_or_status(resp)
     data = resp.json().get("data") or {}
     total = float(data.get("total_credits", 0.0))
@@ -456,10 +488,9 @@ def _describe_reference_uncached(image_path: str) -> str:
     accompanying description).
     """
     import base64
-    import httpx
 
     try:
-        key = _check_key()
+        _check_key()
     except Exception:
         return ""
     p = Path(image_path)
@@ -477,16 +508,7 @@ def _describe_reference_uncached(image_path: str) -> str:
         ]}],
     }
     try:
-        resp = httpx.post(
-            _OPENROUTER_ENDPOINT,
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-                **_OPENROUTER_HEADERS_EXTRA,
-            },
-            json=body,
-            timeout=60.0,
-        )
+        resp = _post("/chat/completions", body, timeout=60.0)
         _raise_for_credits_or_status(resp)
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
@@ -563,9 +585,8 @@ def _image_real(
     """
     import base64
     import time as _time
-    import httpx
 
-    key = _check_key()
+    _check_key()
     out = out_dir or output_dir()
     out.mkdir(parents=True, exist_ok=True)
     model_id = _strip_or_prefix(spec.model_id)
@@ -648,16 +669,7 @@ def _image_real(
         # `size` and always returned 1024×1024 — `aspect_ratio` (set above)
         # is the param Gemini actually honors.
         body["size"] = size
-    resp = httpx.post(
-        _OPENROUTER_ENDPOINT,
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-            **_OPENROUTER_HEADERS_EXTRA,
-        },
-        json=body,
-        timeout=300.0,
-    )
+    resp = _post("/chat/completions", body, timeout=300.0)
     _raise_for_credits_or_status(resp)
     data = resp.json()
 
@@ -680,7 +692,6 @@ def _image_real(
     return out_path
 
 
-_VIDEO_SUBMIT_ENDPOINT = "https://openrouter.ai/api/v1/videos"
 # Async video generation typically takes 30s – 5 min. Cap the wait so a stuck
 # job surfaces as a clear timeout rather than hanging the producer subprocess.
 _VIDEO_POLL_INTERVAL_S = 5.0
@@ -711,7 +722,7 @@ def _video_real(
     import time as _time
     import httpx
 
-    key = _check_key()
+    _check_key()
     out = out_dir or output_dir()
     out.mkdir(parents=True, exist_ok=True)
     model_id = _strip_or_prefix(spec.model_id)
@@ -763,23 +774,22 @@ def _video_real(
             for ref_path in input_references
         ]
 
-    headers = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-        **_OPENROUTER_HEADERS_EXTRA,
-    }
-    submit = httpx.post(_VIDEO_SUBMIT_ENDPOINT, headers=headers, json=body, timeout=60.0)
+    submit = _post("/videos", body, timeout=60.0)
     _raise_for_credits_or_status(submit)
     job = submit.json()
     polling_url = job.get("polling_url")
     if not polling_url:
         raise RuntimeError(f"OpenRouter video submit returned no polling_url: {job!r}")
 
+    # Polling URLs are absolute (the server returns them); they are signed
+    # off the same OpenRouter backend so we send the auth header but not
+    # Content-Type. Same for the unsigned download URLs below.
+    poll_headers = {"Authorization": _auth_headers()["Authorization"]}
     deadline = _time.monotonic() + _VIDEO_POLL_TIMEOUT_S
     last_status: dict[str, Any] = job
     while _time.monotonic() < deadline:
         _time.sleep(_VIDEO_POLL_INTERVAL_S)
-        poll = httpx.get(polling_url, headers={"Authorization": f"Bearer {key}"}, timeout=30.0)
+        poll = httpx.get(polling_url, headers=poll_headers, timeout=30.0)
         _raise_for_credits_or_status(poll)
         last_status = poll.json()
         status = last_status.get("status")
@@ -800,26 +810,165 @@ def _video_real(
         raise RuntimeError(
             f"OpenRouter video {model_id} completed but returned no unsigned_urls: {last_status!r}"
         )
-    download = httpx.get(urls[0], headers={"Authorization": f"Bearer {key}"}, timeout=120.0)
+    download = httpx.get(urls[0], headers=poll_headers, timeout=120.0)
     download.raise_for_status()
     out_path = out / f"openrouter_{spec.alias}_{int(_time.time()*1000)}.mp4"
     out_path.write_bytes(download.content)
     return out_path
 
 
+# ---------------------------------------------------------------------------
+# TTS — OpenAI gpt-audio-mini via OpenRouter chat-completions audio modality
+# ---------------------------------------------------------------------------
+#
+# OpenRouter exposes OpenAI's gpt-audio-mini through `/chat/completions`
+# with `modalities=["text", "audio"]` and `audio={"voice": ..., "format":
+# "pcm16"}`. Audio output is delivered in SSE chunks; we accumulate the
+# base64-encoded pcm16 frames, write a 24kHz mono WAV, and run forced
+# alignment on it for word timestamps.
+
+_TTS_DEFAULT_VOICE = "nova"
+_TTS_DEFAULT_MODEL = "openai/gpt-audio-mini"
+_TTS_PCM_SAMPLE_RATE = 24_000
+_TTS_PCM_BYTES_PER_SAMPLE = 2  # 16-bit
+
+
+# Style presets prepend a directive to the spoken text. gpt-audio-mini
+# follows freeform delivery hints in the user message.
+_TTS_STYLE_PRESETS: dict[str, str] = {
+    "rapid_fire": (
+        "Read this as a rapid-fire commercial — talk fast, no pauses, urgent, "
+        "energetic. Speak quickly: "
+    ),
+    "fast": "Say this quickly, with high energy, like a fast-paced TikTok ad: ",
+    "calm": "Read this in a calm, measured, conversational tone: ",
+    "natural": "",  # baseline — no directive
+}
+_TTS_DEFAULT_STYLE = "rapid_fire"
+
+
+def _tts_resolve_directive(*, style: str | None, style_hint: str | None) -> str:
+    if style_hint:
+        return style_hint if style_hint.endswith(": ") else style_hint.rstrip() + " "
+    if style is None:
+        return ""
+    if style not in _TTS_STYLE_PRESETS:
+        raise ValueError(
+            f"Unknown TTS style {style!r}. Available presets: "
+            f"{sorted(_TTS_STYLE_PRESETS)}, or pass `style_hint` for a freeform directive."
+        )
+    return _TTS_STYLE_PRESETS[style]
+
+
+def _tts_evenly_distributed_words(text: str, duration_s: float) -> list[dict[str, Any]]:
+    tokens = text.split()
+    if not tokens or duration_s <= 0:
+        return []
+    per_word = duration_s / len(tokens)
+    return [
+        {
+            "word": t,
+            "start": round(i * per_word, 3),
+            "end": round((i + 1) * per_word, 3),
+        }
+        for i, t in enumerate(tokens)
+    ]
+
+
 def _tts_real(
-    text: str, spec: ModelSpec, voice: str, voice_description: str | None, out_dir: Path,
+    text: str,
+    *,
+    voice: str = _TTS_DEFAULT_VOICE,
+    out_dir: Path,
+    model: str = _TTS_DEFAULT_MODEL,
+    style: str | None = None,
+    style_hint: str | None = None,
 ) -> tuple[Path, list[dict[str, Any]], float]:
-    """Guardrail. Every supported TTS alias starts with `gemini` and is
-    handled in `generate_tts` directly, so this branch is unreachable
-    under normal operation. If a non-gemini TTS alias gets added to the
-    catalog without a corresponding routing branch, fail loud here.
-    """
-    raise RuntimeError(
-        f"Unknown TTS alias {spec.alias!r}; only gemini-* aliases are supported. "
-        f"Add the model to src/parallax/models/tts.yaml and wire a routing branch "
-        f"in openrouter.generate_tts."
-    )
+    """Synthesize via gpt-audio-mini through OpenRouter. Returns (wav, words, duration)."""
+    import base64
+    import json as _json
+    import time as _time
+    import wave
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _check_key()
+
+    directive = _tts_resolve_directive(style=style, style_hint=style_hint)
+    spoken = directive + text if directive else text
+    # Anchor the user content so the model says the script literally
+    # rather than treating it as conversational input.
+    user_message = f"Say this exactly, with no preamble or commentary: {spoken}"
+
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": user_message}],
+        "modalities": ["text", "audio"],
+        "audio": {"voice": voice, "format": "pcm16"},
+        "stream": True,
+    }
+
+    pcm_bytes = bytearray()
+    transcript = ""
+    with _stream_post("/chat/completions", body, timeout=300.0) as response:
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"OpenRouter TTS request failed ({response.status_code}) for "
+                f"model={model!r} voice={voice!r}: "
+                f"{response.read().decode('utf-8', 'replace')[:500]}"
+            )
+        for line in response.iter_lines():
+            if not line.startswith("data: "):
+                continue
+            payload = line[6:]
+            if payload == "[DONE]":
+                break
+            try:
+                event = _json.loads(payload)
+            except _json.JSONDecodeError:
+                continue
+            choices = event.get("choices") or []
+            if not choices:
+                continue
+            delta = choices[0].get("delta") or {}
+            audio = delta.get("audio")
+            if not isinstance(audio, dict):
+                continue
+            data_b64 = audio.get("data")
+            if data_b64:
+                pcm_bytes.extend(base64.b64decode(data_b64))
+            tx = audio.get("transcript")
+            if tx:
+                transcript += tx
+
+    if not pcm_bytes:
+        raise RuntimeError(
+            f"OpenRouter TTS stream produced no audio for {text[:60]!r}"
+        )
+
+    wav_path = out_dir / f"openrouter_tts_{voice}_{int(_time.time()*1000)}.wav"
+    with wave.open(str(wav_path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(_TTS_PCM_BYTES_PER_SAMPLE)
+        w.setframerate(_TTS_PCM_SAMPLE_RATE)
+        w.writeframes(bytes(pcm_bytes))
+
+    duration_s = len(pcm_bytes) / (_TTS_PCM_SAMPLE_RATE * _TTS_PCM_BYTES_PER_SAMPLE)
+
+    # Forced alignment via WhisperX gives ~50ms-precise word boundaries from
+    # the produced wav. Falls back to evenly-distributed timings only on
+    # alignment failure (loudly logged so it's not silent).
+    try:
+        from . import forced_align
+        words = forced_align.align_words(wav_path)
+    except Exception as exc:
+        import logging
+        logging.getLogger("parallax.openrouter.tts").warning(
+            "forced_align failed (%s); falling back to evenly-distributed word timings",
+            exc,
+        )
+        words = _tts_evenly_distributed_words(transcript or text, duration_s)
+
+    return wav_path, words, duration_s
 
 
 # ---------------------------------------------------------------------------
