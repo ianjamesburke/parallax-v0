@@ -108,13 +108,21 @@ All real-mode media generation routes through OpenRouter. ElevenLabs is retained
 
 ### Video (used when scenes set `animate: true`)
 
-| alias | model_id | ~price | fallback |
-|---|---|---|---|
-| `kling` | kuaishou/kling-video-o1 | $0.10/s | seedance |
-| `veo` | google/veo-3.1 | $0.50/s | kling |
-| `seedance` | bytedance/seedance | $0.06/s | wan |
-| `wan` | alibaba/wan-2.5 | $0.05/s | seedance |
-| `sora` | openai/sora-2-pro | $0.40/s | kling |
+| alias | tier | model_id | ~price | fallback |
+|---|---|---|---|---|
+| `kling` | mid | kwaivgi/kling-video-o1 | $0.10/s | seedance |
+| `veo` | premium | google/veo-3.1 | $0.50/s | kling |
+| `seedance` | draft | bytedance/seedance-2.0-fast | $0.06/s | wan |
+| `wan` | draft | alibaba/wan-2.7 | $0.05/s | seedance |
+| `sora` | premium | openai/sora-2-pro | $0.40/s | kling |
+
+Tier aliases (resolve to the canonical model for that quality band):
+
+| alias | resolves to | tier |
+|---|---|---|
+| `video-draft` | wan | draft |
+| `video-mid` | kling | mid |
+| `video-hq` | veo | premium |
 
 ### TTS (default `gemini-flash-tts`)
 

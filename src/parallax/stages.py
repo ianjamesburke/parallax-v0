@@ -214,6 +214,9 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
                 scene_entry["motion_prompt"] = s["motion_prompt"]
             if s.get("animate_resolution"):
                 scene_entry["animate_resolution"] = s["animate_resolution"]
+            if s.get("end_frame_path"):
+                ep = Path(s["end_frame_path"])
+                scene_entry["end_frame_path"] = str(ep if ep.is_absolute() else settings.folder / ep)
         if s.get("clip_path"):
             cp = Path(s["clip_path"])
             scene_entry["clip_path"] = str(cp if cp.is_absolute() else settings.folder / cp)
@@ -230,24 +233,90 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
 def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     """Run image-to-video for any scene flagged `animate: true` without a clip.
 
+    Routes to OpenRouter when `animate_model` is a registered video alias
+    (e.g. 'kling', 'seedance', 'wan', 'veo', 'sora'); otherwise delegates to
+    project.animate_scenes which uses the FAL grok-imagine-video model.
+
+    OpenRouter routing supports `end_frame_path` on scenes for last-frame
+    conditioning (model interpolates between start and end image).
+
     Breaks if: animated scenes are not augmented with `clip_path` after
     this stage, or pre-locked clips aren't reported as reused.
     """
+    from .pricing import VIDEO_MODELS
+    from . import openrouter as _openrouter
+    import time as _time
+
     rt = _runtime(plan)
     scenes = rt["scenes"]
-    animate_model = plan.get("animate_model", "xai/grok-imagine-video/image-to-video")
+    plan_animate_model = plan.get("animate_model", "xai/grok-imagine-video/image-to-video")
     animate_resolution = "720p" if plan.get("hq") else "480p"
 
     animated_count = sum(1 for s in scenes if s.get("animate") and not s.get("clip_path"))
     if animated_count:
         Path(rt["video_dir"]).mkdir(exist_ok=True)
-        _log(settings, f"animate_scenes — {animated_count} scenes via {animate_model} @ {animate_resolution}")
-        scenes = json.loads(animate_scenes(
-            scenes_json=json.dumps(scenes),
-            out_dir=rt["video_dir"],
-            video_model=animate_model,
-            resolution=animate_resolution,
-        ))
+        _log(settings, f"animate_scenes — {animated_count} scene(s) to animate")
+
+        # FAL scenes collected for batching (grouped by model after OpenRouter pass).
+        fal_pending: list[tuple[dict[str, Any], str]] = []
+
+        for s in scenes:
+            if not s.get("animate") or s.get("clip_path"):
+                continue
+
+            # Per-scene model override wins over plan-level default.
+            scene_model = s.get("animate_model") or plan_animate_model
+            idx = s["index"]
+            still = s.get("still_path")
+            if not still or not Path(still).exists():
+                _log(settings, f"  [{idx:02d}] WARNING: no valid still, skipping animation")
+                continue
+
+            if scene_model in VIDEO_MODELS:
+                # OpenRouter path — handles each scene individually (supports end_frame_path).
+                spec = VIDEO_MODELS[scene_model]
+                _portrait = spec.portrait_args or {}
+                aspect_ratio: str | None = str(_portrait["aspect_ratio"]) if "aspect_ratio" in _portrait else None
+                motion_prompt = s.get("motion_prompt") or s.get("prompt") or (
+                    "Subtle cinematic motion, gentle camera drift. Keep the scene stable and beautiful."
+                )
+                end_frame = s.get("end_frame_path")
+                if end_frame and not Path(end_frame).exists():
+                    _log(settings, f"  [{idx:02d}] WARNING: end_frame_path not found ({end_frame}), ignoring")
+                    end_frame = None
+                _log(settings, f"  [{idx:02d}] openrouter {scene_model}"
+                     + (f" + end_frame" if end_frame else ""))
+                clip_path = _openrouter.generate_video(
+                    prompt=motion_prompt,
+                    alias=scene_model,
+                    image_path=Path(still),
+                    end_image_path=Path(end_frame) if end_frame else None,
+                    out_dir=Path(rt["video_dir"]),
+                    aspect_ratio=aspect_ratio,
+                )
+                s["clip_path"] = str(clip_path)
+            else:
+                # FAL/Grok path — batch after OpenRouter pass.
+                fal_pending.append((s, scene_model))
+
+        # Process FAL scenes in batches grouped by model.
+        if fal_pending:
+            from itertools import groupby as _groupby
+            fal_pending.sort(key=lambda x: x[1])
+            for fal_model, grp in _groupby(fal_pending, key=lambda x: x[1]):
+                batch = [item[0] for item in grp]
+                _log(settings, f"  FAL batch: {len(batch)} scene(s) via {fal_model} @ {animate_resolution}")
+                updated = json.loads(animate_scenes(
+                    scenes_json=json.dumps(batch),
+                    out_dir=rt["video_dir"],
+                    video_model=fal_model,
+                    resolution=animate_resolution,
+                ))
+                updated_map = {u["index"]: u for u in updated}
+                for s in scenes:
+                    if s["index"] in updated_map and updated_map[s["index"]].get("clip_path"):
+                        s["clip_path"] = updated_map[s["index"]]["clip_path"]
+
         for s in scenes:
             if s.get("clip_path"):
                 _log(settings, f"  [{s['index']:02d}] → {Path(s['clip_path']).name}")
@@ -632,7 +701,8 @@ def stage_finalize(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
 _KNOWN_SCENE_FIELDS = {
     "index", "shot_type", "vo_text", "prompt",
     "still_path", "reference", "reference_images",
-    "animate", "motion_prompt", "clip_path", "animate_resolution",
+    "animate", "animate_model", "motion_prompt", "clip_path", "animate_resolution",
+    "end_frame_path",
     "zoom_direction", "zoom_amount",
     # Timing overrides — null/absent = derive from VO. Future graphical editor writes here.
     "duration_s", "start_offset_s", "fade_in_s", "fade_out_s",

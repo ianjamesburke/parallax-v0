@@ -66,10 +66,12 @@ def check_aspect(still_path: str | Path, target_resolution: str) -> AspectCheck:
     src_ratio = src_w / src_h
 
     mismatch_pct = abs(src_ratio - target_ratio) / target_ratio
+    # Square targets (1:1) accept any source aspect — any image can be center-cropped to square.
+    square_target = abs(target_ratio - 1.0) < 0.01
     return AspectCheck(
         src_w=src_w, src_h=src_h, src_ratio=src_ratio,
         target_ratio=target_ratio, mismatch_pct=mismatch_pct,
-        within_tolerance=mismatch_pct <= MAX_TRIM_TOLERANCE,
+        within_tolerance=square_target or mismatch_pct <= MAX_TRIM_TOLERANCE,
     )
 
 
@@ -151,7 +153,7 @@ def crop_to_aspect(image_path: str | Path, target_resolution: str) -> Path:
         return out
     cropped = img.crop((x0, y0, x0 + new_w, y0 + new_h))
     if (cropped.width, cropped.height) != (target_w, target_h):
-        cropped = cropped.resize((target_w, target_h), Image.LANCZOS)
+        cropped = cropped.resize((target_w, target_h), Image.Resampling.LANCZOS)
     if cropped.mode != "RGB":
         cropped = cropped.convert("RGB")
     cropped.save(out, format="PNG")
@@ -212,7 +214,7 @@ def normalize_aspect(still_path: str | Path, target_resolution: str) -> Path:
     img = Image.open(src)
     cropped = img.crop((x0, y0, x0 + new_w, y0 + new_h))
     if (cropped.width, cropped.height) != (target_w, target_h):
-        cropped = cropped.resize((target_w, target_h), Image.LANCZOS)
+        cropped = cropped.resize((target_w, target_h), Image.Resampling.LANCZOS)
     if cropped.mode != "RGB":
         cropped = cropped.convert("RGB")
     cropped.save(out, format="PNG")

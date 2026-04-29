@@ -105,6 +105,7 @@ def generate_video(
     alias: str,
     *,
     image_path: Path | None = None,
+    end_image_path: Path | None = None,
     duration_s: float = 5.0,
     out_dir: Path | None = None,
     size: str | None = None,
@@ -114,6 +115,10 @@ def generate_video(
     `aspect_ratio` is e.g. '9:16'. Each video model has its own
     `supported_sizes` list (verifiable via `/api/v1/videos/models`); requesting
     a size outside that list will fail at submit time with a clear error.
+
+    `end_image_path` — when set, is sent as a `last_frame` conditioning image
+    alongside the `first_frame` start image, directing the model to interpolate
+    between the two.
     """
     return _dispatch(
         kind="video",
@@ -121,6 +126,7 @@ def generate_video(
         primary_call=lambda spec: _video_real(
             prompt, spec, image_path, duration_s, out_dir,
             size=size, aspect_ratio=aspect_ratio,
+            end_image_path=end_image_path,
         ),
         test_call=lambda spec: render_mock_video(
             prompt=prompt, model=spec.alias, duration_s=duration_s, out_dir=out_dir,
@@ -562,7 +568,7 @@ def _image_real(
     # certain prompt types and return landscape. Prepending a strong textual
     # cue dramatically improves compliance without affecting models that
     # already honor the body field (it's just extra context to them).
-    aspect_cue = _aspect_cue(spec.portrait_args.get("aspect_ratio") if spec.portrait_args else None)
+    aspect_cue = _aspect_cue(str(spec.portrait_args["aspect_ratio"]) if spec.portrait_args and "aspect_ratio" in spec.portrait_args else None)
     cued_prompt = f"{aspect_cue}{prompt}" if aspect_cue else prompt
 
     # Style consistency anchor. Image-gen models drop visual style cues
@@ -680,6 +686,7 @@ _VIDEO_POLL_TIMEOUT_S = 600.0  # 10 min
 def _video_real(
     prompt: str, spec: ModelSpec, image_path: Path | None, duration_s: float, out_dir: Path | None,
     *, size: str | None = None, aspect_ratio: str | None = None,
+    end_image_path: Path | None = None,
 ) -> Path:
     """Generate a video via OpenRouter's `/api/v1/videos` async endpoint.
 
@@ -692,7 +699,8 @@ def _video_real(
 
     Image conditioning (image-to-video) is supported via `frame_images` per
     the model's `supported_frame_images` capability. We pass it as a base64
-    data URL on the `first_frame` slot when `image_path` is provided.
+    data URL on the `first_frame` slot when `image_path` is provided, and
+    optionally on the `last_frame` slot when `end_image_path` is provided.
     """
     import base64
     import time as _time
@@ -718,11 +726,20 @@ def _video_real(
         # frame_images schema: array of objects with `type`, `frame_type`,
         # and `image_url` (verified live 2026-04-28; an object instead of an
         # array, or `position` instead of `frame_type`, returns ZodError 400).
-        body["frame_images"] = [{
+        frame_images: list[dict[str, Any]] = [{
             "type": "image_url",
             "frame_type": "first_frame",
             "image_url": {"url": f"data:image/{suffix};base64,{ref_b64}"},
         }]
+        if end_image_path is not None:
+            end_b64 = base64.b64encode(Path(end_image_path).read_bytes()).decode("ascii")
+            end_suffix = Path(end_image_path).suffix.lstrip(".").lower() or "png"
+            frame_images.append({
+                "type": "image_url",
+                "frame_type": "last_frame",
+                "image_url": {"url": f"data:image/{end_suffix};base64,{end_b64}"},
+            })
+        body["frame_images"] = frame_images
 
     headers = {
         "Authorization": f"Bearer {key}",
