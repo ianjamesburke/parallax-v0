@@ -251,7 +251,7 @@ def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     Breaks if: animated scenes are not augmented with `clip_path` after
     this stage, or pre-locked clips aren't reported as reused.
     """
-    from .pricing import VIDEO_MODELS
+    from .models import VIDEO_MODELS
     from . import openrouter as _openrouter
     import time as _time
 

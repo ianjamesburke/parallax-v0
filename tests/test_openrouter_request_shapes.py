@@ -276,7 +276,7 @@ def test_video_pricing_model_ids_match_live_openrouter_slugs():
     """Locks in the corrected slugs from 2026-04-28. If OpenRouter ever
     drops or renames these, this fails loud and the user knows to check
     `/api/v1/videos/models`."""
-    from parallax.pricing import VIDEO_MODELS
+    from parallax.models import VIDEO_MODELS
     expected = {
         "kling": "openrouter/kwaivgi/kling-video-o1",
         "veo": "openrouter/google/veo-3.1",

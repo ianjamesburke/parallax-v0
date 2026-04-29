@@ -1,0 +1,46 @@
+# Text-to-speech models. Single primary: Gemini Flash Preview TTS via OpenRouter.
+#
+# Voices are Gemini 2.5 Flash Preview TTS prebuilts. Pass the voice name verbatim
+# (e.g. `voice: Kore`). The voice list lives here so the CLI / agent can browse
+# without hitting the network.
+
+- alias: gemini-flash-tts
+  model_id: openrouter/google/gemini-2.5-flash-preview-tts
+  tier: default
+  cost: 0.0
+  unit: 1k_chars
+  description: Default TTS. Gemini 2.5 Flash Preview TTS via OpenRouter. Free during preview.
+  fallback: null
+  capabilities:
+    aspect_ratios: []
+  voices:
+    - Zephyr
+    - Puck
+    - Charon
+    - Kore
+    - Fenrir
+    - Leda
+    - Orus
+    - Aoede
+    - Callirrhoe
+    - Autonoe
+    - Enceladus
+    - Iapetus
+    - Umbriel
+    - Algieba
+    - Despina
+    - Erinome
+    - Algenib
+    - Rasalgethi
+    - Laomedeia
+    - Achernar
+    - Alnilam
+    - Schedar
+    - Gacrux
+    - Pulcherrima
+    - Achird
+    - Zubenelgenubi
+    - Vindemiatrix
+    - Sadachbia
+    - Sadaltager
+    - Sulafat

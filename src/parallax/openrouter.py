@@ -1,7 +1,7 @@
 """Unified media-generation client.
 
 Three entry points: `generate_image`, `generate_video`, `generate_tts`. Each
-resolves an alias from `pricing.py`, dispatches to the right backend, and
+resolves an alias from `models/`, dispatches to the right backend, and
 returns a local file path (plus per-word timings for tts).
 
 Backends:
@@ -14,7 +14,7 @@ Backends:
   - voice escape hatch: when `voice` starts with `eleven:`, `generate_tts`
     delegates to ElevenLabs directly (the brand-locked-voice path).
 
-The fallback chain encoded in pricing.ModelSpec.fallback_alias is honored on
+The fallback chain encoded in models.ModelSpec.fallback_alias is honored on
 RuntimeError: if the primary errors, the resolver walks one step down and
 retries. Test-mode never fails, so fallbacks are real-mode-only.
 """
@@ -34,7 +34,7 @@ from . import runlog
 from . import usage as _usage
 from .context import current_session_id
 from .log import get_logger
-from .pricing import Kind, ModelSpec, resolve, resolve_chain
+from .models import Kind, ModelSpec, resolve, resolve_chain
 from .shim import (
     is_test_mode,
     output_dir,

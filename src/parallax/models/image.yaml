@@ -1,0 +1,118 @@
+# Image generation models. All routed through OpenRouter.
+#
+# Tier aliases (`draft` / `mid` / `premium`) are the default vocabulary the
+# agent uses. Named aliases (e.g. `nano-banana`, `seedream`) exist for power
+# users who want to pin a specific model.
+#
+# `capabilities.aspect_ratios` is the list of supported output ratios. Use
+# ["any"] only if the model genuinely accepts arbitrary ratios.
+
+- alias: draft
+  model_id: openrouter/google/gemini-2.5-flash-image
+  tier: draft
+  cost: 0.005
+  unit: image
+  description: Cheapest. For exploration and throwaways. Gemini 2.5 Flash Image.
+  fallback: null
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1"]
+    max_refs: 4
+  inputs:
+    - style_ref
+    - product_ref
+    - character_ref
+
+- alias: mid
+  model_id: openrouter/bytedance/seedream-4.5
+  tier: mid
+  cost: 0.025
+  unit: image
+  description: Balanced quality and speed. Default when no tier specified.
+  fallback: draft
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1"]
+    max_refs: 4
+  inputs:
+    - style_ref
+    - product_ref
+    - character_ref
+
+- alias: premium
+  model_id: openrouter/google/gemini-3-pro-image-preview
+  tier: premium
+  cost: 0.080
+  unit: image
+  description: Best fidelity for final deliverables. Gemini 3 Pro Image (preview).
+  # No fallback: Pro -> Flash silently degrades style fidelity for stylized
+  # references. Failing loud surfaces the underlying error so the operator
+  # can rephrase or accept.
+  fallback: null
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1"]
+    max_refs: 8
+  inputs:
+    - style_ref
+    - product_ref
+    - character_ref
+
+# --- Named aliases -----------------------------------------------------------
+
+- alias: nano-banana
+  model_id: openrouter/google/gemini-2.5-flash-image
+  tier: default
+  cost: 0.039
+  unit: image
+  description: Google Nano Banana (Gemini 2.5 Flash Image). Multi-ref compositing.
+  fallback: seedream
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1"]
+    max_refs: 8
+  inputs:
+    - style_ref
+    - product_ref
+    - character_ref
+
+- alias: seedream
+  model_id: openrouter/bytedance/seedream-4.5
+  tier: default
+  cost: 0.025
+  unit: image
+  description: ByteDance Seedream 4.5. Strong realism, good ref-conditioning.
+  fallback: nano-banana
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1"]
+    max_refs: 4
+  inputs:
+    - style_ref
+    - product_ref
+    - character_ref
+
+- alias: gemini-3-flash
+  model_id: openrouter/google/gemini-3.1-flash-image-preview
+  tier: default
+  cost: 0.039
+  unit: image
+  description: Gemini 3.1 Flash Image (preview). Honors aspect_ratio natively.
+  fallback: nano-banana
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
+    max_refs: 8
+  inputs:
+    - style_ref
+    - product_ref
+    - character_ref
+
+- alias: gemini-3-pro
+  model_id: openrouter/google/gemini-3-pro-image-preview
+  tier: default
+  cost: 0.080
+  unit: image
+  description: Gemini 3 Pro Image (preview). Best fidelity; honors aspect_ratio.
+  fallback: null
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
+    max_refs: 8
+  inputs:
+    - style_ref
+    - product_ref
+    - character_ref

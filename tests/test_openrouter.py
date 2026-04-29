@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from parallax import openrouter, runlog
-from parallax.pricing import IMAGE_MODELS, TTS_MODELS, VIDEO_MODELS
+from parallax.models import IMAGE_MODELS, TTS_MODELS, VIDEO_MODELS
 
 
 @pytest.fixture(autouse=True)
@@ -47,16 +47,19 @@ def test_eleven_voice_escape_hatch_routes_to_shim_in_test_mode(tmp_path):
 
 
 def test_kind_mismatch_raises(tmp_path):
+    # `kling` is video-only — surfaces a kind mismatch when called via image.
     with pytest.raises(ValueError, match="image"):
         openrouter.generate_image("x", alias="kling", out_dir=tmp_path)
+    # `seedream` is image-only — surfaces a kind mismatch when called via video.
     with pytest.raises(ValueError, match="video"):
-        openrouter.generate_video("x", alias="mid", out_dir=tmp_path)
+        openrouter.generate_video("x", alias="seedream", out_dir=tmp_path)
+    # `seedream` is image-only — surfaces a kind mismatch when called via tts.
     with pytest.raises(ValueError, match="tts"):
-        openrouter.generate_tts("x", alias="mid", out_dir=tmp_path)
+        openrouter.generate_tts("x", alias="seedream", out_dir=tmp_path)
 
 
 def test_unknown_alias_raises(tmp_path):
-    with pytest.raises(ValueError, match="Unknown model alias"):
+    with pytest.raises(ValueError, match="Unknown image model alias"):
         openrouter.generate_image("x", alias="flux-pro", out_dir=tmp_path)
 
 

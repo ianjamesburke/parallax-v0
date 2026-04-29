@@ -92,47 +92,51 @@ Lock `avatar_track` and `avatar_track_keyed` immediately after first successful 
 
 ## Model aliases
 
-All real-mode media generation routes through OpenRouter. ElevenLabs is retained only as the brand-locked-voice escape hatch (`voice: eleven:<voice_id>`). Aliases are unique across kinds.
+All real-mode media generation routes through OpenRouter via the catalog at `src/parallax/models/` (one YAML file per modality: `image.yaml`, `video.yaml`, `tts.yaml`). Tier aliases (`draft` / `mid` / `premium`) exist per modality; named aliases let you pin a specific model.
+
+Browse the catalog from the CLI:
+
+```
+parallax models list                  # full catalog grouped by kind
+parallax models list --kind image     # one kind only
+parallax models list --json           # machine-readable
+parallax models show mid --kind image # full capabilities + voices for one alias
+```
 
 ### Image (`model:` field)
 
-| alias | model_id | ~price | refs | fallback |
-|---|---|---|---|---|
-| `draft` | google/gemini-2.5-flash-image | $0.005/image | 4 | — |
-| `mid` | bytedance/seedream-4.5 | $0.025/image | 4 | draft |
-| `nano-banana` | google/gemini-2.5-flash-image | $0.039/image | 8 | seedream |
-| `seedream` | bytedance/seedream-4.5 | $0.025/image | 4 | nano-banana |
-| `premium` | google/nano-banana-pro | $0.080/image | 8 | nano-banana |
-| `gemini-3-flash` | google/gemini-3.1-flash-image-preview | $0.039/image | 8 | nano-banana |
-| `gemini-3-pro` | google/gemini-3-pro-image-preview | $0.080/image | 8 | gemini-3-flash |
+| alias | tier | model_id | ~price | refs | fallback |
+|---|---|---|---|---|---|
+| `draft` | draft | google/gemini-2.5-flash-image | $0.005/image | 4 | — |
+| `mid` | mid | bytedance/seedream-4.5 | $0.025/image | 4 | draft |
+| `premium` | premium | google/gemini-3-pro-image-preview | $0.080/image | 8 | — |
+| `nano-banana` | — | google/gemini-2.5-flash-image | $0.039/image | 8 | seedream |
+| `seedream` | — | bytedance/seedream-4.5 | $0.025/image | 4 | nano-banana |
+| `gemini-3-flash` | — | google/gemini-3.1-flash-image-preview | $0.039/image | 8 | nano-banana |
+| `gemini-3-pro` | — | google/gemini-3-pro-image-preview | $0.080/image | 8 | — |
 
 ### Video (used when scenes set `animate: true`)
 
-| alias | tier | model_id | ~price | fallback |
-|---|---|---|---|---|
-| `kling` | mid | kwaivgi/kling-video-o1 | $0.10/s | seedance |
-| `veo` | premium | google/veo-3.1 | $0.50/s | kling |
-| `seedance` | draft | bytedance/seedance-2.0-fast | $0.06/s | wan |
-| `wan` | draft | alibaba/wan-2.7 | $0.05/s | seedance |
-| `sora` | premium | openai/sora-2-pro | $0.40/s | kling |
+| alias | tier | model_id | ~price | start | end | fallback |
+|---|---|---|---|---|---|---|
+| `draft` | draft | bytedance/seedance-2.0-fast | $0.06/s | ✓ | — | wan |
+| `mid` | mid | kwaivgi/kling-video-o1 | $0.10/s | ✓ | ✓ | draft |
+| `premium` | premium | google/veo-3.1 | $0.50/s | ✓ | ✓ | mid |
+| `seedance` | — | bytedance/seedance-2.0-fast | $0.06/s | ✓ | — | wan |
+| `kling` | — | kwaivgi/kling-video-o1 | $0.10/s | ✓ | ✓ | seedance |
+| `veo` | — | google/veo-3.1 | $0.50/s | ✓ | ✓ | kling |
+| `wan` | — | alibaba/wan-2.7 | $0.05/s | ✓ | — | seedance |
+| `sora` | — | openai/sora-2-pro | $0.40/s | ✓ | — | kling |
 
-Tier aliases (resolve to the canonical model for that quality band):
-
-| alias | resolves to | tier |
-|---|---|---|
-| `video-draft` | wan | draft |
-| `video-mid` | kling | mid |
-| `video-hq` | veo | premium |
+`start` / `end` columns indicate start-frame / end-frame conditioning support. `--aspect` is wired through Phase 1.3.
 
 ### TTS (default `gemini-flash-tts`)
 
 | alias | model_id | ~price | fallback |
 |---|---|---|---|
-| `gemini-flash-tts` | google/gemini-3.1-flash-tts | $0.30/1k chars | gpt-4o-mini-tts |
-| `gpt-4o-mini-tts` | openai/gpt-4o-mini-tts | $0.60/1k chars | voxtral |
-| `voxtral` | mistral/voxtral-mini-tts | $0.20/1k chars | — |
+| `gemini-flash-tts` | google/gemini-2.5-flash-preview-tts (via OpenRouter) | free during preview | — |
 
-`voice:` accepts a free-text character description (Gemini Flash TTS interprets it as a style prompt) or `eleven:<voice_id>` for direct ElevenLabs (brand-locked voices). All image and video models render 9:16 portrait by default.
+`voice:` accepts a Gemini voice name (`Kore`, `Puck`, `Zephyr`, ...; full list via `parallax models show gemini-flash-tts`) or `eleven:<voice_id>` to bypass OpenRouter and route directly to ElevenLabs (brand-locked voices). All image and video models default to 9:16 portrait until `--aspect` lands.
 
 ---
 
