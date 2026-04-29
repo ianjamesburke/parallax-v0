@@ -14,7 +14,7 @@
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1"]
     start_frame: true
-    end_frame: false
+    end_frame: true
   inputs: []
 
 - alias: mid
@@ -55,7 +55,7 @@
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1"]
     start_frame: true
-    end_frame: false
+    end_frame: true
   inputs: []
 
 - alias: kling
@@ -94,7 +94,7 @@
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1"]
     start_frame: true
-    end_frame: false
+    end_frame: true
   inputs: []
 
 - alias: sora
@@ -102,10 +102,10 @@
   tier: default
   cost: 0.40
   unit: second
-  description: OpenAI Sora 2 Pro. Premium quality; expensive.
+  description: OpenAI Sora 2 Pro. Premium quality; expensive. Text-to-video only — no frame conditioning.
   fallback: kling
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1"]
-    start_frame: true
+    start_frame: false
     end_frame: false
   inputs: []
