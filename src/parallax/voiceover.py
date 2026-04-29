@@ -34,7 +34,7 @@ def generate_voiceover(
     then post-processes with `_apply_atempo` and `_trim_long_pauses`.
 
     `voice` is a Gemini prebuilt voice name (e.g. 'Kore', 'Puck'). See
-    `parallax models show gemini-flash-tts` for the full list.
+    `parallax models show tts-mini` for the full list.
 
     `speed` is an ffmpeg `atempo` factor applied AFTER synthesis. For
     Gemini, prefer `style` / `style_hint` for pacing; reserve `speed`
@@ -54,7 +54,7 @@ def generate_voiceover(
     from . import openrouter
 
     tts_voice = voice
-    tts_alias = "gemini-flash-tts"
+    tts_alias = "tts-mini"
 
     t0 = time.monotonic()
     log.info(

@@ -110,7 +110,7 @@ def alias_guidance() -> str:
             )
     lines.append(
         "\nNever pass any value outside this list. If no tier is specified, use "
-        "'mid' (image/video) or 'gemini-flash-tts' (tts). For TTS, pass the voice "
+        "'mid' (image/video) or 'tts-mini' (tts). For TTS, pass the voice "
         "name from the catalog (e.g. voice='Kore')."
     )
     return "\n".join(lines)

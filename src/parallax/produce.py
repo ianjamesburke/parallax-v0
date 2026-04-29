@@ -7,7 +7,7 @@ burn_captions → burn_headline.
 
 Plan YAML schema:
   voice: Kore                # Gemini voice (default: Kore). See
-                             # `parallax models show gemini-flash-tts`
+                             # `parallax models show tts-mini`
                              # for the full list of prebuilt voices.
   style: rapid_fire          # Gemini TTS pacing preset. Default for ads.
                              # Options: rapid_fire | fast | calm | natural.

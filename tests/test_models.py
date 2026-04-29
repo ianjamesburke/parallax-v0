@@ -21,7 +21,7 @@ def test_three_kinds_populated():
     assert {"nano-banana", "gemini-3-flash", "gemini-3-pro"} <= set(IMAGE_MODELS)
     assert {"kling", "veo", "seedance", "wan", "sora"} <= set(VIDEO_MODELS)
     # Single TTS provider via OpenRouter (Gemini Flash Preview).
-    assert {"gemini-flash-tts"} <= set(TTS_MODELS)
+    assert {"tts-mini"} <= set(TTS_MODELS)
 
 
 def test_resolve_returns_spec_with_kind():
@@ -29,7 +29,7 @@ def test_resolve_returns_spec_with_kind():
     assert resolve("mid", kind="image").kind == "image"
     assert resolve("mid", kind="video").kind == "video"
     assert resolve("kling").kind == "video"
-    assert resolve("gemini-flash-tts").kind == "tts"
+    assert resolve("tts-mini").kind == "tts"
 
 
 def test_resolve_kind_mismatch_raises():
@@ -69,6 +69,6 @@ def test_video_capabilities_populated():
 
 
 def test_tts_voices_populated():
-    spec = resolve("gemini-flash-tts", kind="tts")
+    spec = resolve("tts-mini", kind="tts")
     assert len(spec.voices) >= 10
-    assert "Kore" in spec.voices
+    assert "nova" in spec.voices

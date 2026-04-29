@@ -116,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         "--json", action="store_true", help="Emit machine-readable JSON instead of a table."
     )
     models_show_p = models_sub.add_parser("show", help="Show capabilities for one alias.")
-    models_show_p.add_argument("alias", help="Model alias (e.g. 'mid', 'kling', 'gemini-flash-tts').")
+    models_show_p.add_argument("alias", help="Model alias (e.g. 'mid', 'kling', 'tts-mini').")
     models_show_p.add_argument(
         "--kind",
         choices=("image", "video", "tts"),

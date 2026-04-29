@@ -53,7 +53,7 @@ After approving an asset, paste its path into the corresponding scene field so t
 
 ## Model aliases
 
-Three tiers per modality: `draft`, `mid`, `premium`. Defaults: `mid` for image and video; `gemini-flash-tts` for TTS. Named aliases for power users: `nano-banana`, `seedream`, `gemini-3-pro` (image); `seedance`, `kling`, `veo`, `wan`, `sora` (video).
+Three tiers per modality: `draft`, `mid`, `premium`. Defaults: `mid` for image and video; `tts-mini` for TTS. Named aliases for power users: `nano-banana`, `seedream`, `gemini-3-pro` (image); `seedance`, `kling`, `veo`, `wan`, `sora` (video).
 
 ```sh
 parallax models list           # browse the catalog with prices

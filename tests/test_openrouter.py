@@ -100,12 +100,12 @@ def test_video_real_mode_with_bad_key_falls_back_through_chain(monkeypatch, tmp_
 
 
 def test_tts_real_mode_gemini_alias_requires_openrouter_key(monkeypatch, tmp_path):
-    """gemini-flash-tts now routes through OpenRouter; missing
+    """tts-mini now routes through OpenRouter; missing
     OPENROUTER_API_KEY must surface a clear error, not stub-succeed."""
     monkeypatch.setenv("PARALLAX_TEST_MODE", "0")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
-        openrouter.generate_tts("hello", alias="gemini-flash-tts", out_dir=tmp_path)
+        openrouter.generate_tts("hello", alias="tts-mini", out_dir=tmp_path)
 
 
 def test_refs_validated_for_unsupported_model(tmp_path):

@@ -3,7 +3,7 @@ _trim_long_pauses, _mock_voiceover.
 
 Locks in:
   - generate_voiceover always routes through openrouter.generate_tts with
-    alias=gemini-flash-tts and the supplied voice name.
+    alias=tts-mini and the supplied voice name.
   - atempo scales word timestamps by 1/speed and writes the canonical mp3.
   - _trim_long_pauses collapses gaps > max_gap_s to keep_gap_s and shifts
     word timestamps by the cumulative removed duration.
@@ -168,7 +168,7 @@ def test_generate_voiceover_routes_to_gemini_by_default(tmp_path, monkeypatch):
     out = json.loads(tools_video.generate_voiceover(
         "hi", voice="Kore", speed=1.0, out_dir=str(tmp_path),
     ))
-    assert captured["alias"] == "gemini-flash-tts"
+    assert captured["alias"] == "tts-mini"
     assert captured["voice"] == "Kore"
     assert Path(out["audio_path"]).exists()
 
