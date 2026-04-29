@@ -96,7 +96,7 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
 
     rt = _runtime(plan)
     scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
-    _log(settings, f"generating {len(scenes_raw)} stills — model={settings.model} aspect={settings.aspect}")
+    _log(settings, f"generating {len(scenes_raw)} stills — image_model={settings.image_model} aspect={settings.aspect}")
     _warn_unknown_scene_fields(scenes_raw)
     Path(rt["stills_dir"]).mkdir(exist_ok=True)
 
@@ -168,6 +168,9 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
             # first try, regenerate once with a sterner textual prompt prefix.
             # If it's still wrong, raise — silent center-crop is forbidden
             # because it discards subject content for non-centered compositions.
+            # Per-scene image_model override wins over plan-level default.
+            scene_image_model = s.get("image_model") or settings.image_model
+
             attempts = 2
             raw_still_path = None
             last_err: Exception | None = None
@@ -175,7 +178,7 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
                 stern_prefix = "" if attempt == 1 else _build_stern_prefix(scene_aspect)
                 raw_still_path = generate_image(
                     prompt=stern_prefix + prompt,
-                    model=settings.model,
+                    model=scene_image_model,
                     reference_images=refs,
                     out_dir=rt["stills_dir"],
                     aspect_ratio=scene_aspect,
@@ -189,7 +192,7 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
                      f"({check.mismatch_pct*100:.1f}% off target {settings.resolution}). "
                      f"{'Retrying with sterner prompt.' if attempt < attempts else 'GIVING UP.'}")
                 last_err = AspectMismatchError(
-                    f"scene {idx}: model {settings.model!r} returned wrong-aspect "
+                    f"scene {idx}: model {scene_image_model!r} returned wrong-aspect "
                     f"image {check.src_w}x{check.src_h} ({check.mismatch_pct*100:.1f}% off). "
                     f"Already retried {attempt - 1}x with sterner prompts. "
                     f"This run is aborting — switch to a different image model or "
@@ -217,8 +220,8 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
         }
         if s.get("animate"):
             scene_entry["animate"] = True
-            if s.get("animate_model"):
-                scene_entry["animate_model"] = s["animate_model"]
+            if s.get("video_model"):
+                scene_entry["video_model"] = s["video_model"]
             if s.get("motion_prompt"):
                 scene_entry["motion_prompt"] = s["motion_prompt"]
             if s.get("animate_resolution"):
@@ -261,7 +264,7 @@ def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
 
     rt = _runtime(plan)
     scenes = rt["scenes"]
-    plan_animate_model = plan.get("animate_model", "mid")
+    plan_video_model = plan.get("video_model", "mid")
 
     animated_count = sum(1 for s in scenes if s.get("animate") and not s.get("clip_path"))
     if animated_count:
@@ -273,7 +276,7 @@ def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
                 continue
 
             # Per-scene model override wins over plan-level default.
-            scene_model = s.get("animate_model") or plan_animate_model
+            scene_model = s.get("video_model") or plan_video_model
             idx = s["index"]
             still = s.get("still_path")
             if not still or not Path(still).exists():
@@ -282,7 +285,7 @@ def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
 
             if scene_model not in VIDEO_MODELS:
                 raise RuntimeError(
-                    f"animate_model={scene_model!r} is not a known video alias. "
+                    f"video_model={scene_model!r} is not a known video alias. "
                     f"Use one of: {', '.join(sorted(VIDEO_MODELS))}."
                 )
 
@@ -379,10 +382,28 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
         if not full_script:
             _log(settings, "generate_voiceover — no vo_text on any scene, skipping")
             return plan
-        _log(settings, f"generate_voiceover — voice={settings.voice} speed={settings.speed} style={settings.style or settings.style_hint or '<gemini default>'}")
+
+        # Per-scene voice_model override: if any scene declares one, all
+        # scenes must agree (no per-scene synthesis split yet — the script
+        # is TTS'd as one chunk to keep prosody coherent across scenes).
+        scene_voice_models = {s["voice_model"] for s in scenes_raw if s.get("voice_model")}
+        if len(scene_voice_models) > 1:
+            raise RuntimeError(
+                f"per-scene voice_model overrides disagree: {sorted(scene_voice_models)}. "
+                f"Mixed-model synthesis is not supported (one TTS call per run). "
+                f"Set the same `voice_model:` on every scene that overrides, or move "
+                f"the value to the plan-level `voice_model:`."
+            )
+        voice_model = (scene_voice_models.pop() if scene_voice_models else settings.voice_model)
+
+        _log(settings,
+             f"generate_voiceover — voice={settings.voice} voice_model={voice_model} "
+             f"speed={settings.voice_speed} "
+             f"style={settings.style or settings.style_hint or '<default>'}")
         vo_result = json.loads(generate_voiceover(
-            text=full_script, voice=settings.voice, speed=settings.speed, out_dir=rt["audio_dir"],
-            style=settings.style, style_hint=settings.style_hint,
+            text=full_script, voice=settings.voice, speed=settings.voice_speed,
+            out_dir=rt["audio_dir"], style=settings.style, style_hint=settings.style_hint,
+            voice_model=voice_model,
         ))
         audio_path = vo_result["audio_path"]
         words_path = vo_result["words_path"]
@@ -453,9 +474,11 @@ def stage_manifest(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     write_manifest(
         manifest_json=json.dumps({
             "version": rt["version"],
-            "model": settings.model,
+            "image_model": settings.image_model,
+            "video_model": settings.video_model,
             "voice": settings.voice,
-            "speed": settings.speed,
+            "voice_model": settings.voice_model,
+            "voice_speed": settings.voice_speed,
             "resolution": settings.resolution,
             "audio_path": rt.get("audio_path"),
             "words_path": rt.get("words_path"),
@@ -702,8 +725,11 @@ def stage_finalize(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
 _KNOWN_SCENE_FIELDS = {
     "index", "shot_type", "vo_text", "prompt",
     "still_path", "reference", "reference_images",
-    "animate", "animate_model", "motion_prompt", "clip_path", "animate_resolution",
+    "animate", "motion_prompt", "clip_path", "animate_resolution",
     "end_frame_path",
+    # Per-scene model overrides (image_model / video_model / voice_model
+    # win over plan-level defaults).
+    "image_model", "video_model", "voice_model",
     # video_references: character/style reference images passed to OpenRouter as
     # input_references for text-to-video consistency. Only effective when there is
     # no still_path driving frame_images (i.e. pure text-to-video scenes). Distinct

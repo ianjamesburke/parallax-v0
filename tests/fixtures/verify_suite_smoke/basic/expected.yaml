@@ -30,7 +30,7 @@ stages:
     contiguous_cover: true
 
 manifest:
-  keys_required: [model, voice, resolution, scenes]
+  keys_required: [image_model, video_model, voice, voice_model, resolution, scenes]
   scene_keys_required: [index, vo_text, prompt, start_s, end_s, duration_s]
 
 run_log:

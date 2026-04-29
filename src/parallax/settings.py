@@ -128,7 +128,8 @@ class Settings:
     concept_prefix: str  # e.g. "0004_" or ""
 
     # Image / video
-    model: str
+    image_model: str
+    video_model: str
     aspect: str  # e.g. "9:16", "16:9", "1:1", "4:3", "3:4"
     resolution: str
     video_width: int
@@ -137,7 +138,8 @@ class Settings:
 
     # Voice
     voice: str
-    speed: float
+    voice_model: str
+    voice_speed: float
     style: str | None
     style_hint: str | None
 
@@ -224,11 +226,13 @@ def resolve_settings(plan: dict[str, Any], folder: Path, plan_path: Path) -> Set
     id_match = re.match(r"^(\d{4})", folder.name)
     concept_prefix = f"{id_match.group(1)}_" if id_match else ""
 
-    model = plan.get("model", "mid")
+    image_model = plan.get("image_model", "mid")
+    video_model = plan.get("video_model", "mid")
     voice = plan.get("voice", "Kore")
-    # Gemini TTS pacing is controlled via `style` (e.g. rapid_fire); leave
-    # the atempo speed knob neutral by default. Plans can still override.
-    speed = float(plan.get("speed", 1.0))
+    voice_model = plan.get("voice_model", "tts-mini")
+    # TTS pacing is controlled via `style` (e.g. rapid_fire); leave the
+    # atempo speed knob neutral by default. Plans can still override.
+    voice_speed = float(plan.get("voice_speed", 1.0))
     style = plan.get("style")
     style_hint = plan.get("style_hint")
 
@@ -282,14 +286,16 @@ def resolve_settings(plan: dict[str, Any], folder: Path, plan_path: Path) -> Set
         folder=folder,
         plan_path=plan_path,
         concept_prefix=concept_prefix,
-        model=model,
+        image_model=image_model,
+        video_model=video_model,
         aspect=aspect,
         resolution=resolution,
         video_width=video_width,
         video_height=video_height,
         res_scale=res_scale,
         voice=voice,
-        speed=speed,
+        voice_model=voice_model,
+        voice_speed=voice_speed,
         style=style,
         style_hint=style_hint,
         caption_style=caption_style,
