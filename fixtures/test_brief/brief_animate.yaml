@@ -1,0 +1,21 @@
+goal: "Test animated video gen mock path"
+aspect: "9:16"
+voice: Kore
+voice_speed: 1.0
+assets:
+  provided: []
+  generated: []
+script:
+  scenes:
+    - index: 0
+      shot_type: broll
+      animate: true
+      vo_text: "Camera glides over a sunlit kitchen counter."
+      prompt: "Cinematic shot of sunlit kitchen counter, morning light."
+      motion_prompt: "Slow dolly forward, gentle drift right."
+    - index: 1
+      shot_type: broll
+      animate: true
+      vo_text: "An apple rolls into frame."
+      prompt: "A glossy red apple on the counter."
+      motion_prompt: "Gentle zoom in on the apple."

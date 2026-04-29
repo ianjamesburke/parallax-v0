@@ -1,0 +1,28 @@
+# Text-to-speech models. Routed through OpenRouter chat-completions
+# audio modality (gpt-audio-mini streams pcm16 audio + transcript). Verified
+# live against /api/v1/models 2026-04-29.
+#
+# Voices: pass the OpenAI voice name verbatim (e.g. `voice: nova`). The list
+# below covers the full set OpenAI exposes for gpt-audio-mini.
+
+- alias: tts-mini
+  model_id: openrouter/openai/gpt-audio-mini
+  tier: default
+  cost: 0.0
+  unit: 1k_chars
+  description: Default TTS. OpenAI gpt-audio-mini via OpenRouter (chat audio modality).
+  fallback: null
+  capabilities:
+    aspect_ratios: []
+  voices:
+    - alloy
+    - ash
+    - ballad
+    - coral
+    - echo
+    - fable
+    - nova
+    - onyx
+    - sage
+    - shimmer
+    - verse

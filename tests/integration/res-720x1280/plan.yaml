@@ -4,6 +4,7 @@
 voice: Kore
 speed: 1.0
 model: mid
+aspect: "9:16"
 resolution: 720x1280
 caption_style: bangers
 fontsize: 40

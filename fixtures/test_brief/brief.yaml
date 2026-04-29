@@ -1,0 +1,33 @@
+goal: "Test the brief→plan→produce mock loop end-to-end"
+aspect: "9:16"
+voice: Kore
+voice_speed: 1.0
+success_criteria:
+  - "Produces a stub mp4 in TEST mode"
+  - "Three scenes render without errors"
+
+assets:
+  provided: []   # mock mode — no real assets required
+  generated:
+    - kind: still
+      scene_index: 0
+    - kind: still
+      scene_index: 1
+    - kind: still
+      scene_index: 2
+    - kind: voiceover
+
+script:
+  scenes:
+    - index: 0
+      shot_type: broll
+      vo_text: "A woman walks into a bright lit kitchen."
+      prompt: "Cinematic shot of a woman entering a sunlit kitchen, morning light."
+    - index: 1
+      shot_type: broll
+      vo_text: "She picks up a glowing red apple."
+      prompt: "Close up on a hand picking up a glossy red apple from a wooden bowl."
+    - index: 2
+      shot_type: broll
+      vo_text: "And takes the first crisp bite."
+      prompt: "Slow motion close up of a woman biting into a red apple."

@@ -26,7 +26,18 @@ from typing import Any
 
 from .ffmpeg_utils import parse_resolution
 
-_DEFAULT_RESOLUTION = "720x1280"
+# Aspect ratio is the user-facing knob. When `resolution:` is unset on the
+# plan and there are no clips to probe, the resolution is derived from this
+# table so the output matches the chosen aspect at a sensible default size.
+_ASPECT_TO_RESOLUTION: dict[str, str] = {
+    "9:16": "1080x1920",
+    "16:9": "1920x1080",
+    "1:1":  "1080x1080",
+    "4:3":  "1080x810",
+    "3:4":  "810x1080",
+}
+
+VALID_ASPECTS: frozenset[str] = frozenset(_ASPECT_TO_RESOLUTION.keys())
 
 
 # Event-emitter signature: (event_name, fields_dict) -> None.
@@ -118,6 +129,7 @@ class Settings:
 
     # Image / video
     model: str
+    aspect: str  # e.g. "9:16", "16:9", "1:1", "4:3", "3:4"
     resolution: str
     video_width: int
     video_height: int
@@ -155,13 +167,14 @@ class Settings:
     titles_cfg: list[dict[str, Any]] = field(default_factory=list)
 
 
-def _infer_project_resolution(plan: dict, folder: Path) -> str:
+def _infer_project_resolution(plan: dict, folder: Path, aspect: str = "9:16") -> str:
     """Pick an output resolution when the plan doesn't specify one.
 
     Probes every scene's `clip_path` (when present) and returns the
     largest width×height seen — so a project's downstream stages match
-    the source video's natural resolution rather than upscaling. Falls
-    back to 720x1280 (vertical) when no probeable clips exist.
+    the source video's natural resolution rather than upscaling. When no
+    probeable clips exist, falls back to the resolution paired with
+    `aspect` in `_ASPECT_TO_RESOLUTION`.
     """
     import subprocess
 
@@ -190,7 +203,12 @@ def _infer_project_resolution(plan: dict, folder: Path) -> str:
             best_w, best_h = w, h
     if best_w and best_h:
         return f"{best_w}x{best_h}"
-    return _DEFAULT_RESOLUTION
+    if aspect not in _ASPECT_TO_RESOLUTION:
+        raise ValueError(
+            f"_infer_project_resolution: unknown aspect {aspect!r}; "
+            f"valid choices: {sorted(_ASPECT_TO_RESOLUTION)}"
+        )
+    return _ASPECT_TO_RESOLUTION[aspect]
 
 
 def resolve_settings(plan: dict[str, Any], folder: Path, plan_path: Path) -> Settings:
@@ -208,14 +226,27 @@ def resolve_settings(plan: dict[str, Any], folder: Path, plan_path: Path) -> Set
 
     model = plan.get("model", "mid")
     voice = plan.get("voice", "Kore")
-    # ElevenLabs path defaults to 1.1 atempo; Gemini path stays at 1.0
-    # (pacing is controlled via `style`). Plan can override either.
-    default_speed = 1.1 if str(voice).startswith("eleven:") else 1.0
-    speed = float(plan.get("speed", default_speed))
+    # Gemini TTS pacing is controlled via `style` (e.g. rapid_fire); leave
+    # the atempo speed knob neutral by default. Plans can still override.
+    speed = float(plan.get("speed", 1.0))
     style = plan.get("style")
     style_hint = plan.get("style_hint")
 
-    resolution = plan.get("resolution") or _infer_project_resolution(plan, folder)
+    aspect = plan.get("aspect", "9:16")
+    # YAML sexagesimal trap: unquoted `aspect: 9:16` parses as 556 (9*60+16).
+    # Catch the int form and emit an actionable hint rather than the raw value.
+    if isinstance(aspect, int):
+        raise ValueError(
+            f"plan.aspect parsed as int {aspect!r} — quote the value in YAML "
+            f"(e.g. `aspect: \"9:16\"`). Choices: {sorted(VALID_ASPECTS)}"
+        )
+    if aspect not in VALID_ASPECTS:
+        raise ValueError(
+            f"plan.aspect={aspect!r} is not a supported aspect ratio. "
+            f"Choices: {sorted(VALID_ASPECTS)}"
+        )
+
+    resolution = plan.get("resolution") or _infer_project_resolution(plan, folder, aspect)
     video_width, video_height = parse_resolution(resolution)
     res_scale = video_width / 1080  # font sizes scale to output width
 
@@ -252,6 +283,7 @@ def resolve_settings(plan: dict[str, Any], folder: Path, plan_path: Path) -> Set
         plan_path=plan_path,
         concept_prefix=concept_prefix,
         model=model,
+        aspect=aspect,
         resolution=resolution,
         video_width=video_width,
         video_height=video_height,

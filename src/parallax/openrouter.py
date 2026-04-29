@@ -1,20 +1,17 @@
 """Unified media-generation client.
 
 Three entry points: `generate_image`, `generate_video`, `generate_tts`. Each
-resolves an alias from `pricing.py`, dispatches to the right backend, and
-returns a local file path (plus per-word timings for tts).
+resolves an alias from `models/`, dispatches to OpenRouter, and returns a
+local file path (plus per-word timings for tts).
 
 Backends:
   - test mode (`PARALLAX_TEST_MODE=1`): all three route through `shim.py`.
     No network, no spend, fully deterministic.
-  - real mode: routes through OpenRouter's media APIs. The HTTP request shape
-    varies per kind and is intentionally NOT yet implemented here — the
-    contract gets verified once an OPENROUTER_API_KEY is in hand. Calling
-    real-mode raises NotImplementedError with a clear message.
-  - voice escape hatch: when `voice` starts with `eleven:`, `generate_tts`
-    delegates to ElevenLabs directly (the brand-locked-voice path).
+  - real mode: routes through OpenRouter (image + video via the chat /
+    videos endpoints, TTS via `/api/v1/audio/speech`). OPENROUTER_API_KEY
+    is the single required env var.
 
-The fallback chain encoded in pricing.ModelSpec.fallback_alias is honored on
+The fallback chain encoded in models.ModelSpec.fallback_alias is honored on
 RuntimeError: if the primary errors, the resolver walks one step down and
 retries. Test-mode never fails, so fallbacks are real-mode-only.
 """
@@ -34,7 +31,7 @@ from . import runlog
 from . import usage as _usage
 from .context import current_session_id
 from .log import get_logger
-from .pricing import Kind, ModelSpec, resolve, resolve_chain
+from .models import Kind, ModelSpec, resolve, resolve_chain
 from .shim import (
     is_test_mode,
     output_dir,
@@ -57,21 +54,31 @@ def generate_image(
     reference_images: list[str] | list[Path] | None = None,
     out_dir: Path | None = None,
     size: str | None = None,
+    aspect_ratio: str | None = None,
 ) -> Path:
     """Generate an image. `size` is a passthrough hint like '1080x720' or
     '1080x1920' — note that some models (e.g. google/gemini-2.5-flash-image)
     silently ignore size and always return 1024×1024. For exact dimensions,
     pick a model that respects size or post-process via tools_video.
+
+    `aspect_ratio` (e.g. '9:16') is the user-chosen aspect; when set it is
+    forwarded to the upstream provider as a top-level body field and used
+    to drive the prompt cue + reference pre-crop.
     """
     spec = resolve(alias, kind="image")
     refs = _validate_refs(reference_images, spec)
+    # Test-mode (shim) resolution: prefer explicit `size`, then derive from
+    # `aspect_ratio` so non-9:16 runs render the correct shape under shim,
+    # then fall back to the legacy 1080x1920 default.
+    from .settings import _ASPECT_TO_RESOLUTION as _ASPECT_RES
+    test_resolution = size or _ASPECT_RES.get(aspect_ratio or "", "1080x1920")
     return _dispatch(
         kind="image",
         alias=alias,
-        primary_call=lambda s: _image_real(prompt, s, refs, out_dir, size=size),
+        primary_call=lambda s: _image_real(prompt, s, refs, out_dir, size=size, aspect_ratio=aspect_ratio),
         test_call=lambda s: render_mock_image(
             prompt=prompt, model=s.alias, out_dir=out_dir,
-            resolution=size or "1080x1920",
+            resolution=test_resolution,
         ),
         prompt=prompt,
         out_dir=out_dir,
@@ -126,6 +133,8 @@ def generate_video(
     when `image_path` is set, the model uses frame_images and ignores
     input_references. Only pass input_references when there is no image_path.
     """
+    from .settings import _ASPECT_TO_RESOLUTION as _ASPECT_RES
+    test_resolution = size or _ASPECT_RES.get(aspect_ratio or "", "1080x1920")
     return _dispatch(
         kind="video",
         alias=alias,
@@ -137,7 +146,7 @@ def generate_video(
         ),
         test_call=lambda spec: render_mock_video(
             prompt=prompt, model=spec.alias, duration_s=duration_s, out_dir=out_dir,
-            resolution=size or "1080x1920",
+            resolution=test_resolution,
         ),
         prompt=prompt,
         out_dir=out_dir,
@@ -156,57 +165,43 @@ def generate_tts(
 ) -> tuple[Path, list[dict[str, Any]], float]:
     """Returns (audio_path, words [{word, start, end}], total_duration_s).
 
-    Routing rules:
-      - `voice='eleven:<voice_id>'` → ElevenLabs (escape hatch for brand-locked
-        voices; provides native per-word timestamps).
-      - alias starts with `gemini` → Google Gemini Flash TTS direct API
-        (primary path; PCM audio with evenly-distributed word timestamps).
-      - any other alias → OpenRouter `_tts_real` (currently unsupported until
-        OpenRouter ships a TTS model with alignment).
-
-    The `voice` arg for Gemini is a prebuilt voice name (e.g. 'Kore', 'Puck').
+    All TTS routes through OpenRouter — OpenAI gpt-audio-mini via the
+    chat-completions audio modality (`modalities=["text","audio"]` +
+    streaming pcm16). The `voice` arg is an OpenAI voice name (e.g.
+    'nova', 'alloy'); full list via `parallax models show tts-mini`.
     """
-    if voice.startswith("eleven:"):
-        return _tts_elevenlabs(text, voice_id=voice.split(":", 1)[1], out_dir=out_dir)
-
     out = out_dir or output_dir()
+    spec = resolve(alias, kind="tts")
     if is_test_mode():
-        spec = resolve(alias, kind="tts")
         runlog.event("openrouter.tts.test", alias=alias, chars=len(text), voice=voice)
         return render_mock_tts(text=text, voice=voice, out_dir=out)
 
-    if alias.startswith("gemini"):
-        from . import gemini_tts as _gtts
-        gemini_voice = voice if voice and voice != "default" else _gtts.DEFAULT_VOICE
-        # Default style applies only when neither style nor style_hint was
-        # explicitly passed — passing style=None means "natural" (no prefix).
-        effective_style = style if (style or style_hint) else _gtts.DEFAULT_STYLE
-        runlog.event(
-            "gemini.tts.call", alias=alias, voice=gemini_voice, chars=len(text),
-            style=effective_style, style_hint=style_hint,
-        )
-        t0 = time.monotonic()
-        path, words, duration = _gtts.synthesize(
-            text, voice=gemini_voice, out_dir=out,
-            style=effective_style, style_hint=style_hint,
-        )
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        runlog.event(
-            "gemini.tts.response",
-            alias=alias, voice=gemini_voice, duration_ms=duration_ms, ok=True,
-            audio_seconds=round(duration, 3),
-        )
-        spec = resolve(alias, kind="tts")
-        # Cost recording — Gemini Flash Preview TTS is free during preview;
-        # set 0.0 here, revisit when GA pricing lands.
-        _record_usage(spec, text, str(path), duration_ms=duration_ms, cost_usd=0.0, test=False)
-        return path, words, duration
-
-    return _with_fallback(
-        kind="tts",
-        alias=alias,
-        primary_call=lambda spec: _tts_real(text, spec, voice, voice_description, out),
+    from . import openrouter_tts as _ortts
+    chosen_voice = voice if voice and voice != "default" else _ortts.DEFAULT_VOICE
+    # Default style applies only when neither style nor style_hint was
+    # explicitly passed — passing style=None means "natural" (no prefix).
+    effective_style = style if (style or style_hint) else _ortts.DEFAULT_STYLE
+    runlog.event(
+        "openrouter.tts.call", alias=alias, voice=chosen_voice, chars=len(text),
+        style=effective_style, style_hint=style_hint,
     )
+    t0 = time.monotonic()
+    # Strip the `openrouter/` prefix from the catalog model_id so we pass the
+    # bare provider slug to the streaming endpoint.
+    model_id = _strip_or_prefix(spec.model_id)
+    path, words, duration = _ortts.synthesize(
+        text, voice=chosen_voice, out_dir=out,
+        style=effective_style, style_hint=style_hint,
+        model=model_id,
+    )
+    duration_ms = int((time.monotonic() - t0) * 1000)
+    runlog.event(
+        "openrouter.tts.response",
+        alias=alias, voice=chosen_voice, duration_ms=duration_ms, ok=True,
+        audio_seconds=round(duration, 3),
+    )
+    _record_usage(spec, text, str(path), duration_ms=duration_ms, cost_usd=0.0, test=False)
+    return path, words, duration
 
 
 # ---------------------------------------------------------------------------
@@ -419,23 +414,23 @@ def _raise_for_credits_or_status(resp: "httpx.Response") -> None:
 
 
 _ASPECT_CUE_TEXTS: dict[str, str] = {
-    "9:16": (
-        "Vertical 9:16 portrait orientation, taller than wide, "
-        "subject centered for vertical mobile framing. "
-    ),
-    "16:9": (
-        "Horizontal 16:9 landscape orientation, wider than tall, "
-        "subject framed for cinematic landscape composition. "
-    ),
-    "1:1": "Square 1:1 composition, centered subject. ",
-    "4:5": (
-        "Vertical 4:5 portrait orientation, taller than wide, "
-        "subject centered for portrait framing. "
-    ),
-    "3:4": (
-        "Vertical 3:4 portrait orientation, taller than wide, "
-        "subject centered for portrait framing. "
-    ),
+    "9:16": "Vertical 9:16 portrait orientation, taller than wide, ",
+    "16:9": "Horizontal 16:9 widescreen orientation, wider than tall, ",
+    "1:1":  "Square 1:1 orientation, equal width and height, ",
+    "4:3":  "Landscape 4:3 orientation, wider than tall, ",
+    "3:4":  "Portrait 3:4 orientation, taller than wide, ",
+}
+
+
+# Default rendering size paired with each aspect — used to pre-crop reference
+# images so Gemini's "match the reference aspect" instinct aligns with the
+# requested aspect. The actual final video resolution comes from Settings.
+_ASPECT_TO_REF_RES: dict[str, str] = {
+    "9:16": "720x1280",
+    "16:9": "1280x720",
+    "1:1":  "1024x1024",
+    "4:3":  "1024x768",
+    "3:4":  "768x1024",
 }
 
 
@@ -550,7 +545,7 @@ def _strip_or_prefix(model_id: str) -> str:
 
 def _image_real(
     prompt: str, spec: ModelSpec, refs: list[Path], out_dir: Path | None,
-    *, size: str | None = None,
+    *, size: str | None = None, aspect_ratio: str | None = None,
 ) -> Path:
     """Generate an image via OpenRouter's chat/completions endpoint.
 
@@ -560,6 +555,11 @@ def _image_real(
     URL. Reference images (for image-edit / nano-banana style models) are
     encoded into the user message as `image_url` content parts alongside
     the prompt text.
+
+    `aspect_ratio` is the caller-supplied target ratio (e.g. '9:16'). When
+    set, it is sent on the request body as `aspect_ratio` (Gemini honors
+    this), prepended to the prompt as a textual cue, and used to pre-crop
+    every reference image to the matching shape.
     """
     import base64
     import time as _time
@@ -575,7 +575,7 @@ def _image_real(
     # certain prompt types and return landscape. Prepending a strong textual
     # cue dramatically improves compliance without affecting models that
     # already honor the body field (it's just extra context to them).
-    aspect_cue = _aspect_cue(str(spec.portrait_args["aspect_ratio"]) if spec.portrait_args and "aspect_ratio" in spec.portrait_args else None)
+    aspect_cue = _aspect_cue(aspect_ratio)
     cued_prompt = f"{aspect_cue}{prompt}" if aspect_cue else prompt
 
     # Style consistency anchor. Image-gen models drop visual style cues
@@ -609,13 +609,11 @@ def _image_real(
     # which silently overrides the body `aspect_ratio` field and the
     # prompt cue both. Verified: a 398x510 (~4:5) reference produced
     # 896x1152 (~4:5) output even with explicit "9:16 portrait" in the
-    # prompt. Pre-cropping each ref to 9:16 makes Gemini's "match the
-    # reference" instinct align with the requested aspect.
-    target_aspect_res: str | None = None
-    if spec.portrait_args and spec.portrait_args.get("aspect_ratio") == "9:16":
-        target_aspect_res = "720x1280"
-    elif spec.portrait_args and spec.portrait_args.get("aspect_ratio") == "16:9":
-        target_aspect_res = "1280x720"
+    # prompt. Pre-cropping each ref to the chosen aspect makes Gemini's
+    # "match the reference" instinct align with the requested aspect.
+    target_aspect_res: str | None = (
+        _ASPECT_TO_REF_RES.get(aspect_ratio) if aspect_ratio else None
+    )
 
     user_content: list[dict[str, Any]] = [{"type": "text", "text": cued_prompt}]
     for ref in refs:
@@ -641,15 +639,14 @@ def _image_real(
         "messages": [{"role": "user", "content": user_content}],
         "modalities": ["image", "text"],
     }
-    # Merge model-specific portrait_args (e.g. {"aspect_ratio": "9:16"} for
-    # Gemini image models). Top-level body keys; OpenRouter passes unknown
-    # fields through to the upstream provider.
-    for k, v in (spec.portrait_args or {}).items():
-        body[k] = v
+    if aspect_ratio:
+        # Top-level body field — OpenRouter passes unknown fields through to
+        # the upstream provider. Gemini image models honor `aspect_ratio`.
+        body["aspect_ratio"] = aspect_ratio
     if size:
         # Passthrough hint. NB: gemini-2.5-flash-image historically ignored
-        # `size` and always returned 1024×1024 — `aspect_ratio` (set above
-        # via portrait_args) is the param Gemini actually honors.
+        # `size` and always returned 1024×1024 — `aspect_ratio` (set above)
+        # is the param Gemini actually honors.
         body["size"] = size
     resp = httpx.post(
         _OPENROUTER_ENDPOINT,
@@ -813,67 +810,16 @@ def _video_real(
 def _tts_real(
     text: str, spec: ModelSpec, voice: str, voice_description: str | None, out_dir: Path,
 ) -> tuple[Path, list[dict[str, Any]], float]:
-    """OpenRouter's audio-output models (gpt-audio, lyria) are conversational
-    or musical, not per-word-aligned TTS. The parallax pipeline needs
-    word-level timestamps for caption alignment, which only ElevenLabs
-    currently provides.
-
-    Use `voice='eleven:<voice_id>'` for production TTS. The
-    `_tts_elevenlabs` path delegates to `parallax/elevenlabs.py:synthesize`.
+    """Guardrail. Every supported TTS alias starts with `gemini` and is
+    handled in `generate_tts` directly, so this branch is unreachable
+    under normal operation. If a non-gemini TTS alias gets added to the
+    catalog without a corresponding routing branch, fail loud here.
     """
-    _check_key()
-    raise NotImplementedError(
-        f"OpenRouter TTS aliases ({spec.alias!r}, model_id={spec.model_id!r}) "
-        f"do not provide per-word-aligned timestamps. Use voice='eleven:<voice_id>' "
-        f"for the parallax-pipeline TTS path, or PARALLAX_TEST_MODE=1 for stubs."
+    raise RuntimeError(
+        f"Unknown TTS alias {spec.alias!r}; only gemini-* aliases are supported. "
+        f"Add the model to src/parallax/models/tts.yaml and wire a routing branch "
+        f"in openrouter.generate_tts."
     )
-
-
-# ---------------------------------------------------------------------------
-# ElevenLabs direct (escape hatch for brand-locked voices)
-# ---------------------------------------------------------------------------
-
-def _tts_elevenlabs(
-    text: str, *, voice_id: str, out_dir: Path | None,
-) -> tuple[Path, list[dict[str, Any]], float]:
-    out = out_dir or output_dir()
-    out.mkdir(parents=True, exist_ok=True)
-
-    if is_test_mode():
-        runlog.event("openrouter.tts.test", alias="eleven", voice=voice_id, chars=len(text))
-        return render_mock_tts(text=text, voice=f"eleven_{voice_id[:6]}", out_dir=out)
-
-    key = os.environ.get("AI_VIDEO_ELEVENLABS_KEY") or os.environ.get("ELEVENLABS_API_KEY")
-    if not key:
-        raise RuntimeError(
-            "ElevenLabs requires AI_VIDEO_ELEVENLABS_KEY or ELEVENLABS_API_KEY for "
-            "voice='eleven:<id>'."
-        )
-
-    from . import elevenlabs as _eleven
-    runlog.event("openrouter.tts.call", alias="eleven", voice=voice_id, chars=len(text))
-    t0 = time.monotonic()
-    audio_path, words, duration = _eleven.synthesize(
-        text=text, voice_id=voice_id, out_dir=out, api_key=key,
-    )
-    duration_ms = int((time.monotonic() - t0) * 1000)
-    runlog.event(
-        "openrouter.tts.response",
-        alias="eleven", voice=voice_id, duration_ms=duration_ms, ok=True,
-    )
-    _usage.record(
-        session_id=current_session_id.get(),
-        backend="elevenlabs",
-        alias="eleven_multilingual_v2",
-        fal_id="",
-        tier="standard",
-        prompt=text[:120],
-        output_path=str(audio_path),
-        duration_ms=duration_ms,
-        cost_usd=_eleven.cost_for(text),
-        test_mode=False,
-    )
-    return audio_path, words, duration
 
 
 # ---------------------------------------------------------------------------

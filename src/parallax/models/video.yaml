@@ -1,0 +1,111 @@
+# Video generation models. All routed through OpenRouter.
+#
+# Defaults are image-to-video; `capabilities.start_frame` flags i2v support
+# and `capabilities.end_frame` flags end-frame conditioning. Models without
+# either capability are text-to-video only.
+
+- alias: draft
+  model_id: openrouter/bytedance/seedance-2.0-fast
+  tier: draft
+  cost: 0.06
+  unit: second
+  description: ByteDance Seedance 2.0 Fast. Cheapest video gen — best $/quality at this tier.
+  fallback: wan
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1"]
+    start_frame: true
+    end_frame: true
+  inputs: []
+
+- alias: mid
+  model_id: openrouter/kwaivgi/kling-video-o1
+  tier: mid
+  cost: 0.10
+  unit: second
+  description: Kling Video O1. Strong motion and prompt adherence.
+  fallback: draft
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1"]
+    start_frame: true
+    end_frame: true
+  inputs: []
+
+- alias: premium
+  model_id: openrouter/google/veo-3.1
+  tier: premium
+  cost: 0.50
+  unit: second
+  description: Google Veo 3.1. Premium quality; expensive.
+  fallback: mid
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1"]
+    start_frame: true
+    end_frame: true
+  inputs: []
+
+# --- Named aliases -----------------------------------------------------------
+
+- alias: seedance
+  model_id: openrouter/bytedance/seedance-2.0-fast
+  tier: default
+  cost: 0.06
+  unit: second
+  description: ByteDance Seedance 2.0 Fast. Best $/quality in this band.
+  fallback: wan
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1"]
+    start_frame: true
+    end_frame: true
+  inputs: []
+
+- alias: kling
+  model_id: openrouter/kwaivgi/kling-video-o1
+  tier: default
+  cost: 0.10
+  unit: second
+  description: Kling Video O1. Strong motion and prompt adherence.
+  fallback: seedance
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1"]
+    start_frame: true
+    end_frame: true
+  inputs: []
+
+- alias: veo
+  model_id: openrouter/google/veo-3.1
+  tier: default
+  cost: 0.50
+  unit: second
+  description: Google Veo 3.1. Premium quality; expensive.
+  fallback: kling
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1"]
+    start_frame: true
+    end_frame: true
+  inputs: []
+
+- alias: wan
+  model_id: openrouter/alibaba/wan-2.7
+  tier: default
+  cost: 0.05
+  unit: second
+  description: Alibaba Wan 2.7. Open-weights baseline.
+  fallback: seedance
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1"]
+    start_frame: true
+    end_frame: true
+  inputs: []
+
+- alias: sora
+  model_id: openrouter/openai/sora-2-pro
+  tier: default
+  cost: 0.40
+  unit: second
+  description: OpenAI Sora 2 Pro. Premium quality; expensive. Text-to-video only — no frame conditioning.
+  fallback: kling
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1"]
+    start_frame: false
+    end_frame: false
+  inputs: []

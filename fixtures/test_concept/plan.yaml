@@ -1,6 +1,7 @@
 voice: george
 speed: 1.1
 model: mid
+aspect: "9:16"
 resolution: 1080x1920
 captions: skip
 scenes:
@@ -8,14 +9,11 @@ scenes:
   shot_type: broll
   vo_text: A woman walks into a bright lit kitchen.
   prompt: Cinematic shot of a woman entering a sunlit kitchen, morning light.
-  still_path: parallax/output/v1/mock_20a78d57d0.png
 - index: 1
   shot_type: broll
   vo_text: She picks up a glowing red apple.
   prompt: Close up on a hand picking up a glossy red apple from a wooden bowl.
-  still_path: parallax/output/v1/mock_caa70ec9a7.png
 - index: 2
   shot_type: broll
   vo_text: And takes the first crisp bite.
   prompt: Slow motion close up of a woman biting into a red apple.
-  still_path: parallax/output/v1/mock_115a5175e9.png

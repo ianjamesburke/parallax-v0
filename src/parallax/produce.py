@@ -6,15 +6,15 @@ align_scenes → write_manifest → ken_burns_assemble → (optionally)
 burn_captions → burn_headline.
 
 Plan YAML schema:
-  voice: Kore                # Gemini voice (default: Kore). Use 'eleven:<voice_id>'
-                             # for ElevenLabs (e.g. 'eleven:JBFqnCBsd6RMkjVDRZzb').
+  voice: Kore                # Gemini voice (default: Kore). See
+                             # `parallax models show tts-mini`
+                             # for the full list of prebuilt voices.
   style: rapid_fire          # Gemini TTS pacing preset. Default for ads.
                              # Options: rapid_fire | fast | calm | natural.
   style_hint: "..."          # Freeform Gemini directive (overrides `style`).
-                             # Ignored on the ElevenLabs path.
   speed: 1.0                 # ffmpeg atempo multiplier applied AFTER synthesis
-                             # (default: 1.0 for Gemini, 1.1 for ElevenLabs).
-                             # Use sparingly — prefer `style` for natural speed.
+                             # (default: 1.0). Use sparingly — prefer `style`
+                             # for natural speed.
   model: nano-banana         # image model alias (default: mid)
   resolution: 1080x1920      # output resolution (default: 1080x1920)
   caption_style: bangers
@@ -51,8 +51,12 @@ from .stages import STAGES, stage_scan, stage_stills
 log = get_logger("produce")
 
 
-def run_plan(folder: str | Path, plan_path: str | Path) -> int:
-    """Run the full plan-driven production pipeline."""
+def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = None) -> int:
+    """Run the full plan-driven production pipeline.
+
+    `aspect`, when provided, overrides `plan.aspect` before settings are
+    resolved. None means "use plan.aspect, fall back to 9:16".
+    """
     folder = Path(folder).expanduser().resolve()
     plan_path = Path(plan_path).expanduser().resolve()
 
@@ -65,6 +69,14 @@ def run_plan(folder: str | Path, plan_path: str | Path) -> int:
 
     with plan_path.open() as f:
         plan: dict[str, Any] = yaml.safe_load(f)
+
+    if aspect is not None:
+        plan["aspect"] = aspect
+        # CLI override means "render at this aspect" — drop any plan-pinned
+        # `resolution` so it gets re-derived from the new aspect. Otherwise
+        # a 16:9 override against a `resolution: 1080x1920` plan would mix
+        # the new aspect into a portrait frame.
+        plan.pop("resolution", None)
 
     scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
     if not scenes_raw:
@@ -139,8 +151,11 @@ def run_plan(folder: str | Path, plan_path: str | Path) -> int:
     return 0
 
 
-def test_scene(folder: str | Path, plan_path: str | Path, scene_index: int) -> int:
-    """Apply the video filter for one scene and open the result — no full pipeline."""
+def test_scene(folder: str | Path, plan_path: str | Path, scene_index: int, aspect: str | None = None) -> int:
+    """Apply the video filter for one scene and open the result — no full pipeline.
+
+    `aspect`, when provided, overrides `plan.aspect` for the duration of this call.
+    """
     folder = Path(folder).expanduser().resolve()
     plan_path = Path(plan_path).expanduser().resolve()
 
@@ -151,7 +166,11 @@ def test_scene(folder: str | Path, plan_path: str | Path, scene_index: int) -> i
     with plan_path.open() as f:
         plan: dict[str, Any] = yaml.safe_load(f)
 
-    resolution = plan.get("resolution") or _infer_project_resolution(plan, folder)
+    if aspect is not None:
+        plan["aspect"] = aspect
+
+    plan_aspect = plan.get("aspect", "9:16")
+    resolution = plan.get("resolution") or _infer_project_resolution(plan, folder, plan_aspect)
     scenes_raw = plan.get("scenes", [])
     scene = next((s for s in scenes_raw if s.get("index") == scene_index), None)
     if scene is None:

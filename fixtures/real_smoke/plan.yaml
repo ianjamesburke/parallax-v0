@@ -1,0 +1,18 @@
+aspect: "9:16"
+voice: Kore
+speed: 1.0
+model: mid
+animate_model: draft
+caption_style: anton
+fontsize: 55
+headline: "FIRST REAL RUN"
+headline_fontsize: 64
+headline_bg: white
+headline_color: black
+scenes:
+  - index: 0
+    shot_type: broll
+    animate: true
+    vo_text: "A glossy red apple rolls slowly across a sunlit wooden countertop in golden morning light."
+    prompt: "Cinematic close-up of a glossy red apple on a sunlit wooden kitchen countertop, golden morning light, shallow depth of field, photorealistic 9:16 portrait."
+    motion_prompt: "The apple rolls slowly from left to right across the wooden countertop. Smooth gentle motion, sunlight glinting off the apple's surface."

@@ -2,7 +2,8 @@
 _trim_long_pauses, _mock_voiceover.
 
 Locks in:
-  - Voice prefix `eleven:` routes to ElevenLabs alias; else to gemini-flash-tts.
+  - generate_voiceover always routes through openrouter.generate_tts with
+    alias=tts-mini and the supplied voice name.
   - atempo scales word timestamps by 1/speed and writes the canonical mp3.
   - _trim_long_pauses collapses gaps > max_gap_s to keep_gap_s and shifts
     word timestamps by the cumulative removed duration.
@@ -16,8 +17,6 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-
-import pytest
 
 from parallax import tools_video
 
@@ -152,36 +151,6 @@ def test_trim_long_pauses_empty_words(tmp_path):
 # ─── generate_voiceover routing ──────────────────────────────────────────
 
 
-def test_generate_voiceover_routes_eleven_prefix(tmp_path, monkeypatch):
-    """voice='eleven:abc123def456ghi789' must call openrouter.generate_tts
-    with alias='eleven_multilingual_v2' and pass the eleven: voice through.
-
-    18 chars meets the resolve-bypass threshold so we don't hit elevenlabs.resolve_voice.
-    """
-    monkeypatch.delenv("PARALLAX_TEST_MODE", raising=False)
-    monkeypatch.setenv("AI_VIDEO_ELEVENLABS_KEY", "fake-key")
-
-    captured = {}
-
-    def fake_tts(*, text, alias, voice, out_dir, style, style_hint):
-        captured["alias"] = alias
-        captured["voice"] = voice
-        # Produce a small mp3 with timestamps
-        raw = Path(out_dir) / "raw_tts.mp3"
-        _make_silent_mp3(raw, 1.0)
-        return str(raw), [{"word": "hello", "start": 0.0, "end": 1.0}], 1.0
-
-    from parallax import openrouter
-    monkeypatch.setattr(openrouter, "generate_tts", fake_tts)
-
-    out = json.loads(tools_video.generate_voiceover(
-        "hello", voice="eleven:abc123def456ghi789xyz", out_dir=str(tmp_path),
-    ))
-    assert captured["alias"] == "eleven_multilingual_v2"
-    assert captured["voice"].startswith("eleven:")
-    assert Path(out["audio_path"]).exists()
-
-
 def test_generate_voiceover_routes_to_gemini_by_default(tmp_path, monkeypatch):
     monkeypatch.delenv("PARALLAX_TEST_MODE", raising=False)
     captured = {}
@@ -199,19 +168,9 @@ def test_generate_voiceover_routes_to_gemini_by_default(tmp_path, monkeypatch):
     out = json.loads(tools_video.generate_voiceover(
         "hi", voice="Kore", speed=1.0, out_dir=str(tmp_path),
     ))
-    assert captured["alias"] == "gemini-flash-tts"
+    assert captured["alias"] == "tts-mini"
     assert captured["voice"] == "Kore"
     assert Path(out["audio_path"]).exists()
-
-
-def test_generate_voiceover_eleven_missing_key_raises(tmp_path, monkeypatch):
-    monkeypatch.delenv("PARALLAX_TEST_MODE", raising=False)
-    monkeypatch.delenv("AI_VIDEO_ELEVENLABS_KEY", raising=False)
-    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="ElevenLabs key"):
-        tools_video.generate_voiceover(
-            "hi", voice="eleven:abc123def456ghi789", out_dir=str(tmp_path),
-        )
 
 
 def test_generate_voiceover_applies_atempo_when_speed_changes(tmp_path, monkeypatch):

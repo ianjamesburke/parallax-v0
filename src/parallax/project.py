@@ -6,8 +6,8 @@ of numbered clips (video_clips mode) and returns a JSON descriptor plus a
 freshly-versioned `parallax/output/vN/` directory.
 
 `animate_scenes` runs image-to-video generation for any scene flagged
-`animate: true`, uploading the locked still and Grok motion prompt and
-writing the resulting clip into the run's output directory.
+`animate: true` via `openrouter.generate_video`, then strips the
+generated audio (voiceover is mixed in at assembly time).
 """
 
 from __future__ import annotations
@@ -25,12 +25,6 @@ from .log import get_logger
 from .shim import is_test_mode
 
 log = get_logger("tools_video")
-
-# Per-second rates from fal.ai/models/xai/grok-imagine-video/image-to-video (verified 2026-04-23).
-# Cost = duration_s * rate + $0.002 image input fee. Update when FAL pricing changes.
-_GROK_I2V_RATE_480P = 0.05   # $/second @ 480p
-_GROK_I2V_RATE_720P = 0.07   # $/second @ 720p
-_GROK_I2V_INPUT_FEE = 0.002  # flat image-upload fee per clip
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
@@ -129,16 +123,18 @@ def scan_project_folder(folder_path: str) -> str:
 def animate_scenes(
     scenes_json: str,
     out_dir: str,
-    video_model: str = "xai/grok-imagine-video/image-to-video",
+    video_model: str = "mid",
     resolution: str = "480p",
 ) -> str:
-    """Generate video clips for scenes marked with animate=true using an image-to-video model.
+    """Generate video clips for scenes marked with animate=true via OpenRouter.
 
-    Uploads each scene's still to FAL, calls the model with the scene's motion_prompt
-    (or a generic cinematic motion prompt), downloads the result, and returns updated
-    scenes_json with clip_path set on each animated scene.
+    For each `animate: true` scene, calls `openrouter.generate_video` with the
+    scene's still as the `first_frame` conditioning image and the scene's
+    `motion_prompt` (or a generic cinematic fallback). The generated clip's
+    audio is then stripped — voiceover gets mixed in at assembly.
 
-    Scenes without animate=true are returned unchanged (clip_path stays unset).
+    `video_model` is a Parallax video alias (e.g. 'mid', 'kling', 'seedance').
+    Scenes without animate=true are returned unchanged.
     """
     scenes: list[dict] = json.loads(scenes_json)
     out = Path(out_dir)
@@ -157,7 +153,7 @@ def animate_scenes(
             duration = float(scene.get("duration_s") or 5.0)
             stub = render_mock_video(
                 prompt=motion_prompt,
-                model=video_model.split("/")[-1] or "video",
+                model=video_model,
                 duration_s=duration,
                 out_dir=out,
             )
@@ -166,7 +162,7 @@ def animate_scenes(
             _usage.record(
                 session_id=current_session_id.get(),
                 backend="shim",
-                alias="stub-i2v",
+                alias=video_model,
                 fal_id=video_model,
                 tier="latest",
                 prompt=motion_prompt,
@@ -177,8 +173,7 @@ def animate_scenes(
             )
         return json.dumps(scenes)
 
-    import urllib.request
-    import fal_client
+    from . import openrouter as _openrouter
 
     for scene in scenes:
         if not scene.get("animate"):
@@ -198,62 +193,27 @@ def animate_scenes(
             "Subtle cinematic motion, gentle camera drift, Pixar 3D animation style. "
             "Keep the scene stable and beautiful."
         )
+        clip_duration_s = float(scene.get("duration_s") or 5.0)
 
-        log.info("animate_scenes: scene %d — uploading still", idx)
-        image_url = fal_client.upload_file(Path(still))
-
-        scene_resolution = scene.get("animate_resolution", resolution)
-        log.info("animate_scenes: scene %d — calling %s @ %s", idx, video_model, scene_resolution)
-        try:
-            result = fal_client.subscribe(video_model, arguments={
-                "image_url": image_url,
-                "prompt": motion_prompt,
-                "aspect_ratio": "9:16",
-                "resolution": scene_resolution,
-            })
-        except Exception as e:
-            raise RuntimeError(f"animate_scenes: scene {idx} failed: {e}") from e
-
-        video_url = (result.get("video") or {}).get("url") or result.get("url")
-        if not video_url:
-            raise RuntimeError(f"animate_scenes: no video URL for scene {idx}: {result}")
-
-        raw_path = str(out / f"scene_{idx:02d}_animated_raw.mp4")
-        log.info("animate_scenes: scene %d — downloading clip", idx)
-        urllib.request.urlretrieve(video_url, raw_path)
+        log.info("animate_scenes: scene %d — calling openrouter alias=%s", idx, video_model)
+        raw_clip = _openrouter.generate_video(
+            prompt=motion_prompt,
+            alias=video_model,
+            image_path=Path(still),
+            duration_s=clip_duration_s,
+            out_dir=out,
+        )
 
         # Strip generated audio — voiceover is mixed in at assembly
         clip_path = str(out / f"scene_{idx:02d}_animated.mp4")
         subprocess.run(
             [_get_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
-             "-i", raw_path, "-an", "-c:v", "copy", clip_path],
+             "-i", str(raw_clip), "-an", "-c:v", "copy", clip_path],
             check=True,
         )
-        # Probe duration before deleting raw clip — needed for per-second cost
-        probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", raw_path],
-            capture_output=True, text=True,
-        )
-        clip_duration_s = float(probe.stdout.strip()) if probe.stdout.strip() else 6.0
-
-        Path(raw_path).unlink(missing_ok=True)
+        # The audio-stripped clip supersedes the raw download.
+        Path(raw_clip).unlink(missing_ok=True)
         scene["clip_path"] = clip_path
-        log.info("animate_scenes: scene %d → %s (%.1fs)", idx, clip_path, clip_duration_s)
-
-        rate = _GROK_I2V_RATE_720P if scene_resolution == "720p" else _GROK_I2V_RATE_480P
-        cost = round(clip_duration_s * rate + _GROK_I2V_INPUT_FEE, 4)
-        _usage.record(
-            session_id=current_session_id.get(),
-            backend="fal",
-            alias="grok-i2v",
-            fal_id=video_model,
-            tier="latest",
-            prompt=motion_prompt,
-            output_path=clip_path,
-            duration_ms=0,
-            cost_usd=cost,
-            test_mode=is_test_mode(),
-        )
+        log.info("animate_scenes: scene %d → %s", idx, clip_path)
 
     return json.dumps(scenes)

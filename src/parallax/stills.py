@@ -182,20 +182,35 @@ def normalize_aspect(still_path: str | Path, target_resolution: str) -> Path:
     from PIL import Image  # type: ignore[import]
     from .ffmpeg_utils import parse_resolution
 
-    check = validate_aspect(still_path, target_resolution)  # raises if too far off
     src = Path(still_path)
     target_w, target_h = parse_resolution(target_resolution)
-
     out = src.with_name(f"{src.stem}_n{target_w}x{target_h}.png")
+
+    # Idempotency guard runs BEFORE validate_aspect — `normalize_aspect`
+    # deletes the source after writing the normalized variant, so a second
+    # call with the same `still_path` would fail validation simply because
+    # the source has been superseded. If the normalized output already
+    # exists, return it; the source is irrelevant at that point.
     if out.exists():
-        # Cached normalize — clean up the source if it lingered (e.g. from
-        # an interrupted earlier pass).
         if src.exists() and src != out:
             try:
                 src.unlink()
             except OSError:
                 pass
         return out
+
+    # Exact-match short-circuit. If the source already matches the target
+    # resolution, no work is needed and writing a `_nWxH.png` sibling would
+    # just bloat the folder. Mirrors `crop_to_aspect`'s same guard.
+    if src.is_file():
+        try:
+            existing_w, existing_h = _probe(src)
+            if (existing_w, existing_h) == (target_w, target_h):
+                return src
+        except Exception:
+            pass  # fall through to validate_aspect for a clean error
+
+    check = validate_aspect(still_path, target_resolution)  # raises if too far off
 
     target_ratio = check.target_ratio
     src_w, src_h = check.src_w, check.src_h

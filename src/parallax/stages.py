@@ -23,11 +23,11 @@ from pathlib import Path
 from typing import Any
 
 from .assembly import align_scenes, ken_burns_assemble
-from .avatar import burn_avatar, generate_avatar_clips, key_avatar_track
+from .avatar import burn_avatar, key_avatar_track
 from .captions import burn_captions
 from .headline import burn_headline, burn_titles
 from .manifest import write_manifest
-from .project import animate_scenes, scan_project_folder
+from .project import scan_project_folder
 from .settings import Settings
 from .voiceover import generate_voiceover
 
@@ -91,11 +91,12 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     `still_path` on its in-flight scene entry, or normalize_aspect is
     skipped on freshly-generated PNGs.
     """
+    from .settings import VALID_ASPECTS
     from .tools import generate_image
 
     rt = _runtime(plan)
     scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
-    _log(settings, f"generating {len(scenes_raw)} stills — model={settings.model}")
+    _log(settings, f"generating {len(scenes_raw)} stills — model={settings.model} aspect={settings.aspect}")
     _warn_unknown_scene_fields(scenes_raw)
     Path(rt["stills_dir"]).mkdir(exist_ok=True)
 
@@ -104,6 +105,14 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
         idx = s["index"]
         prompt = s.get("prompt", "")
         vo_text = s.get("vo_text", "")
+
+        # Per-scene aspect override (validated against the same set as Settings).
+        scene_aspect = s.get("aspect", settings.aspect)
+        if scene_aspect not in VALID_ASPECTS:
+            raise ValueError(
+                f"scene {idx}: aspect={scene_aspect!r} is not a supported aspect "
+                f"ratio. Choices: {sorted(VALID_ASPECTS)}"
+            )
 
         if "still_path" in s:
             p = Path(s["still_path"])
@@ -163,16 +172,13 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
             raw_still_path = None
             last_err: Exception | None = None
             for attempt in range(1, attempts + 1):
-                stern_prefix = "" if attempt == 1 else (
-                    "CRITICAL: Output MUST be 9:16 vertical portrait orientation, "
-                    "taller than wide. Previous attempt returned the wrong aspect "
-                    "and was REJECTED. Frame the subject for portrait. "
-                )
+                stern_prefix = "" if attempt == 1 else _build_stern_prefix(scene_aspect)
                 raw_still_path = generate_image(
                     prompt=stern_prefix + prompt,
                     model=settings.model,
                     reference_images=refs,
                     out_dir=rt["stills_dir"],
+                    aspect_ratio=scene_aspect,
                 )
                 check = check_aspect(raw_still_path, settings.resolution)
                 if check.within_tolerance:
@@ -207,6 +213,7 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
             "vo_text": vo_text,
             "prompt": prompt,
             "still_path": still_path,
+            "aspect": scene_aspect,
         }
         if s.get("animate"):
             scene_entry["animate"] = True
@@ -235,14 +242,12 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
 def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     """Run image-to-video for any scene flagged `animate: true` without a clip.
 
-    Routes to OpenRouter when `animate_model` is a registered video alias
-    (e.g. 'kling', 'seedance', 'wan', 'veo', 'sora'); otherwise delegates to
-    project.animate_scenes which uses the FAL grok-imagine-video model.
-
-    OpenRouter routing supports `end_frame_path` on scenes for last-frame
-    conditioning (model interpolates between start and end image), and
-    `video_references` for character/style consistency in text-to-video scenes
-    (passed as input_references; ignored when a still drives frame_images).
+    Every scene routes through `openrouter.generate_video` using the alias
+    in `animate_model` (e.g. 'mid', 'kling', 'seedance'). Supports
+    `end_frame_path` on scenes for last-frame conditioning, and
+    `video_references` for character/style consistency in text-to-video
+    scenes (passed as input_references; ignored when a still drives
+    frame_images).
 
     Model note: Seedance 2.0 (alias: seedance) is the recommended model for
     reference-to-video — it has the strongest documented input_references
@@ -251,22 +256,17 @@ def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     Breaks if: animated scenes are not augmented with `clip_path` after
     this stage, or pre-locked clips aren't reported as reused.
     """
-    from .pricing import VIDEO_MODELS
+    from .models import VIDEO_MODELS
     from . import openrouter as _openrouter
-    import time as _time
 
     rt = _runtime(plan)
     scenes = rt["scenes"]
-    plan_animate_model = plan.get("animate_model", "xai/grok-imagine-video/image-to-video")
-    animate_resolution = "720p" if plan.get("hq") else "480p"
+    plan_animate_model = plan.get("animate_model", "mid")
 
     animated_count = sum(1 for s in scenes if s.get("animate") and not s.get("clip_path"))
     if animated_count:
         Path(rt["video_dir"]).mkdir(exist_ok=True)
         _log(settings, f"animate_scenes — {animated_count} scene(s) to animate")
-
-        # FAL scenes collected for batching (grouped by model after OpenRouter pass).
-        fal_pending: list[tuple[dict[str, Any], str]] = []
 
         for s in scenes:
             if not s.get("animate") or s.get("clip_path"):
@@ -280,64 +280,48 @@ def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
                 _log(settings, f"  [{idx:02d}] WARNING: no valid still, skipping animation")
                 continue
 
-            if scene_model in VIDEO_MODELS:
-                # OpenRouter path — handles each scene individually (supports end_frame_path).
-                spec = VIDEO_MODELS[scene_model]
-                _portrait = spec.portrait_args or {}
-                aspect_ratio: str | None = str(_portrait["aspect_ratio"]) if "aspect_ratio" in _portrait else None
-                motion_prompt = s.get("motion_prompt") or s.get("prompt") or (
-                    "Subtle cinematic motion, gentle camera drift. Keep the scene stable and beautiful."
+            if scene_model not in VIDEO_MODELS:
+                raise RuntimeError(
+                    f"animate_model={scene_model!r} is not a known video alias. "
+                    f"Use one of: {', '.join(sorted(VIDEO_MODELS))}."
                 )
-                end_frame = s.get("end_frame_path")
-                if end_frame and not Path(end_frame).exists():
-                    _log(settings, f"  [{idx:02d}] WARNING: end_frame_path not found ({end_frame}), ignoring")
-                    end_frame = None
 
-                # video_references: resolve paths relative to project folder.
-                # Only effective for text-to-video (no still); when image_path is
-                # set, frame_images takes precedence and input_references is ignored.
-                video_refs_raw = s.get("video_references")
-                input_references: list[Path] | None = None
-                if video_refs_raw:
-                    input_references = [
-                        (Path(r) if Path(r).is_absolute() else settings.folder / r)
-                        for r in video_refs_raw
-                    ]
+            # Aspect comes from the scene entry (populated by stage_stills with
+            # the per-scene override already resolved); fall back to the
+            # settings aspect when the scene predates that field.
+            aspect_ratio: str = s.get("aspect", settings.aspect)
+            motion_prompt = s.get("motion_prompt") or s.get("prompt") or (
+                "Subtle cinematic motion, gentle camera drift. Keep the scene stable and beautiful."
+            )
+            end_frame = s.get("end_frame_path")
+            if end_frame and not Path(end_frame).exists():
+                _log(settings, f"  [{idx:02d}] WARNING: end_frame_path not found ({end_frame}), ignoring")
+                end_frame = None
 
-                _log(settings, f"  [{idx:02d}] openrouter {scene_model}"
-                     + (f" + end_frame" if end_frame else "")
-                     + (f" + {len(input_references)} ref(s)" if input_references else ""))
-                clip_path = _openrouter.generate_video(
-                    prompt=motion_prompt,
-                    alias=scene_model,
-                    image_path=Path(still),
-                    end_image_path=Path(end_frame) if end_frame else None,
-                    input_references=input_references,
-                    out_dir=Path(rt["video_dir"]),
-                    aspect_ratio=aspect_ratio,
-                )
-                s["clip_path"] = str(clip_path)
-            else:
-                # FAL/Grok path — batch after OpenRouter pass.
-                fal_pending.append((s, scene_model))
+            # video_references: resolve paths relative to project folder.
+            # Only effective for text-to-video (no still); when image_path is
+            # set, frame_images takes precedence and input_references is ignored.
+            video_refs_raw = s.get("video_references")
+            input_references: list[Path] | None = None
+            if video_refs_raw:
+                input_references = [
+                    (Path(r) if Path(r).is_absolute() else settings.folder / r)
+                    for r in video_refs_raw
+                ]
 
-        # Process FAL scenes in batches grouped by model.
-        if fal_pending:
-            from itertools import groupby as _groupby
-            fal_pending.sort(key=lambda x: x[1])
-            for fal_model, grp in _groupby(fal_pending, key=lambda x: x[1]):
-                batch = [item[0] for item in grp]
-                _log(settings, f"  FAL batch: {len(batch)} scene(s) via {fal_model} @ {animate_resolution}")
-                updated = json.loads(animate_scenes(
-                    scenes_json=json.dumps(batch),
-                    out_dir=rt["video_dir"],
-                    video_model=fal_model,
-                    resolution=animate_resolution,
-                ))
-                updated_map = {u["index"]: u for u in updated}
-                for s in scenes:
-                    if s["index"] in updated_map and updated_map[s["index"]].get("clip_path"):
-                        s["clip_path"] = updated_map[s["index"]]["clip_path"]
+            _log(settings, f"  [{idx:02d}] openrouter {scene_model}"
+                 + (f" + end_frame" if end_frame else "")
+                 + (f" + {len(input_references)} ref(s)" if input_references else ""))
+            clip_path = _openrouter.generate_video(
+                prompt=motion_prompt,
+                alias=scene_model,
+                image_path=Path(still),
+                end_image_path=Path(end_frame) if end_frame else None,
+                input_references=input_references,
+                out_dir=Path(rt["video_dir"]),
+                aspect_ratio=aspect_ratio,
+            )
+            s["clip_path"] = str(clip_path)
 
         for s in scenes:
             if s.get("clip_path"):
@@ -604,21 +588,17 @@ def stage_avatar(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     avatar_cfg = settings.avatar_cfg
     if not avatar_cfg:
         return plan
-    import sys
     rt = _runtime(plan)
 
-    av_scene_indices: list[int] = avatar_cfg.get("scenes", [])
     position = avatar_cfg.get("position", "bottom_left")
     size = float(avatar_cfg.get("size", 0.40))
     chroma_key = avatar_cfg.get("chroma_key")
     chroma_similarity = float(avatar_cfg.get("chroma_similarity", 0.30))
     chroma_blend = float(avatar_cfg.get("chroma_blend", 0.03))
-    aurora_prompt = avatar_cfg.get("aurora_prompt")
     y_offset_pct = avatar_cfg.get("y_offset_pct")
     if y_offset_pct is not None:
         y_offset_pct = float(y_offset_pct)
     crop_px = int(avatar_cfg.get("crop_px", 0))
-    full_audio = bool(avatar_cfg.get("full_audio", False))
 
     avatar_track_keyed_raw = avatar_cfg.get("avatar_track_keyed")
     avatar_track_keyed: str | None = None
@@ -628,41 +608,18 @@ def stage_avatar(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
         _log(settings, f"reusing avatar_track_keyed: {Path(avatar_track_keyed).name}")
 
     avatar_track_raw = avatar_cfg.get("avatar_track")
-    if avatar_track_raw:
-        av_track_p = Path(avatar_track_raw)
-        avatar_track = str(av_track_p if av_track_p.is_absolute() else settings.folder / av_track_p)
-        track_start_s = float(avatar_cfg.get("track_start_s", 0.0))
-        _log(settings, f"reusing avatar_track: {Path(avatar_track).name} (starts at {track_start_s:.2f}s)")
-    else:
-        avatar_img_raw = avatar_cfg.get("image") or plan.get("character_image")
-        if not avatar_img_raw:
-            print("Error: avatar.image or character_image required to generate avatar track", file=sys.stderr)
-            raise RuntimeError("avatar.image or character_image required")
-        av_img_p = Path(avatar_img_raw)
-        avatar_img = str(av_img_p if av_img_p.is_absolute() else settings.folder / av_img_p)
-
-        mode_desc = "full-audio" if full_audio else f"{len(av_scene_indices)} scenes"
-        _log(settings, f"generate_avatar_clips — {mode_desc}")
-        av_result = json.loads(generate_avatar_clips(
-            scenes_json=rt["aligned_json"],
-            audio_path=rt["audio_path"],
-            character_image=avatar_img,
-            avatar_scene_indices=av_scene_indices,
-            out_dir=rt["video_dir"],
-            aurora_prompt=aurora_prompt,
-            full_audio=full_audio,
-        ))
-        avatar_track = av_result["avatar_track"]
-        track_start_s = av_result["track_start_s"]
-        _log(settings, f"  track: {Path(avatar_track).name} starts at {track_start_s:.2f}s")
-        out_ver = Path(rt["out_dir"]).name
-        _log(
-            settings,
-            f"  → lock in plan to skip future Aurora calls:\n"
-            f"    avatar:\n"
-            f"      avatar_track: parallax/output/{out_ver}/video/{Path(avatar_track).name}\n"
-            f"      track_start_s: {track_start_s:.1f}",
+    if not avatar_track_raw:
+        # Avatar generation is no longer hosted by Parallax — the user must
+        # supply a pre-recorded avatar clip path.
+        raise RuntimeError(
+            "avatar.avatar_track is required. Avatar generation (fal-ai/creatify/aurora) "
+            "was removed in Phase 1.2; supply a pre-recorded clip via avatar.avatar_track "
+            "and the chromakey + burn stages will run."
         )
+    av_track_p = Path(avatar_track_raw)
+    avatar_track = str(av_track_p if av_track_p.is_absolute() else settings.folder / av_track_p)
+    track_start_s = float(avatar_cfg.get("track_start_s", 0.0))
+    _log(settings, f"reusing avatar_track: {Path(avatar_track).name} (starts at {track_start_s:.2f}s)")
 
     if not avatar_track_keyed and chroma_key:
         keyed_path = str(Path(rt["video_dir"]) / "avatar_track_keyed.mov")
@@ -753,9 +710,37 @@ _KNOWN_SCENE_FIELDS = {
     # from reference_images, which is the image-gen still-frame reference field.
     "video_references",
     "zoom_direction", "zoom_amount",
+    # Per-scene aspect override — defaults to plan.aspect when absent.
+    "aspect",
     # Timing overrides — null/absent = derive from VO. Future graphical editor writes here.
     "duration_s", "start_offset_s", "fade_in_s", "fade_out_s",
 }
+
+
+# Human-readable orientation descriptor by aspect — feeds the stern retry
+# prefix when an image model returns the wrong aspect on the first try.
+_ASPECT_STERN_DESCRIPTOR: dict[str, str] = {
+    "9:16": "vertical portrait orientation, taller than wide",
+    "16:9": "horizontal widescreen orientation, wider than tall",
+    "1:1":  "square orientation, equal width and height",
+    "4:3":  "landscape 4:3 orientation, wider than tall",
+    "3:4":  "portrait 3:4 orientation, taller than wide",
+}
+
+
+def _build_stern_prefix(aspect: str) -> str:
+    """Build the regenerate-with-sterner-prompt prefix for the chosen aspect.
+
+    The first-attempt prompt has no prefix; this is only used on attempt 2
+    when the model returned the wrong shape. Frames the directive in terms
+    of the *requested* aspect rather than the legacy hardcoded "9:16".
+    """
+    descriptor = _ASPECT_STERN_DESCRIPTOR.get(aspect, f"{aspect} orientation")
+    return (
+        f"CRITICAL: Output MUST be {aspect} {descriptor}. Previous attempt "
+        f"returned the wrong aspect and was REJECTED. Frame the subject for "
+        f"{aspect}. "
+    )
 
 
 def _warn_unknown_scene_fields(scenes_raw: list[dict[str, Any]]) -> None:

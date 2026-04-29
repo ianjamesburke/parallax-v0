@@ -1,18 +1,8 @@
 # Parallax
 
-Minimal agentic image-generation CLI. A creative brief goes in; image files come out. Five FAL model aliases, two backends (your Claude subscription or a raw Anthropic API key), per-call cost + time tracking.
-
-See `AGENTS.md` for the full CLI reference (commands, plan YAML schema, iteration pattern). See `VISION.md` for scope and non-goals.
+Agentic creative production CLI. A brief goes in, a finished short-form video comes out — stills, voiceover, animated clips, captions, headline, all routed through OpenRouter.
 
 ## Install
-
-One-liner — installs `uv` if missing, installs parallax, prompts for `FAL_KEY`, runs a smoke test:
-
-```sh
-curl -LsSf https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/scripts/install.sh | sh
-```
-
-Manual, if you already have `uv`:
 
 ```sh
 uv tool install --python 3.11 git+https://github.com/ianjamesburke/parallax-v0
@@ -26,66 +16,71 @@ uv tool install --python 3.11 --from /path/to/parallax-v0 parallax
 
 ## Setup
 
-Parallax auto-selects whichever backend is available — you only need one:
+```sh
+export OPENROUTER_API_KEY=sk-or-...
+```
 
-- **Claude subscription (preferred):** have the `claude` CLI installed and logged in.
-- **Anthropic API key:** `export ANTHROPIC_API_KEY=...`. Used automatically if the `claude` CLI isn't on PATH, or when you pass `--backend anthropic-api` explicitly.
+That is the only required env var. Everything (image, video, TTS, LLM) routes through OpenRouter.
 
-For real image generation: `export FAL_KEY=...` (get one from fal.ai). Without it, set `PARALLAX_TEST_MODE=1` to use the Pillow shim — no network, no spend, images still land in `output/` for flow verification.
-
-The install one-liner above prompts you for these keys and persists them to `~/.zshrc`.
+For dry runs without spending: `export PARALLAX_TEST_MODE=1` — the pipeline produces stub PNGs / mp4s / mp3s end-to-end with no network calls.
 
 ## Use
 
+The two iteration artifacts are `brief.yaml` (human spec) and `plan.yaml` (engine spec).
+
 ```sh
-parallax run --brief "A watercolor cat at premium tier"
-parallax run --brief "Same but oil painting" --resume <session-id>
-parallax usage
-parallax update   # upgrade to the latest release via uv
+# author brief.yaml in your project folder, then:
+parallax plan    --folder ./my-project
+parallax produce --folder ./my-project --plan ./my-project/parallax/scratch/plan.yaml
+
+# or one-shot:
+parallax produce --folder ./my-project --brief ./my-project/brief.yaml --aspect 9:16
 ```
 
-Flags:
+Iterate by editing `plan.yaml` between runs. Lock approved stills with `still_path:`, audio with `audio_path:` + `words_path:`, animated clips with `clip_path:` — locked assets are reused and only changed scenes regenerate.
 
-- `-v` / `-vv` — log tool calls / full SDK events to stderr.
-- `--backend {claude-code,anthropic-api}` — or set `PARALLAX_BACKEND`.
-- `--resume <id>` — continue a prior session.
+Browse the model catalog:
 
-## Model aliases
+```sh
+parallax models list                    # tier + named aliases per modality
+parallax models show mid --kind image
+parallax models show gemini-flash-tts   # full Gemini voice list
+```
 
-| alias | FAL model | ~price | reference images |
-|---|---|---|---|
-| `draft` | flux/schnell | $0.003 | — |
-| `mid` | flux/dev | $0.025 | 1 |
-| `premium` | flux-pro/v1.1 | $0.04 | — |
-| `nano-banana` | gemini-2.5-flash-image | $0.039 | 8 |
-| `grok` | xai/grok-imagine | $0.02 | — |
+Index existing footage into a searchable JSON:
 
-Passing `reference_images=[<local path>, ...]` routes to the model's edit endpoint when supported; otherwise the call rejects at the tool boundary.
+```sh
+parallax ingest ./clips/                # writes clips/index.json with per-clip word timestamps
+parallax ingest video.mov --estimate    # dry-run cost report
+```
 
-## Environment
+Other commands: `parallax usage`, `parallax credits`, `parallax tail <run_id>`, `parallax verify-suite <dir>`, `parallax audio {transcribe,detect-silences,trim,cap-pauses}`, `parallax video {frame,color}`.
 
-| var | purpose |
-|---|---|
-| `FAL_KEY` | required for real generation |
-| `ANTHROPIC_API_KEY` | required for `--backend anthropic-api` |
-| `PARALLAX_TEST_MODE=1` | use the Pillow shim instead of calling FAL |
-| `PARALLAX_BACKEND` | default backend selection |
-| `PARALLAX_CLAUDE_MODEL` | claude-code backend model (default: `sonnet`) |
-| `PARALLAX_NO_UPDATE_CHECK=1` | silence the once-daily update-available nag |
-| `PARALLAX_LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` (overridden by `-v`/`-vv`) |
-| `PARALLAX_SESSIONS_DIR` | override `~/.parallax/sessions/` |
-| `PARALLAX_USAGE_LOG` | override `~/.parallax/usage.ndjson` |
-| `PARALLAX_OUTPUT_DIR` | override cwd-relative `output/` |
+## Vision
+
+A creative brief goes in; a finished short-form video comes out — without manually wrangling 5 separate APIs, 3 storage buckets, and a fragile bash glue script.
+
+The bet: every model worth using is on OpenRouter, every iteration artifact wants to be a YAML the agent and the human can both edit, and every step worth running needs a deterministic CLI behind it. The mock-mode pipeline (`PARALLAX_TEST_MODE=1`) means an agent can plan and assemble a full video in seconds without spending a cent — paid mode just swaps the providers underneath.
+
+What v0 ships:
+- Single-provider router (OpenRouter only — no fal, no ElevenLabs, no Google direct).
+- `brief.yaml` → `parallax plan` → `plan.yaml` → `parallax produce` loop.
+- Three model tiers per modality (`draft`/`mid`/`premium`) plus named-alias overrides; capabilities + voice lists in `src/parallax/models/`.
+- Aspect ratio first-class (`--aspect`, plus per-scene override).
+- Mock-mode pipeline that mirrors paid-mode end-to-end for fast iteration and CI.
+
+What it explicitly does NOT do (yet):
+- No GUI, no web UI.
+- No multi-user / team coordination.
+- No brand presets or campaign orchestration — those live in a separate narrative-parallax repo on top.
+- No avatar/talking-head generation (no OpenRouter equivalent for the previous fal-ai/aurora path).
 
 ## Dev
 
 ```sh
 uv sync
-uv run pytest
+uv run pytest -q                         # ~270 tests, mocks everything
+uv run parallax verify-suite tests/fixtures/verify_suite_smoke/
 ```
 
-Opt-in live FAL test (one real `draft` call, ~$0.003):
-
-```sh
-FAL_KEY=... PARALLAX_LIVE_FAL=1 uv run pytest tests/test_fal.py::test_live_draft_call_writes_png
-```
+`DEV_LOG.md` is the canonical record of architectural decisions, gotchas, and deferrals — newest-first, `Breaks if:` lines on every shipped change.

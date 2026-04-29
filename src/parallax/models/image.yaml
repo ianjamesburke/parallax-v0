@@ -1,0 +1,103 @@
+# Image generation models. All routed through OpenRouter.
+#
+# Tier aliases (`draft` / `mid` / `premium`) are the default vocabulary the
+# agent uses. Named aliases exist for pinning a specific Gemini model.
+# Slugs were verified live against `/api/v1/models` 2026-04-29.
+#
+# `capabilities.aspect_ratios` is the list of supported output ratios. Use
+# ["any"] only if the model genuinely accepts arbitrary ratios.
+
+- alias: draft
+  model_id: openrouter/google/gemini-2.5-flash-image
+  tier: draft
+  cost: 0.039
+  unit: image
+  description: Cheapest. Gemini 2.5 Flash Image. NOTE — sometimes ignores aspect_ratio body field on first call; prefer `mid` for non-square output.
+  fallback: null
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1"]
+    max_refs: 8
+  inputs:
+    - style_ref
+    - product_ref
+    - character_ref
+
+- alias: mid
+  model_id: openrouter/google/gemini-3.1-flash-image-preview
+  tier: mid
+  cost: 0.039
+  unit: image
+  description: Default. Gemini 3.1 Flash Image (preview). Honors aspect_ratio natively.
+  fallback: draft
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
+    max_refs: 8
+  inputs:
+    - style_ref
+    - product_ref
+    - character_ref
+
+- alias: premium
+  model_id: openrouter/google/gemini-3-pro-image-preview
+  tier: premium
+  cost: 0.080
+  unit: image
+  description: Best fidelity. Gemini 3 Pro Image (preview). Honors aspect_ratio natively.
+  # No fallback: Pro -> Flash silently degrades style fidelity for stylized
+  # references. Failing loud surfaces the underlying error so the operator
+  # can rephrase or accept.
+  fallback: null
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
+    max_refs: 8
+  inputs:
+    - style_ref
+    - product_ref
+    - character_ref
+
+# --- Named aliases -----------------------------------------------------------
+
+- alias: nano-banana
+  model_id: openrouter/google/gemini-2.5-flash-image
+  tier: default
+  cost: 0.039
+  unit: image
+  description: Gemini 2.5 Flash Image (a.k.a. Nano Banana). Multi-ref compositing.
+  fallback: mid
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1"]
+    max_refs: 8
+  inputs:
+    - style_ref
+    - product_ref
+    - character_ref
+
+- alias: gemini-3-flash
+  model_id: openrouter/google/gemini-3.1-flash-image-preview
+  tier: default
+  cost: 0.039
+  unit: image
+  description: Gemini 3.1 Flash Image (preview). Honors aspect_ratio natively.
+  fallback: nano-banana
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
+    max_refs: 8
+  inputs:
+    - style_ref
+    - product_ref
+    - character_ref
+
+- alias: gemini-3-pro
+  model_id: openrouter/google/gemini-3-pro-image-preview
+  tier: default
+  cost: 0.080
+  unit: image
+  description: Gemini 3 Pro Image (preview). Best fidelity; honors aspect_ratio.
+  fallback: null
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
+    max_refs: 8
+  inputs:
+    - style_ref
+    - product_ref
+    - character_ref

@@ -2,6 +2,26 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-29 — [CHANGED] Phase 1.7 — CLI wiring (plan / ingest / --brief)
+Added `parallax plan` and `parallax ingest` subcommands; `--brief` on `parallax produce` runs the planner first then produces from the materialized plan. `parallax test-scene` collapsed into `parallax produce --scene <N>`. Aspirational V2 commands (`generate`, `script`, `edit`, `compose`, `setup`, `status`, `web`, `project`, `publish`) intentionally NOT added — they have no implementation and stub commands create dead surface area. Help-text order matches the V2 namespace.
+**Breaks if:** `parallax test-scene` is still a registered subcommand, or `parallax plan --folder X` succeeds when X has no brief.yaml, or `parallax produce --brief` and `parallax produce --plan` can both be passed simultaneously without an error.
+
+## 2026-04-29 — [CHANGED] Layer 2 — generic SKILL.md slimmed to ≤3K
+Reduced SKILL.md from ~41K to ≤3K. Stripped narrative-specific content (concepts.json, frame.io, sheets, drive, brand presets, narrative orchestrator workflows) and obsolete provider content (ElevenLabs, fal, Aurora avatar gen). The slim skill covers: brief→plan→produce loop, plan-yaml locking conventions, model alias tiers, aspect ratio knob, response terseness rule, single env var. The packaged copy at `src/parallax/skills/parallax-cli.skill.md` mirrors the same content.
+**Breaks if:** SKILL.md grows back over 3K, mentions any forbidden term (frame.io, concepts.json, etc.), or stops naming brief.yaml/plan.yaml as the iteration artifacts.
+
+## 2026-04-29 — [CHANGED] Phase 1.3 — aspect ratio first-class
+Added `aspect:` to Settings + plan.yaml (top-level + per-scene). `--aspect` flag on `produce` / `test-scene`. Resolution now derives from aspect when not explicitly set; mapping table at `_ASPECT_TO_RESOLUTION` covers 9:16, 16:9, 1:1, 4:3, 3:4. Pulled the aspect carrier out of `spec.portrait_args` — image and video calls now take `aspect_ratio` directly from the call site, and the catalog loader no longer injects `portrait_args`. Stern-prefix prompt for stills generation derives from `settings.aspect` instead of being hardcoded "9:16 vertical portrait".
+**Breaks if:** producing with `--aspect 16:9` results in a portrait-shaped final.mp4, or any image-gen prompt mentions "9:16" when the chosen aspect is something else, or `parallax produce` on a plan with no `aspect:` field stops defaulting to 9:16.
+
+## 2026-04-29 — [CHANGED] Phase 1.6 — `parallax ingest` core (ingest.py)
+Added `src/parallax/ingest.py` exposing `ingest(target, ..., visual=False, estimate=False) -> IngestResult`. Walks a clip/dir, probes duration, parallel-runs `audio.transcribe_words` per clip, and emits a single `index.json` with per-clip words + duration. `--estimate` short-circuits to a cost report. `--visual` is a stub raising NotImplementedError until the Gemini Vision path lands. CLI subcommand wiring deferred to the V2-namespace pass.
+**Breaks if:** ingest on a directory of clips writes per-clip JSON files instead of one aggregated index.json, or a single-clip ingest writes its index anywhere other than `<file>.index.json`.
+
+## 2026-04-29 — [CHANGED] Phase 1.5 — `parallax plan` core (planner.py)
+Added `src/parallax/planner.py` exposing `plan_from_brief(brief, folder, ...) -> PlanResult`. Pure deterministic translation: validates provided assets, materializes `Brief.to_plan_skeleton()`, adds planner-only fields (`model`, `caption_style`, `character_image`), and writes plan.yaml. Missing-asset path writes `questions.yaml` and returns `ok=False`. CLI subcommand wiring deferred to the V2-namespace pass; this is the importable core.
+**Breaks if:** running the planner against a brief whose provided assets all exist still produces a `questions.yaml`, or a fully-resolved plan.yaml is missing the brief's `aspect` / `voice` / `scenes` content verbatim.
+
 ---
 
 ## Work block & phase template
@@ -57,6 +77,10 @@ A single PR is a unit of code. A single block is a unit of *intent* — usually 
 When a phase or block flips to `[COMPLETE]`, the flag is updated *in place* — the entry stays where it is until the whole block closes, at which point it migrates to the normal newest-first stream as a regular `[CHANGED]` entry.
 
 ---
+
+## 2026-04-29 — [CHANGED] Phase 1.2 — single-provider consolidation (OpenRouter only)
+Removed every fal_client and elevenlabs path. TTS now routes Gemini Flash Preview TTS via OpenRouter's `/api/v1/audio/speech` endpoint (rewrote `gemini_tts.py`). Video animation routes through `openrouter.generate_video` instead of `fal_client.subscribe`. Avatar generation deleted (no OpenRouter equivalent for fal-ai/creatify/aurora); chromakey + burn stages remain. Single env var: OPENROUTER_API_KEY.
+**Breaks if:** any TTS call attempts to hit a Google or ElevenLabs endpoint, any video clip arrives via fal, or the CLI rejects a real-mode run that has only OPENROUTER_API_KEY in the environment.
 
 ## 2026-04-28 — [FIX] `crop_to_aspect` deletes source after writing cropped variant
 `stills.crop_to_aspect` left the pandoc-extracted original in place after writing the `_aWxH` variant, so downstream readers of the concept's `media/` dir saw both files and the agent passed every reference twice (original + cropped) into the next image-edit call. Added `src.unlink(missing_ok=True)` after the save (and after the cached-out early-return), mirroring the pattern already used in `normalize_aspect`. Single source of truth for cleanup is the function that creates the variant; no need for periodic dedup sweeps in narrative-parallax.
