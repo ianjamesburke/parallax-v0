@@ -2,8 +2,9 @@
 # Two scenes, captions on, headline on, no avatar, 720x1280.
 # Runs free in PARALLAX_TEST_MODE=1 (no real APIs).
 voice: Kore
-speed: 1.0
-model: mid
+voice_speed: 1.0
+image_model: mid
+video_model: mid
 aspect: "9:16"
 resolution: 720x1280
 caption_style: bangers

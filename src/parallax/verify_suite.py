@@ -560,8 +560,9 @@ _STARTER_PLAN = """\
 # Starter plan.yaml — edit scenes, prompts, voice, resolution to taste.
 # Runs free in PARALLAX_TEST_MODE=1 against the test-mode mocks.
 voice: Kore
-speed: 1.0
-model: mid
+voice_speed: 1.0
+image_model: mid
+video_model: mid
 resolution: 1080x1920
 captions: skip
 scenes:

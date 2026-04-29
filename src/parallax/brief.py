@@ -182,7 +182,7 @@ class Brief(BaseModel):
         return {
             "aspect": self.aspect,
             "voice": self.voice,
-            "speed": self.voice_speed,
+            "voice_speed": self.voice_speed,
             "scenes": [
                 {
                     "index": s.index,

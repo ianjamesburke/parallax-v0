@@ -1,8 +1,8 @@
 aspect: "9:16"
 voice: Kore
-speed: 1.0
-model: mid
-animate_model: draft
+voice_speed: 1.0
+image_model: mid
+video_model: draft
 caption_style: anton
 fontsize: 55
 headline: "FIRST REAL RUN"

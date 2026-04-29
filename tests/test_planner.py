@@ -82,8 +82,10 @@ def test_happy_path_writes_plan(tmp_path):
     plan = yaml.safe_load(result.plan_path.read_text())
     assert plan["aspect"] == "9:16"
     assert plan["voice"] == "Kore"
-    assert plan["speed"] == 1.0
-    assert plan["model"] == "mid"
+    assert plan["voice_speed"] == 1.0
+    assert plan["image_model"] == "mid"
+    assert plan["video_model"] == "mid"
+    assert plan["voice_model"] == "tts-mini"
     assert plan["caption_style"] == "anton"
     assert "character_image" in plan
     assert plan["character_image"].endswith("brand/founder.png")

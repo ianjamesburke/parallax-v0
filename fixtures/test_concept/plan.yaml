@@ -1,6 +1,7 @@
 voice: george
-speed: 1.1
-model: mid
+voice_speed: 1.1
+image_model: mid
+video_model: mid
 aspect: "9:16"
 resolution: 1080x1920
 captions: skip

@@ -165,7 +165,8 @@ def test_produce_in_test_mode_outputs_correct_dimensions(monkeypatch, tmp_path, 
     folder.mkdir()
     plan = {
         "voice": "Kore",
-        "model": "mid",
+        "image_model": "mid",
+        "video_model": "mid",
         "captions": "skip",
         # aspect intentionally NOT set on plan — pass via override arg below.
         "scenes": [
