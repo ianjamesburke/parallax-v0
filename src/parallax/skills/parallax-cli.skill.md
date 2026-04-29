@@ -12,7 +12,9 @@ Parallax produces short-form vertical (or any-aspect) video from a YAML spec. Tw
 
 1. **Author a `brief.yaml`** in the project folder.
 2. **Plan:** `parallax plan --folder <project>` materializes `<project>/parallax/scratch/plan.yaml` from the brief.
-3. **Produce + iterate:** `parallax produce --folder <project> --plan <project>/parallax/scratch/plan.yaml`. Inspect the output mp4 in `parallax/output/vN/`. Edit the plan.yaml (lock approved assets, tweak prompts, swap model aliases) and re-run. Each run auto-increments `vN`.
+3. **Produce + iterate:** `parallax produce --folder <project> --plan <plan.yaml>`. Inspect the output mp4 in `parallax/output/vN/`. Edit the plan.yaml (lock approved assets, tweak prompts, swap model aliases) and re-run. Each run auto-increments `vN`.
+
+Shortcuts: `--brief <brief.yaml>` on `produce` plans + produces in one shot; `--scene <N>` runs a single scene.
 
 `plan.yaml` is the single file you edit between iterations. Never bypass it to regenerate assets ad-hoc.
 
