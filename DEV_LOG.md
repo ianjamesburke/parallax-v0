@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-29 — [CHANGED] Phase 1.5 — `parallax plan` core (planner.py)
+Added `src/parallax/planner.py` exposing `plan_from_brief(brief, folder, ...) -> PlanResult`. Pure deterministic translation: validates provided assets, materializes `Brief.to_plan_skeleton()`, adds planner-only fields (`model`, `caption_style`, `character_image`), and writes plan.yaml. Missing-asset path writes `questions.yaml` and returns `ok=False`. CLI subcommand wiring deferred to the V2-namespace pass; this is the importable core.
+**Breaks if:** running the planner against a brief whose provided assets all exist still produces a `questions.yaml`, or a fully-resolved plan.yaml is missing the brief's `aspect` / `voice` / `scenes` content verbatim.
+
 ---
 
 ## Work block & phase template
