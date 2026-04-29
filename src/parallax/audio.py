@@ -17,66 +17,95 @@ log = logging.getLogger("parallax.audio")
 
 
 def transcribe_words(input_path: str, out_path: str) -> list[dict]:
-    """Transcribe audio or video to word-level timestamps.
+    """Transcribe audio or video to word-level timestamps using WhisperX.
 
     Writes {"words": [{word, start, end}], "total_duration_s": X} to out_path.
     Returns the word list.
 
-    Requires: whisper CLI — install once with `uv tool install openai-whisper`.
+    Uses WhisperX (whisper + wav2vec2 forced alignment) for precise word boundaries.
+    Requires: whisperx (already in dependencies as whisperx>=3.8.5).
     """
-    whisper_bin = shutil.which("whisper")
-    if not whisper_bin:
-        raise RuntimeError(
-            "whisper not found on PATH.\n"
-            "Install it: uv tool install openai-whisper\n"
-            "Then verify: whisper --help"
-        )
+    import os
+    import whisperx
 
     audio_path = input_path
     tmp_audio: str | None = None
 
     if Path(input_path).suffix.lower() in _VIDEO_EXTS:
-        tmp_audio = tempfile.mktemp(suffix=".mp3")
+        tmp_audio = tempfile.mktemp(suffix=".wav")
         subprocess.run(
             ["ffmpeg", "-y", "-i", input_path, "-vn", "-ar", "44100", "-ac", "1", tmp_audio],
             check=True,
             capture_output=True,
         )
         audio_path = tmp_audio
+    else:
+        # Ensure we have a wav for WhisperX (handles m4a, mp3, etc.)
+        tmp_audio = tempfile.mktemp(suffix=".wav")
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", input_path, "-ar", "44100", "-ac", "1", tmp_audio],
+            check=True,
+            capture_output=True,
+        )
+        audio_path = tmp_audio
 
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            subprocess.run(
-                [
-                    whisper_bin, audio_path,
-                    "--word_timestamps", "True",
-                    "--output_format", "json",
-                    "--output_dir", tmpdir,
-                ],
-                check=True,
-                capture_output=True,
-            )
-            stem = Path(audio_path).stem
-            raw = json.loads((Path(tmpdir) / f"{stem}.json").read_text())
+        # WhisperX config (mirroring forced_align.py defaults)
+        model_name = os.environ.get("PARALLAX_WHISPER_MODEL", "base.en")
+        device = os.environ.get("PARALLAX_WHISPER_DEVICE", "cpu")
+        compute_type = os.environ.get("PARALLAX_WHISPER_COMPUTE", "int8")
+
+        log.info(
+            "transcribe_words: transcribing with WhisperX (%s, %s, %s)",
+            Path(input_path).name, model_name, device,
+        )
+
+        # Transcribe with whisper
+        model = whisperx.load_model(model_name, device=device, compute_type=compute_type)
+        audio = whisperx.load_audio(audio_path)
+        result = model.transcribe(audio, batch_size=8)
+
+        language = result.get("language", "en")
+        log.info("transcribe_words: whisper detected language=%s, %d segments",
+                 language, len(result.get("segments", [])))
+
+        # Load alignment model and align
+        align_model, metadata = whisperx.load_align_model(language_code=language, device=device)
+        aligned = whisperx.align(
+            result["segments"],
+            align_model,
+            metadata,
+            audio,
+            device=device,
+            return_char_alignments=False,
+        )
+
+        # Extract word-level timestamps from aligned output
+        words = []
+        for w in aligned.get("word_segments", []):
+            # WhisperX leaves start/end missing for words it couldn't pin.
+            # Skip those — they'd poison downstream timing.
+            if w.get("start") is None or w.get("end") is None:
+                continue
+            words.append({
+                "word": str(w["word"]).strip(),
+                "start": round(float(w["start"]), 3),
+                "end": round(float(w["end"]), 3),
+            })
+
+        if not words:
+            raise RuntimeError(f"transcribe_words: produced 0 words for {input_path}")
+
+        total = words[-1]["end"] if words else 0.0
+        log.info("transcribe_words: %d words, span %.2f–%.2fs",
+                 len(words), words[0]["start"] if words else 0.0, total)
+
+        Path(out_path).write_text(json.dumps({"words": words, "total_duration_s": total}, indent=2))
+
+        return words
     finally:
         if tmp_audio:
             Path(tmp_audio).unlink(missing_ok=True)
-
-    words = [
-        {
-            "word": w["word"].strip(),
-            "start": round(w["start"], 3),
-            "end": round(w["end"], 3),
-        }
-        for seg in raw.get("segments", [])
-        for w in seg.get("words", [])
-        if w["word"].strip()
-    ]
-
-    total = words[-1]["end"] if words else 0.0
-    Path(out_path).write_text(json.dumps({"words": words, "total_duration_s": total}, indent=2))
-
-    return words
 
 
 # ---------------------------------------------------------------------------
