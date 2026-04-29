@@ -18,7 +18,7 @@ def test_three_kinds_populated():
     assert {"draft", "mid", "premium"} <= set(IMAGE_MODELS)
     assert {"draft", "mid", "premium"} <= set(VIDEO_MODELS)
     # Named aliases for power users.
-    assert {"nano-banana", "seedream"} <= set(IMAGE_MODELS)
+    assert {"nano-banana", "gemini-3-flash", "gemini-3-pro"} <= set(IMAGE_MODELS)
     assert {"kling", "veo", "seedance", "wan", "sora"} <= set(VIDEO_MODELS)
     # Single TTS provider via OpenRouter (Gemini Flash Preview).
     assert {"gemini-flash-tts"} <= set(TTS_MODELS)

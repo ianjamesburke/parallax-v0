@@ -125,7 +125,7 @@ def test_refs_too_many_raises(tmp_path):
         p.write_bytes(b"\x89PNG")
         refs.append(p)
     with pytest.raises(ValueError, match="at most"):
-        openrouter.generate_image("x", alias="seedream", reference_images=refs, out_dir=tmp_path)
+        openrouter.generate_image("x", alias="mid", reference_images=refs, out_dir=tmp_path)
 
 
 def test_refs_missing_path_raises(tmp_path):
