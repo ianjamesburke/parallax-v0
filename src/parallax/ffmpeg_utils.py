@@ -12,6 +12,29 @@ from pathlib import Path
 _FFMPEG_FULL = "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg"
 
 
+def run_ffmpeg(cmd: list[str], **kwargs):
+    """`subprocess.run` wrapper that emits a DEBUG `ffmpeg.invoke` event.
+
+    Captures the actual argv that ran (after any caller-side composition)
+    so the run.log carries a faithful trace. Use this at every direct
+    ffmpeg/ffprobe `subprocess.run` callsite — emit at the callsite, not
+    inside the helper, so the recorded argv is the real one.
+    """
+    import time as _time
+    from . import runlog
+    t0 = _time.monotonic()
+    result = subprocess.run(cmd, **kwargs)
+    duration_ms = int((_time.monotonic() - t0) * 1000)
+    runlog.event(
+        "ffmpeg.invoke",
+        level="DEBUG",
+        argv=cmd,
+        returncode=result.returncode,
+        duration_ms=duration_ms,
+    )
+    return result
+
+
 def parse_resolution(s: str) -> tuple[int, int]:
     """Parse a "WxH" resolution string into an (int, int) tuple.
 

@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .ffmpeg_utils import _get_ffmpeg, parse_resolution
+from .ffmpeg_utils import _get_ffmpeg, parse_resolution, run_ffmpeg
 from .log import get_logger
 from .shim import is_test_mode, output_dir
 
@@ -86,6 +86,16 @@ def align_scenes(scenes_json: str, words_json: str) -> str:
             s["duration_s"] = round(s["end_s"] - s["start_s"], 3)
 
     log.info("align_scenes: %d scenes aligned, total=%.2fs", len(scenes), total)
+    from . import runlog
+    for s in scenes:
+        runlog.event(
+            "align.scene",
+            level="DEBUG",
+            index=s.get("index"),
+            start_s=s.get("start_s"),
+            end_s=s.get("end_s"),
+            duration_s=s.get("duration_s"),
+        )
     return json.dumps(scenes)
 
 
@@ -127,7 +137,7 @@ def ken_burns_assemble(
             pre_animated = scene.get("clip_path")
             if pre_animated and Path(pre_animated).exists():
                 vf = _zoom_filter(zoom_dir, zoom_amount, dur, w, h)
-                probe = subprocess.run(
+                probe = run_ffmpeg(
                     ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                      "-of", "default=noprint_wrappers=1:nokey=1", pre_animated],
                     capture_output=True, text=True,
@@ -138,7 +148,7 @@ def ken_burns_assemble(
                     # Clip is shorter than scene — build ping-pong (fwd+rev) so the
                     # loop seam is a smooth reverse rather than a jump cut.
                     pp_path = str(Path(tmp_dir) / f"pingpong_{i:04d}.mp4")
-                    subprocess.run(
+                    run_ffmpeg(
                         [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
                          "-i", pre_animated,
                          "-filter_complex",
@@ -149,7 +159,7 @@ def ken_burns_assemble(
                         check=True,
                     )
                     src = pp_path
-                subprocess.run(
+                run_ffmpeg(
                     [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
                      "-stream_loop", "-1", "-i", src, "-t", str(dur),
                      "-vf", vf,
@@ -174,7 +184,7 @@ def ken_burns_assemble(
         list_file = Path(tmp_dir) / "clips.txt"
         list_file.write_text("\n".join(f"file '{p}'" for p in clip_paths))
         no_audio = Path(tmp_dir) / "no_audio.mp4"
-        subprocess.run(
+        run_ffmpeg(
             [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
              "-f", "concat", "-safe", "0", "-i", str(list_file),
              "-c:v", "copy", "-an",
@@ -184,7 +194,7 @@ def ken_burns_assemble(
 
         # Mux with voiceover (skip if no audio provided)
         if audio_path:
-            subprocess.run(
+            run_ffmpeg(
                 [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
                  "-i", str(no_audio),
                  "-i", str(audio_path),
@@ -383,7 +393,7 @@ def assemble_clip_video(
         for scene in scenes:
             for cp in scene.get("clip_paths", []):
                 if Path(cp).exists() and Path(cp).suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
-                    probe = subprocess.run(
+                    probe = run_ffmpeg(
                         ["ffprobe", "-v", "error", "-select_streams", "v:0",
                          "-show_entries", "stream=width,height",
                          "-of", "csv=p=0", cp],
@@ -420,7 +430,7 @@ def assemble_clip_video(
         list_file = Path(tmp_dir) / "segments.txt"
         list_file.write_text("\n".join(f"file '{p}'" for p in segment_paths))
         no_audio = Path(tmp_dir) / "no_audio.mp4"
-        subprocess.run(
+        run_ffmpeg(
             ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
              "-f", "concat", "-safe", "0", "-i", str(list_file),
              "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
@@ -429,7 +439,7 @@ def assemble_clip_video(
         )
 
         # Mux with audio
-        subprocess.run(
+        run_ffmpeg(
             ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
              "-i", str(no_audio),
              "-i", str(audio_path),
@@ -470,7 +480,7 @@ def _make_clip_segment(
             # Apply Ken Burns so no still frames appear in the final video
             _make_kb_clip(str(p), duration_s, norm_path, f"{out_w}x{out_h}", scene_idx)
         else:
-            subprocess.run(
+            run_ffmpeg(
                 ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                  "-i", str(p),
                  "-vf", scale_filter,
@@ -490,7 +500,7 @@ def _make_clip_segment(
         concat_list = Path(tmp_dir) / f"inner_{scene_idx:04d}.txt"
         concat_list.write_text("\n".join(f"file '{p}'" for p in normalized))
         combined = str(Path(tmp_dir) / f"combined_{scene_idx:04d}.mp4")
-        subprocess.run(
+        run_ffmpeg(
             ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
              "-f", "concat", "-safe", "0", "-i", str(concat_list),
              "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
@@ -499,7 +509,7 @@ def _make_clip_segment(
         )
 
     # Loop/trim to exact target duration
-    subprocess.run(
+    run_ffmpeg(
         ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
          "-stream_loop", "-1", "-i", combined,
          "-t", str(duration_s),

@@ -22,7 +22,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from .ffmpeg_utils import _get_ffmpeg
+from .ffmpeg_utils import _get_ffmpeg, run_ffmpeg
 from .log import get_logger
 
 log = get_logger(__name__)
@@ -44,7 +44,7 @@ def key_avatar_track(
     out = Path(output_path) if output_path else src.with_stem(src.stem + "_keyed").with_suffix(".mov")
     out.parent.mkdir(parents=True, exist_ok=True)
     ffmpeg = _get_ffmpeg()
-    result = subprocess.run(
+    result = run_ffmpeg(
         [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
          "-i", str(src),
          "-vf", f"format=yuva444p12le,chromakey={chroma_key}:{similarity}:{blend}",
@@ -117,7 +117,7 @@ def burn_avatar(
     overlay_filter = f"[0:v]{av_label}overlay={xy}:format=auto:eof_action=endall[out]"
     filter_complex = f"{extra_filters};{overlay_filter}"
 
-    result = subprocess.run(
+    result = run_ffmpeg(
         [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
          "-i", video_path,
          "-itsoffset", str(track_start_s), "-i", avatar_track,

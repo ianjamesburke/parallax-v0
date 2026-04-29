@@ -20,7 +20,7 @@ from typing import Any
 
 from . import usage as _usage
 from .context import current_session_id
-from .ffmpeg_utils import _get_ffmpeg
+from .ffmpeg_utils import _get_ffmpeg, run_ffmpeg
 from .log import get_logger
 from .shim import is_test_mode
 
@@ -206,7 +206,7 @@ def animate_scenes(
 
         # Strip generated audio — voiceover is mixed in at assembly
         clip_path = str(out / f"scene_{idx:02d}_animated.mp4")
-        subprocess.run(
+        run_ffmpeg(
             [_get_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
              "-i", str(raw_clip), "-an", "-c:v", "copy", clip_path],
             check=True,
