@@ -33,6 +33,13 @@ def main(argv: list[str] | None = None) -> int:
         "--plan", required=True,
         help="Path to a plan YAML file with scenes, prompts, voice, and model settings.",
     )
+    produce_p.add_argument(
+        "--aspect",
+        choices=("9:16", "16:9", "1:1", "4:3", "3:4"),
+        default=None,
+        help="Output aspect ratio. Overrides plan.aspect when set. "
+             "Falls back to plan.aspect, then 9:16.",
+    )
 
     test_scene_p = sub.add_parser(
         "test-scene",
@@ -43,6 +50,12 @@ def main(argv: list[str] | None = None) -> int:
     test_scene_p.add_argument(
         "--index", required=True, type=int,
         help="Scene index to test (must have clip_path or still_path in the plan).",
+    )
+    test_scene_p.add_argument(
+        "--aspect",
+        choices=("9:16", "16:9", "1:1", "4:3", "3:4"),
+        default=None,
+        help="Output aspect ratio. Overrides plan.aspect when set.",
     )
 
     usage_p = sub.add_parser("usage", help="Summarize per-model and per-session usage.")
@@ -208,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         from .openrouter import InsufficientCreditsError
         from .produce import run_plan
         try:
-            return run_plan(folder=args.folder, plan_path=args.plan)
+            return run_plan(folder=args.folder, plan_path=args.plan, aspect=args.aspect)
         except InsufficientCreditsError as e:
             print(f"\nError: {e}\n", file=sys.stderr)
             return 1
@@ -217,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         from .openrouter import InsufficientCreditsError
         from .produce import test_scene
         try:
-            return test_scene(folder=args.folder, plan_path=args.plan, scene_index=args.index)
+            return test_scene(folder=args.folder, plan_path=args.plan, scene_index=args.index, aspect=args.aspect)
         except InsufficientCreditsError as e:
             print(f"\nError: {e}\n", file=sys.stderr)
             return 1

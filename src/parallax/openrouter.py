@@ -54,21 +54,31 @@ def generate_image(
     reference_images: list[str] | list[Path] | None = None,
     out_dir: Path | None = None,
     size: str | None = None,
+    aspect_ratio: str | None = None,
 ) -> Path:
     """Generate an image. `size` is a passthrough hint like '1080x720' or
     '1080x1920' — note that some models (e.g. google/gemini-2.5-flash-image)
     silently ignore size and always return 1024×1024. For exact dimensions,
     pick a model that respects size or post-process via tools_video.
+
+    `aspect_ratio` (e.g. '9:16') is the user-chosen aspect; when set it is
+    forwarded to the upstream provider as a top-level body field and used
+    to drive the prompt cue + reference pre-crop.
     """
     spec = resolve(alias, kind="image")
     refs = _validate_refs(reference_images, spec)
+    # Test-mode (shim) resolution: prefer explicit `size`, then derive from
+    # `aspect_ratio` so non-9:16 runs render the correct shape under shim,
+    # then fall back to the legacy 1080x1920 default.
+    from .settings import _ASPECT_TO_RESOLUTION as _ASPECT_RES
+    test_resolution = size or _ASPECT_RES.get(aspect_ratio or "", "1080x1920")
     return _dispatch(
         kind="image",
         alias=alias,
-        primary_call=lambda s: _image_real(prompt, s, refs, out_dir, size=size),
+        primary_call=lambda s: _image_real(prompt, s, refs, out_dir, size=size, aspect_ratio=aspect_ratio),
         test_call=lambda s: render_mock_image(
             prompt=prompt, model=s.alias, out_dir=out_dir,
-            resolution=size or "1080x1920",
+            resolution=test_resolution,
         ),
         prompt=prompt,
         out_dir=out_dir,
@@ -123,6 +133,8 @@ def generate_video(
     when `image_path` is set, the model uses frame_images and ignores
     input_references. Only pass input_references when there is no image_path.
     """
+    from .settings import _ASPECT_TO_RESOLUTION as _ASPECT_RES
+    test_resolution = size or _ASPECT_RES.get(aspect_ratio or "", "1080x1920")
     return _dispatch(
         kind="video",
         alias=alias,
@@ -134,7 +146,7 @@ def generate_video(
         ),
         test_call=lambda spec: render_mock_video(
             prompt=prompt, model=spec.alias, duration_s=duration_s, out_dir=out_dir,
-            resolution=size or "1080x1920",
+            resolution=test_resolution,
         ),
         prompt=prompt,
         out_dir=out_dir,
@@ -407,23 +419,23 @@ def _raise_for_credits_or_status(resp: "httpx.Response") -> None:
 
 
 _ASPECT_CUE_TEXTS: dict[str, str] = {
-    "9:16": (
-        "Vertical 9:16 portrait orientation, taller than wide, "
-        "subject centered for vertical mobile framing. "
-    ),
-    "16:9": (
-        "Horizontal 16:9 landscape orientation, wider than tall, "
-        "subject framed for cinematic landscape composition. "
-    ),
-    "1:1": "Square 1:1 composition, centered subject. ",
-    "4:5": (
-        "Vertical 4:5 portrait orientation, taller than wide, "
-        "subject centered for portrait framing. "
-    ),
-    "3:4": (
-        "Vertical 3:4 portrait orientation, taller than wide, "
-        "subject centered for portrait framing. "
-    ),
+    "9:16": "Vertical 9:16 portrait orientation, taller than wide, ",
+    "16:9": "Horizontal 16:9 widescreen orientation, wider than tall, ",
+    "1:1":  "Square 1:1 orientation, equal width and height, ",
+    "4:3":  "Landscape 4:3 orientation, wider than tall, ",
+    "3:4":  "Portrait 3:4 orientation, taller than wide, ",
+}
+
+
+# Default rendering size paired with each aspect — used to pre-crop reference
+# images so Gemini's "match the reference aspect" instinct aligns with the
+# requested aspect. The actual final video resolution comes from Settings.
+_ASPECT_TO_REF_RES: dict[str, str] = {
+    "9:16": "720x1280",
+    "16:9": "1280x720",
+    "1:1":  "1024x1024",
+    "4:3":  "1024x768",
+    "3:4":  "768x1024",
 }
 
 
@@ -538,7 +550,7 @@ def _strip_or_prefix(model_id: str) -> str:
 
 def _image_real(
     prompt: str, spec: ModelSpec, refs: list[Path], out_dir: Path | None,
-    *, size: str | None = None,
+    *, size: str | None = None, aspect_ratio: str | None = None,
 ) -> Path:
     """Generate an image via OpenRouter's chat/completions endpoint.
 
@@ -548,6 +560,11 @@ def _image_real(
     URL. Reference images (for image-edit / nano-banana style models) are
     encoded into the user message as `image_url` content parts alongside
     the prompt text.
+
+    `aspect_ratio` is the caller-supplied target ratio (e.g. '9:16'). When
+    set, it is sent on the request body as `aspect_ratio` (Gemini honors
+    this), prepended to the prompt as a textual cue, and used to pre-crop
+    every reference image to the matching shape.
     """
     import base64
     import time as _time
@@ -563,7 +580,7 @@ def _image_real(
     # certain prompt types and return landscape. Prepending a strong textual
     # cue dramatically improves compliance without affecting models that
     # already honor the body field (it's just extra context to them).
-    aspect_cue = _aspect_cue(str(spec.portrait_args["aspect_ratio"]) if spec.portrait_args and "aspect_ratio" in spec.portrait_args else None)
+    aspect_cue = _aspect_cue(aspect_ratio)
     cued_prompt = f"{aspect_cue}{prompt}" if aspect_cue else prompt
 
     # Style consistency anchor. Image-gen models drop visual style cues
@@ -597,13 +614,11 @@ def _image_real(
     # which silently overrides the body `aspect_ratio` field and the
     # prompt cue both. Verified: a 398x510 (~4:5) reference produced
     # 896x1152 (~4:5) output even with explicit "9:16 portrait" in the
-    # prompt. Pre-cropping each ref to 9:16 makes Gemini's "match the
-    # reference" instinct align with the requested aspect.
-    target_aspect_res: str | None = None
-    if spec.portrait_args and spec.portrait_args.get("aspect_ratio") == "9:16":
-        target_aspect_res = "720x1280"
-    elif spec.portrait_args and spec.portrait_args.get("aspect_ratio") == "16:9":
-        target_aspect_res = "1280x720"
+    # prompt. Pre-cropping each ref to the chosen aspect makes Gemini's
+    # "match the reference" instinct align with the requested aspect.
+    target_aspect_res: str | None = (
+        _ASPECT_TO_REF_RES.get(aspect_ratio) if aspect_ratio else None
+    )
 
     user_content: list[dict[str, Any]] = [{"type": "text", "text": cued_prompt}]
     for ref in refs:
@@ -629,15 +644,14 @@ def _image_real(
         "messages": [{"role": "user", "content": user_content}],
         "modalities": ["image", "text"],
     }
-    # Merge model-specific portrait_args (e.g. {"aspect_ratio": "9:16"} for
-    # Gemini image models). Top-level body keys; OpenRouter passes unknown
-    # fields through to the upstream provider.
-    for k, v in (spec.portrait_args or {}).items():
-        body[k] = v
+    if aspect_ratio:
+        # Top-level body field — OpenRouter passes unknown fields through to
+        # the upstream provider. Gemini image models honor `aspect_ratio`.
+        body["aspect_ratio"] = aspect_ratio
     if size:
         # Passthrough hint. NB: gemini-2.5-flash-image historically ignored
-        # `size` and always returned 1024×1024 — `aspect_ratio` (set above
-        # via portrait_args) is the param Gemini actually honors.
+        # `size` and always returned 1024×1024 — `aspect_ratio` (set above)
+        # is the param Gemini actually honors.
         body["size"] = size
     resp = httpx.post(
         _OPENROUTER_ENDPOINT,

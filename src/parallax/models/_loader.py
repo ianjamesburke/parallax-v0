@@ -31,12 +31,9 @@ def _to_spec(entry: dict[str, Any], kind: Kind) -> ModelSpec:
     if isinstance(voices, list):
         voices = tuple(voices)
 
-    portrait_args: dict[str, object] = {}
-    if "9:16" in aspect_ratios:
-        # Preserve old hint so openrouter.py can keep passing aspect_ratio
-        # verbatim until Phase 1.3 lands the explicit `--aspect` plumbing.
-        portrait_args["aspect_ratio"] = "9:16"
-
+    # `portrait_args` is now empty by default — aspect ratio flows from the
+    # caller (Settings → openrouter.generate_image/generate_video) rather
+    # than being baked into the model spec. Phase 1.3 (2026-04-29).
     return ModelSpec(
         alias=entry["alias"],
         kind=kind,
@@ -47,7 +44,6 @@ def _to_spec(entry: dict[str, Any], kind: Kind) -> ModelSpec:
         fallback_alias=entry.get("fallback"),
         tier=entry.get("tier", "default"),
         max_refs=int(caps.get("max_refs", 0)),
-        portrait_args=portrait_args,
         aspect_ratios=aspect_ratios,
         start_frame=bool(caps.get("start_frame", False)),
         end_frame=bool(caps.get("end_frame", False)),

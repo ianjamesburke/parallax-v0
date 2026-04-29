@@ -17,6 +17,7 @@ def generate_image(
     model: str,
     reference_images: list[str] | None = None,
     out_dir: str | None = None,
+    aspect_ratio: str | None = None,
 ) -> str:
     out = Path(out_dir) if out_dir else None
     path = _generate_image(
@@ -24,5 +25,6 @@ def generate_image(
         alias=model,
         reference_images=reference_images,
         out_dir=out,
+        aspect_ratio=aspect_ratio,
     )
     return str(path)

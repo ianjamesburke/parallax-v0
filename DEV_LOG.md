@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-29 — [CHANGED] Phase 1.3 — aspect ratio first-class
+Added `aspect:` to Settings + plan.yaml (top-level + per-scene). `--aspect` flag on `produce` / `test-scene`. Resolution now derives from aspect when not explicitly set; mapping table at `_ASPECT_TO_RESOLUTION` covers 9:16, 16:9, 1:1, 4:3, 3:4. Pulled the aspect carrier out of `spec.portrait_args` — image and video calls now take `aspect_ratio` directly from the call site, and the catalog loader no longer injects `portrait_args`. Stern-prefix prompt for stills generation derives from `settings.aspect` instead of being hardcoded "9:16 vertical portrait".
+**Breaks if:** producing with `--aspect 16:9` results in a portrait-shaped final.mp4, or any image-gen prompt mentions "9:16" when the chosen aspect is something else, or `parallax produce` on a plan with no `aspect:` field stops defaulting to 9:16.
+
 ## 2026-04-29 — [CHANGED] Phase 1.6 — `parallax ingest` core (ingest.py)
 Added `src/parallax/ingest.py` exposing `ingest(target, ..., visual=False, estimate=False) -> IngestResult`. Walks a clip/dir, probes duration, parallel-runs `audio.transcribe_words` per clip, and emits a single `index.json` with per-clip words + duration. `--estimate` short-circuits to a cost report. `--visual` is a stub raising NotImplementedError until the Gemini Vision path lands. CLI subcommand wiring deferred to the V2-namespace pass.
 **Breaks if:** ingest on a directory of clips writes per-clip JSON files instead of one aggregated index.json, or a single-clip ingest writes its index anywhere other than `<file>.index.json`.
@@ -9,10 +13,6 @@ Added `src/parallax/ingest.py` exposing `ingest(target, ..., visual=False, estim
 ## 2026-04-29 — [CHANGED] Phase 1.5 — `parallax plan` core (planner.py)
 Added `src/parallax/planner.py` exposing `plan_from_brief(brief, folder, ...) -> PlanResult`. Pure deterministic translation: validates provided assets, materializes `Brief.to_plan_skeleton()`, adds planner-only fields (`model`, `caption_style`, `character_image`), and writes plan.yaml. Missing-asset path writes `questions.yaml` and returns `ok=False`. CLI subcommand wiring deferred to the V2-namespace pass; this is the importable core.
 **Breaks if:** running the planner against a brief whose provided assets all exist still produces a `questions.yaml`, or a fully-resolved plan.yaml is missing the brief's `aspect` / `voice` / `scenes` content verbatim.
-
-## 2026-04-29 — [CHANGED] Phase 1.3 — aspect ratio first-class
-Added `aspect:` to Settings + plan.yaml (top-level + per-scene). `--aspect` flag on `produce` / `test-scene`. Resolution now derives from aspect when not explicitly set; mapping table at `_ASPECT_TO_RESOLUTION` covers 9:16, 16:9, 1:1, 4:3, 3:4. Pulled the aspect carrier out of `spec.portrait_args` — image and video calls now take `aspect_ratio` directly from the call site, and the catalog loader no longer injects `portrait_args`. Stern-prefix prompt for stills generation derives from `settings.aspect` instead of being hardcoded "9:16 vertical portrait".
-**Breaks if:** producing with `--aspect 16:9` results in a portrait-shaped final.mp4, or any image-gen prompt mentions "9:16" when the chosen aspect is something else, or `parallax produce` on a plan with no `aspect:` field stops defaulting to 9:16.
 
 ---
 

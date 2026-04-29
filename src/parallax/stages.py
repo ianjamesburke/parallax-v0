@@ -91,11 +91,12 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     `still_path` on its in-flight scene entry, or normalize_aspect is
     skipped on freshly-generated PNGs.
     """
+    from .settings import VALID_ASPECTS
     from .tools import generate_image
 
     rt = _runtime(plan)
     scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
-    _log(settings, f"generating {len(scenes_raw)} stills — model={settings.model}")
+    _log(settings, f"generating {len(scenes_raw)} stills — model={settings.model} aspect={settings.aspect}")
     _warn_unknown_scene_fields(scenes_raw)
     Path(rt["stills_dir"]).mkdir(exist_ok=True)
 
@@ -104,6 +105,14 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
         idx = s["index"]
         prompt = s.get("prompt", "")
         vo_text = s.get("vo_text", "")
+
+        # Per-scene aspect override (validated against the same set as Settings).
+        scene_aspect = s.get("aspect", settings.aspect)
+        if scene_aspect not in VALID_ASPECTS:
+            raise ValueError(
+                f"scene {idx}: aspect={scene_aspect!r} is not a supported aspect "
+                f"ratio. Choices: {sorted(VALID_ASPECTS)}"
+            )
 
         if "still_path" in s:
             p = Path(s["still_path"])
@@ -163,16 +172,13 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
             raw_still_path = None
             last_err: Exception | None = None
             for attempt in range(1, attempts + 1):
-                stern_prefix = "" if attempt == 1 else (
-                    "CRITICAL: Output MUST be 9:16 vertical portrait orientation, "
-                    "taller than wide. Previous attempt returned the wrong aspect "
-                    "and was REJECTED. Frame the subject for portrait. "
-                )
+                stern_prefix = "" if attempt == 1 else _build_stern_prefix(scene_aspect)
                 raw_still_path = generate_image(
                     prompt=stern_prefix + prompt,
                     model=settings.model,
                     reference_images=refs,
                     out_dir=rt["stills_dir"],
+                    aspect_ratio=scene_aspect,
                 )
                 check = check_aspect(raw_still_path, settings.resolution)
                 if check.within_tolerance:
@@ -207,6 +213,7 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
             "vo_text": vo_text,
             "prompt": prompt,
             "still_path": still_path,
+            "aspect": scene_aspect,
         }
         if s.get("animate"):
             scene_entry["animate"] = True
@@ -279,9 +286,10 @@ def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
                     f"Use one of: {', '.join(sorted(VIDEO_MODELS))}."
                 )
 
-            spec = VIDEO_MODELS[scene_model]
-            _portrait = spec.portrait_args or {}
-            aspect_ratio: str | None = str(_portrait["aspect_ratio"]) if "aspect_ratio" in _portrait else None
+            # Aspect comes from the scene entry (populated by stage_stills with
+            # the per-scene override already resolved); fall back to the
+            # settings aspect when the scene predates that field.
+            aspect_ratio: str = s.get("aspect", settings.aspect)
             motion_prompt = s.get("motion_prompt") or s.get("prompt") or (
                 "Subtle cinematic motion, gentle camera drift. Keep the scene stable and beautiful."
             )
@@ -702,9 +710,37 @@ _KNOWN_SCENE_FIELDS = {
     # from reference_images, which is the image-gen still-frame reference field.
     "video_references",
     "zoom_direction", "zoom_amount",
+    # Per-scene aspect override — defaults to plan.aspect when absent.
+    "aspect",
     # Timing overrides — null/absent = derive from VO. Future graphical editor writes here.
     "duration_s", "start_offset_s", "fade_in_s", "fade_out_s",
 }
+
+
+# Human-readable orientation descriptor by aspect — feeds the stern retry
+# prefix when an image model returns the wrong aspect on the first try.
+_ASPECT_STERN_DESCRIPTOR: dict[str, str] = {
+    "9:16": "vertical portrait orientation, taller than wide",
+    "16:9": "horizontal widescreen orientation, wider than tall",
+    "1:1":  "square orientation, equal width and height",
+    "4:3":  "landscape 4:3 orientation, wider than tall",
+    "3:4":  "portrait 3:4 orientation, taller than wide",
+}
+
+
+def _build_stern_prefix(aspect: str) -> str:
+    """Build the regenerate-with-sterner-prompt prefix for the chosen aspect.
+
+    The first-attempt prompt has no prefix; this is only used on attempt 2
+    when the model returned the wrong shape. Frames the directive in terms
+    of the *requested* aspect rather than the legacy hardcoded "9:16".
+    """
+    descriptor = _ASPECT_STERN_DESCRIPTOR.get(aspect, f"{aspect} orientation")
+    return (
+        f"CRITICAL: Output MUST be {aspect} {descriptor}. Previous attempt "
+        f"returned the wrong aspect and was REJECTED. Frame the subject for "
+        f"{aspect}. "
+    )
 
 
 def _warn_unknown_scene_fields(scenes_raw: list[dict[str, Any]]) -> None:
