@@ -37,6 +37,6 @@ run_log:
   # Per-stage log lines come through the Settings.events emitter (stdout),
   # not the runlog JSONL — the runlog only records run.start, plan.loaded,
   # external-call events, and run.end. Assertions here target the JSONL log
-  # at ~/.parallax/logs/<run_id>.log.
+  # at <output_dir>/run.log.
   must_not_contain: ["Traceback", "\"level\": \"ERROR\""]
   must_contain: ["plan.loaded", "run.end"]

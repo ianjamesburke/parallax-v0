@@ -23,7 +23,7 @@ worked example of the schema reference in
 | `stages.assemble` | A renamed `*.mp4` exists at `out_dir` root, has correct resolution, and manifest scenes are contiguous covering the full timeline (`start_s == 0`, `prev.end_s == curr.start_s`, last `end_s == total_duration`). |
 | `manifest.keys_required` | `manifest.yaml` has top-level `model`, `voice`, `resolution`, `scenes`. |
 | `manifest.scene_keys_required` | Every scene has `index`, `vo_text`, `prompt`, `start_s`, `end_s`, `duration_s`. |
-| `run_log.must_not_contain` | JSONL run log under `~/.parallax/logs/<run_id>.log` has no `Traceback` and no `"level": "ERROR"` lines. |
+| `run_log.must_not_contain` | JSONL run log at `<output_dir>/run.log` has no `Traceback` and no `"level": "ERROR"` lines. |
 | `run_log.must_contain` | Run log contains `plan.loaded` and `run.end`. |
 | `cost_usd_max` | `cost.json.cost_usd <= 0.0` — the canonical guardrail that test-mode runs are free. |
 
