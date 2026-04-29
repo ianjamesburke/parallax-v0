@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-29 — [CHANGED] Layer 2 — generic SKILL.md slimmed to ≤3K
+Reduced SKILL.md from ~41K to ≤3K. Stripped narrative-specific content (concepts.json, frame.io, sheets, drive, brand presets, narrative orchestrator workflows) and obsolete provider content (ElevenLabs, fal, Aurora avatar gen). The slim skill covers: brief→plan→produce loop, plan-yaml locking conventions, model alias tiers, aspect ratio knob, response terseness rule, single env var. The packaged copy at `src/parallax/skills/parallax-cli.skill.md` mirrors the same content.
+**Breaks if:** SKILL.md grows back over 3K, mentions any forbidden term (frame.io, concepts.json, etc.), or stops naming brief.yaml/plan.yaml as the iteration artifacts.
+
 ## 2026-04-29 — [CHANGED] Phase 1.3 — aspect ratio first-class
 Added `aspect:` to Settings + plan.yaml (top-level + per-scene). `--aspect` flag on `produce` / `test-scene`. Resolution now derives from aspect when not explicitly set; mapping table at `_ASPECT_TO_RESOLUTION` covers 9:16, 16:9, 1:1, 4:3, 3:4. Pulled the aspect carrier out of `spec.portrait_args` — image and video calls now take `aspect_ratio` directly from the call site, and the catalog loader no longer injects `portrait_args`. Stern-prefix prompt for stills generation derives from `settings.aspect` instead of being hardcoded "9:16 vertical portrait".
 **Breaks if:** producing with `--aspect 16:9` results in a portrait-shaped final.mp4, or any image-gen prompt mentions "9:16" when the chosen aspect is something else, or `parallax produce` on a plan with no `aspect:` field stops defaulting to 9:16.
