@@ -1,14 +1,12 @@
 """Avatar chroma-key chain end-to-end characterization.
 
-The chain (generate_avatar_clips → key_avatar_track → burn_avatar) is
-the single most fragile part of the pipeline — a ProRes color-range
-regression shipped in `0241c22`. These tests exercise the full keying
-pipeline with a synthetic blue-screen avatar (lavfi blue source + audio)
-through to compositing onto a base video.
+`key_avatar_track` → `burn_avatar` is the single most fragile part of
+the pipeline — a ProRes color-range regression shipped in `0241c22`.
+These tests exercise the keying chain with a synthetic blue-screen
+avatar (lavfi blue source + audio) through to compositing onto a base
+video.
 
 Locks in:
-  - generate_avatar_clips full_audio mode: one Aurora call, one mp4
-    written, JSON returns clips/avatar_track/track_start_s.
   - key_avatar_track produces a ProRes 4444 .mov that exists and is
     decodable (with chromakey applied).
   - burn_avatar with chroma_key composites at composite-time and
@@ -19,11 +17,8 @@ Locks in:
 
 from __future__ import annotations
 
-import json
 import subprocess
 from pathlib import Path
-
-import pytest
 
 from parallax import tools_video
 
@@ -55,24 +50,6 @@ def _make_base_video(path: Path, duration_s: float = 1.5,
     )
 
 
-def _make_silent_mp3(path: Path, duration_s: float) -> None:
-    subprocess.run(
-        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-         "-f", "lavfi", "-i", "anullsrc=cl=mono:r=44100",
-         "-t", str(duration_s), "-c:a", "libmp3lame", str(path)],
-        check=True, capture_output=True,
-    )
-
-
-def _make_still(path: Path) -> None:
-    subprocess.run(
-        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-         "-f", "lavfi", "-i", "color=green:s=512x512",
-         "-frames:v", "1", str(path)],
-        check=True, capture_output=True,
-    )
-
-
 def _probe_dur(path: Path) -> float:
     p = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -80,83 +57,6 @@ def _probe_dur(path: Path) -> float:
         capture_output=True, text=True,
     )
     return float(p.stdout.strip())
-
-
-# ─── generate_avatar_clips (mocked fal_client) ──────────────────────────
-
-
-def test_generate_avatar_clips_full_audio_mode(tmp_path, monkeypatch):
-    """full_audio=True: one Aurora call returns one continuous mp4.
-
-    fal_client and urllib are mocked — Aurora's "video URL" actually
-    points at a local synthetic blue-avatar mp4 we generate inline.
-    """
-    fake_avatar = tmp_path / "fake_aurora_returned.mp4"
-    _make_blue_avatar(fake_avatar, 1.0)
-
-    audio = tmp_path / "vo.mp3"
-    _make_silent_mp3(audio, 1.0)
-    char = tmp_path / "char.png"
-    _make_still(char)
-
-    import fal_client
-    monkeypatch.setattr(fal_client, "upload_file", lambda p: f"https://fal/{Path(p).name}")
-    monkeypatch.setattr(
-        fal_client, "subscribe",
-        lambda model, arguments: {"video": {"url": str(fake_avatar)}},
-    )
-    import urllib.request
-    monkeypatch.setattr(
-        urllib.request, "urlretrieve",
-        lambda url, dest: __import__("shutil").copy2(url, dest),
-    )
-
-    result = json.loads(tools_video.generate_avatar_clips(
-        scenes_json="[]", audio_path=str(audio),
-        character_image=str(char), avatar_scene_indices=[],
-        out_dir=str(tmp_path), full_audio=True,
-    ))
-    track = Path(result["avatar_track"])
-    assert track.exists()
-    assert result["track_start_s"] == 0.0
-    assert len(result["clips"]) == 1
-    assert result["clips"][0]["index"] == -1
-
-
-def test_generate_avatar_clips_per_scene_mode(tmp_path, monkeypatch):
-    """Per-scene mode (legacy): splits audio per scene, calls Aurora per scene,
-    concatenates."""
-    fake_avatar = tmp_path / "fake_aurora.mp4"
-    _make_blue_avatar(fake_avatar, 0.5)
-
-    audio = tmp_path / "vo.mp3"
-    _make_silent_mp3(audio, 2.0)
-    char = tmp_path / "char.png"
-    _make_still(char)
-
-    import fal_client
-    monkeypatch.setattr(fal_client, "upload_file", lambda p: f"https://fal/{Path(p).name}")
-    monkeypatch.setattr(
-        fal_client, "subscribe",
-        lambda model, arguments: {"video": {"url": str(fake_avatar)}},
-    )
-    import urllib.request
-    monkeypatch.setattr(
-        urllib.request, "urlretrieve",
-        lambda url, dest: __import__("shutil").copy2(url, dest),
-    )
-
-    scenes = [
-        {"index": 0, "start_s": 0.0, "duration_s": 1.0, "end_s": 1.0},
-        {"index": 1, "start_s": 1.0, "duration_s": 1.0, "end_s": 2.0},
-    ]
-    result = json.loads(tools_video.generate_avatar_clips(
-        scenes_json=json.dumps(scenes), audio_path=str(audio),
-        character_image=str(char), avatar_scene_indices=[0, 1],
-        out_dir=str(tmp_path), full_audio=False,
-    ))
-    assert len(result["clips"]) == 2
-    assert Path(result["avatar_track"]).exists()
 
 
 # ─── key_avatar_track ───────────────────────────────────────────────────

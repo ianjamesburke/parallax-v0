@@ -1,19 +1,17 @@
-"""Google Gemini Flash Preview TTS — primary voiceover synthesizer.
+"""Gemini Flash TTS via OpenRouter — primary voiceover synthesizer.
 
-OpenRouter does not currently host Gemini TTS (verified live 2026-04-28
-against `/api/v1/models` and the audio-output filter — only Lyria music
-and OpenAI gpt-audio surfaces). For TTS we call Google's Gemini API
-directly via the `google-genai` SDK.
+Routes Google's Gemini 2.5 Flash Preview TTS through OpenRouter's
+OpenAI-compatible audio endpoint at `/api/v1/audio/speech`. Returns the
+same `(audio_path, words, total_duration_s)` contract the rest of the
+pipeline relies on.
 
-Returns the same `(audio_path, words, total_duration_s)` contract as
-`elevenlabs.synthesize` so callers stay agnostic. Per-word timestamps
-are evenly distributed across total duration — Gemini's
-`generate_content(response_modalities=["AUDIO"])` does NOT return word
-alignment, only raw PCM. For tighter caption sync, layer a forced
-aligner (e.g. whisper) on top of the produced wav, or use
-`voice='eleven:<id>'` which provides native alignment.
+Per-word alignment runs through `forced_align.align_words()` on the
+saved mp3. If forced alignment fails (whisper model unavailable,
+unsupported decode), we fall back to evenly distributed timings and log
+a warning — captions still render, but they'll look metronomic.
 
-Audio format: 24 kHz mono 16-bit PCM, wrapped in a WAV header.
+Audio format: mp3 (OpenRouter returns the raw audio bytes for the
+requested `response_format`).
 
 Voices: Gemini exposes ~30 prebuilt voices (Kore, Puck, Zephyr, Charon,
 Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Enceladus, Iapetus,
@@ -25,14 +23,17 @@ Vindemiatrix, Sadachbia, Sadaltager, Sulafat). Default is "Kore".
 from __future__ import annotations
 
 import os
+import subprocess
 import time as _time
-import wave
 from pathlib import Path
 
 DEFAULT_VOICE = "Kore"
-DEFAULT_MODEL = "gemini-2.5-flash-preview-tts"
-PCM_SAMPLE_RATE = 24_000
-PCM_BYTES_PER_SAMPLE = 2  # 16-bit
+DEFAULT_MODEL = "google/gemini-2.5-flash-preview-tts"
+_OPENROUTER_TTS_ENDPOINT = "https://openrouter.ai/api/v1/audio/speech"
+_OPENROUTER_HEADERS_EXTRA = {
+    "HTTP-Referer": "https://github.com/ianjamesburke/parallax-v0",
+    "X-Title": "parallax",
+}
 
 
 # Style presets that prepend a directive line to the spoken text. Verified
@@ -61,73 +62,73 @@ def synthesize(
     style: str | None = None,
     style_hint: str | None = None,
 ) -> tuple[Path, list[dict], float]:
-    """Synthesize speech via Gemini Flash TTS. Returns (wav_path, words, duration).
+    """Synthesize speech via Gemini Flash TTS through OpenRouter.
 
-    `style` is a preset name from `STYLE_PRESETS` (e.g. 'rapid_fire'). It
-    prepends a directive line to the prompt so Gemini delivers the text
-    in the requested cadence/energy. Pass `style_hint` for a freeform
-    custom directive instead. The two are mutually exclusive — `style_hint`
-    wins if both are supplied.
+    Returns (mp3_path, words, duration). `style` is a preset name from
+    `STYLE_PRESETS` (e.g. 'rapid_fire'); it prepends a directive line so
+    Gemini delivers the text in the requested cadence/energy. Pass
+    `style_hint` for a freeform custom directive — `style_hint` wins over
+    `style` if both are supplied.
     """
+    import httpx
+
     out_dir.mkdir(parents=True, exist_ok=True)
-    key = api_key or os.environ.get("AI_VIDEO_GEMINI_KEY") or os.environ.get("GEMINI_API_KEY")
+    key = api_key or os.environ.get("OPENROUTER_API_KEY")
     if not key:
         raise RuntimeError(
-            "Gemini TTS requires AI_VIDEO_GEMINI_KEY or GEMINI_API_KEY. "
-            "Set it, or pass voice='eleven:<voice_id>' to use ElevenLabs instead."
+            "Gemini TTS requires OPENROUTER_API_KEY for real-mode runs. "
+            "Set it, or export PARALLAX_TEST_MODE=1 to use stubs."
         )
 
     directive = _resolve_directive(style=style, style_hint=style_hint)
     spoken = directive + text if directive else text
 
-    from google import genai
-    from google.genai import types
-
-    client = genai.Client(api_key=key)
-    response = client.models.generate_content(
-        model=model,
-        contents=spoken,
-        config=types.GenerateContentConfig(
-            response_modalities=["AUDIO"],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice),
-                ),
-            ),
-        ),
+    body = {
+        "model": model,
+        "voice": voice,
+        "input": spoken,
+        "response_format": "mp3",
+    }
+    resp = httpx.post(
+        _OPENROUTER_TTS_ENDPOINT,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            **_OPENROUTER_HEADERS_EXTRA,
+        },
+        json=body,
+        timeout=120.0,
     )
+    if resp.status_code >= 400:
+        raise RuntimeError(
+            f"OpenRouter TTS request failed ({resp.status_code}) for "
+            f"model={model!r} voice={voice!r}: {resp.text[:300]}"
+        )
+    audio_bytes = resp.content
+    if not audio_bytes:
+        raise RuntimeError(
+            f"OpenRouter TTS returned empty body for model={model!r} voice={voice!r}"
+        )
 
-    candidates = response.candidates or []
-    if not candidates:
-        raise RuntimeError(f"Gemini TTS returned no candidates for {text[:60]!r}")
-    content = candidates[0].content
-    parts = (content.parts if content else None) or []
-    pcm_bytes: bytes | None = None
-    for p in parts:
-        if p.inline_data and p.inline_data.data:
-            pcm_bytes = p.inline_data.data
-            break
-    if not pcm_bytes:
-        raise RuntimeError(f"Gemini TTS response had no inline audio data for {text[:60]!r}")
+    mp3_path = out_dir / f"openrouter_tts_{voice}_{int(_time.time()*1000)}.mp3"
+    mp3_path.write_bytes(audio_bytes)
 
-    wav_path = out_dir / f"gemini_tts_{voice}_{int(_time.time()*1000)}.wav"
-    with wave.open(str(wav_path), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(PCM_BYTES_PER_SAMPLE)
-        w.setframerate(PCM_SAMPLE_RATE)
-        w.writeframes(pcm_bytes)
-
-    duration_s = len(pcm_bytes) / (PCM_SAMPLE_RATE * PCM_BYTES_PER_SAMPLE)
+    duration_s = _probe_duration(mp3_path)
+    if duration_s <= 0:
+        raise RuntimeError(
+            f"OpenRouter TTS produced an unprobeable file at {mp3_path}; "
+            f"response was {len(audio_bytes)} bytes"
+        )
 
     # Forced alignment via WhisperX gives ~50ms-precise word boundaries from the
-    # produced wav. Even-distribution timings drift visibly out of sync on ad
+    # produced audio. Even-distribution timings drift visibly out of sync on ad
     # copy where pacing is uneven. We fall back to even distribution only if
     # WhisperX itself fails (model download issue, unsupported audio, etc.) so
     # captions still appear — but log the failure loudly because the result
     # will look like the old metronome behaviour.
     try:
         from . import forced_align
-        words = forced_align.align_words(wav_path)
+        words = forced_align.align_words(mp3_path)
     except Exception as exc:
         import logging
         logging.getLogger("parallax.gemini_tts").warning(
@@ -136,7 +137,21 @@ def synthesize(
         )
         words = _evenly_distributed_words(text, duration_s)
 
-    return wav_path, words, duration_s
+    return mp3_path, words, duration_s
+
+
+def _probe_duration(path: Path) -> float:
+    """ffprobe → seconds. Returns 0.0 on any failure (caller handles)."""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            capture_output=True, text=True, check=False,
+        )
+        out = result.stdout.strip()
+        return float(out) if out else 0.0
+    except Exception:
+        return 0.0
 
 
 def _resolve_directive(*, style: str | None, style_hint: str | None) -> str:
@@ -160,9 +175,8 @@ def _resolve_directive(*, style: str | None, style_hint: str | None) -> str:
 def _evenly_distributed_words(text: str, duration_s: float) -> list[dict]:
     """Split `text` on whitespace and assign each word an even slice of duration.
 
-    Gemini does not expose word-level timestamps. This is a crude approximation
-    suitable for caption sync at sentence granularity. For per-word accuracy,
-    run forced alignment (whisper) on the produced wav.
+    Used as a fallback when forced alignment fails. For per-word accuracy,
+    forced_align should be the path that succeeds.
     """
     tokens = text.split()
     if not tokens or duration_s <= 0:

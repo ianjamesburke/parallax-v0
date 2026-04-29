@@ -24,8 +24,10 @@ Required env:
 | var | when |
 |---|---|
 | `OPENROUTER_API_KEY` | every real-mode run (image / video / TTS) |
-| `AI_VIDEO_ELEVENLABS_KEY` | only when using `voice: eleven:<voice_id>` |
 | `PARALLAX_TEST_MODE=1` | for dry runs — no network, no spend, deterministic stubs |
+| `PARALLAX_LOG_LEVEL` | optional — `INFO` / `DEBUG` to override default WARNING |
+
+All TTS routes through OpenRouter (Gemini 2.5 Flash Preview TTS) — see `parallax models show gemini-flash-tts` for the voice list.
 
 Always check credits before kicking off a real run:
 
@@ -51,14 +53,6 @@ Apply only the zoom/pan filter for a single scene, save to `/tmp/parallax_test_s
 
 ```sh
 parallax test-scene --folder ./project --plan ./project/parallax/scratch/plan.yaml --index 2
-```
-
-### `voices` — browse ElevenLabs voices
-
-Only relevant when you need a brand-locked voice and are bypassing the OpenRouter TTS path with `voice: eleven:<voice_id>`.
-
-```sh
-parallax voices --filter female --limit 10
 ```
 
 ### `usage` — cost summary
@@ -144,7 +138,7 @@ voice: kore                   # Gemini TTS voice name (default: kore). Valid nam
                               #   iapetus, kore, laomedeia, leda, orus, puck, pulcherrima,
                               #   rasalgethi, sadachbia, sadaltager, schedar, sulafat, umbriel,
                               #   vindemiatrix, zephyr, zubenelgenubi
-                              # OR: voice: eleven:<voice_id>  — ElevenLabs voice by ID
+                              # Run `parallax models show gemini-flash-tts` for the canonical list.
 speed: 1.1                    # TTS speed multiplier (default: 1.1)
 model: nano-banana            # image alias — see "Image" table in AGENTS.md (default: mid)
 resolution: 720x1280          # WxH; if omitted, inherits from clip_path probe or defaults to 720x1280

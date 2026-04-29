@@ -68,7 +68,7 @@ That's it. One command runs the full pipeline: stills → animation → voiceove
 The plan YAML is the single file you edit between versions. Lock approved assets with path fields; leave prompts unlocked for scenes you want to regenerate.
 
 ```yaml
-voice: bella              # ElevenLabs voice (default: george)
+voice: kore               # Gemini TTS voice (default: kore) — `parallax models show gemini-flash-tts`
 speed: 1.1                # TTS speed multiplier
 model: nano-banana        # image model alias
 caption_style: bangers    # bangers | impact | bebas | anton | clean
@@ -157,25 +157,21 @@ To regenerate a scene: delete its `still_path` (and `clip_path` if animated) fro
 
 ## Avatar Workflow
 
-Aurora (FAL lip-sync) generates an avatar track from the character image + full voiceover. Pre-key it once to ProRes 4444 with alpha — then composite without any chroma filter.
+Avatar generation through Parallax is no longer supported. Supply a pre-recorded avatar clip via `avatar.avatar_track` in the plan and Parallax will pre-key it once to ProRes 4444 with alpha, then composite as PiP overlay on the main video.
 
 ```yaml
 avatar:
-  full_audio: true          # one Aurora call for the entire voiceover
   avatar_track: parallax/output/v12/video/avatar_track.mp4
   avatar_track_keyed: parallax/output/v12/video/avatar_track_keyed.mov
   chroma_similarity: 0.30   # how close to the key color counts as background (0.1 = tight, 0.4 = loose)
   chroma_blend: 0.03        # edge softness — keep ≤ 0.03 or character becomes transparent
 ```
 
-- Always use `full_audio: true` — per-scene Aurora calls are wasteful
-- Lock `avatar_track` and `avatar_track_keyed` immediately after first successful gen
+- Lock `avatar_track` and `avatar_track_keyed` immediately after first successful key
 - The `.mov` is ProRes 4444 with alpha channel — no chroma filter needed at composite time
 - `chroma_similarity` and `chroma_blend` apply at the pre-key step (`key_avatar_track`). Once `avatar_track_keyed` is locked, they have no effect — re-key only if the edges look bad
 
-### Avatar Audio — Two Branches, Detect Before You Generate Anything
-
-**Before touching TTS or Aurora**, determine which avatar type you're dealing with:
+### Avatar Audio — Pre-recorded only
 
 **Branch A — Pre-recorded avatar (user-supplied video with audio)**
 Signs: A `content/avatar_track.mp4` or similar file exists in the project folder, and the script says to use it (e.g. "use the green screen avatar audio/video", or implies a real person's footage).
@@ -204,14 +200,7 @@ Steps:
    This outputs ProRes `.mov` (preserves color range), extracts audio from the trimmed avatar (guaranteed in sync), and updates `plan.yaml` automatically. The word timestamps also get adjusted.
 7. When the script specifies a cut point (e.g. "up till the line X"), use `parallax audio detect-silences` or word timestamps from step 4 to find the exact `end_s`, then run `parallax audio trim`.
 
-**Branch B — AI-generated avatar (Aurora/FAL lip-sync)**
-Signs: Plan has `avatar.image`, `full_audio: true`, no user-supplied video with audio.
-
-Steps (normal flow):
-1. Generate TTS voiceover first.
-2. Lock `audio_path` + `words_path` in the plan.
-3. Generate Aurora avatar from the TTS audio.
-4. Lock `avatar_track` after first successful gen.
+AI-generated avatars are no longer supported through Parallax — supply a pre-recorded avatar clip per Branch A above.
 
 Whisper is used for **word-level timestamps only** (for caption timing). If Whisper fails:
 - Continue with the existing audio (whichever branch above)
@@ -664,8 +653,9 @@ Never report a zoom, avatar, or caption as working without reading the frames. "
 
 | var | purpose |
 |---|---|
-| `FAL_KEY` | Required for image gen, Grok i2v, Aurora avatar |
-| `ELEVENLABS_API_KEY` | Required for voiceover |
+| `OPENROUTER_API_KEY` | Required for every real-mode call (image / video / TTS) |
 | `ANTHROPIC_API_KEY` | Required for agent mode (`parallax run`) |
-| `PARALLAX_TEST_MODE=1` | Pillow shim instead of FAL — zero spend |
+| `PARALLAX_TEST_MODE=1` | Pillow + ffmpeg stubs — no network, no spend |
 | `PARALLAX_LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` |
+
+All TTS routes through OpenRouter (Gemini 2.5 Flash Preview TTS) — see `parallax models show gemini-flash-tts` for the voice list. Avatar generation is no longer supported through Parallax; supply pre-recorded avatar tracks via `avatar.avatar_track`.

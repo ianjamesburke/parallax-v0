@@ -23,8 +23,8 @@ parallax produce \
 
 ```yaml
 # --- Settings ---
-voice: bella              # ElevenLabs voice name (default: george)
-speed: 1.1                # TTS speed multiplier (default: 1.1)
+voice: Kore               # Gemini Flash TTS voice name (default: Kore)
+speed: 1.0                # TTS speed multiplier (default: 1.0)
 model: nano-banana        # image model alias (default: mid)
 resolution: 720x1280      # output resolution (optional — see "Project resolution" below)
 caption_style: bangers    # bangers | impact | bebas | anton | clean (default: anton)
@@ -68,7 +68,8 @@ scenes:
 ```yaml
 avatar:
   image: parallax/scratch/avatar_blue_bg.png   # blue-screen source image
-  full_audio: true              # one Aurora call for full voiceover (not per-scene)
+  # Note: avatar generation (Aurora) is no longer supported — `avatar_track` must
+  # point at a pre-recorded clip. Chromakey + burn stages still run as before.
   avatar_track: parallax/output/v12/avatar_track.mp4          # lock after first gen
   avatar_track_keyed: parallax/output/v12/avatar_track_keyed.mov  # pre-keyed ProRes 4444
   track_start_s: 0.0
@@ -136,7 +137,7 @@ parallax models show mid --kind image # full capabilities + voices for one alias
 |---|---|---|---|
 | `gemini-flash-tts` | google/gemini-2.5-flash-preview-tts (via OpenRouter) | free during preview | — |
 
-`voice:` accepts a Gemini voice name (`Kore`, `Puck`, `Zephyr`, ...; full list via `parallax models show gemini-flash-tts`) or `eleven:<voice_id>` to bypass OpenRouter and route directly to ElevenLabs (brand-locked voices). All image and video models default to 9:16 portrait until `--aspect` lands.
+`voice:` accepts any name from the `gemini-flash-tts` voice list (run `parallax models show gemini-flash-tts`). All TTS routes through OpenRouter (Gemini 2.5 Flash Preview TTS). All image and video models default to 9:16 portrait until `--aspect` lands.
 
 ---
 
@@ -174,7 +175,6 @@ Each `produce` run calls `scan_project_folder`, which auto-increments the output
 ## Other commands
 
 ```sh
-parallax voices --filter female     # browse ElevenLabs voices
 parallax usage                      # cost + call summary
 parallax update                     # upgrade via uv
 
@@ -253,7 +253,6 @@ Per-stage `_log` lines come through `Settings.events` (stdout) and are NOT in th
 | var | purpose |
 |---|---|
 | `OPENROUTER_API_KEY` | required for real image / video / tts generation |
-| `AI_VIDEO_ELEVENLABS_KEY` / `ELEVENLABS_API_KEY` | required when using `voice: eleven:<id>` escape hatch |
 | `PARALLAX_TEST_MODE=1` | Pillow + ffmpeg stubs — no network, no spend |
 | `PARALLAX_OUTPUT_DIR` | override default `output/` directory |
 | `PARALLAX_USAGE_LOG` | override `~/.parallax/usage.ndjson` |
@@ -283,7 +282,7 @@ should import from the extracted module directly.
 |---|---|
 | `parallax.captions` (subpackage) | Caption rendering. `styles` (presets + `resolve_caption_style`), `chunker` (`_smart_chunk_words`), `animation` (`_expand_animation_keyframes`), `drawtext` (ffmpeg backend), `pillow` (fallback backend), `burn` (`burn_captions` orchestration). |
 | `parallax.assembly` | Scene timing + video assembly. `align_scenes`, `ken_burns_assemble`, `assemble_clip_video`, `_zoom_filter`, `_make_kb_clip`, `_make_clip_segment`. |
-| `parallax.avatar` | `generate_avatar_clips`, `key_avatar_track`, `burn_avatar` — Aurora generation + chroma-key + PiP composite. |
+| `parallax.avatar` | `key_avatar_track`, `burn_avatar` — chroma-key + PiP composite. Generation is no longer supported through Parallax. |
 | `parallax.headline` | `burn_titles`, `burn_headline` — drawtext overlays. |
 | `parallax.voiceover` | `generate_voiceover` + `_apply_atempo` + `_trim_long_pauses` + `_mock_voiceover`. |
 | `parallax.project` | `scan_project_folder`, `animate_scenes`. |
@@ -291,7 +290,6 @@ should import from the extracted module directly.
 | `parallax.ffmpeg_utils` | `_get_ffmpeg`, `_ffmpeg_has_drawtext`, `_probe_fps`, `_parse_color`, `_FFMPEG_FULL`. |
 | `parallax.audio`, `parallax.video` | Earlier extractions (Block 3). Audio/video CLI subcommands. |
 | `parallax.openrouter` | LLM/image/TTS/video calls — the only module that talks to OpenRouter. |
-| `parallax.elevenlabs` | Voice resolution + ElevenLabs TTS escape hatch. |
-| `parallax.gemini_tts` | Gemini Flash TTS direct path. |
+| `parallax.gemini_tts` | Gemini Flash TTS via OpenRouter (`/api/v1/audio/speech`). |
 | `parallax.produce` | CLI entry point — wires every step of the pipeline. |
 | `parallax.tools_video` | Compat shim only. Do not add code here. |

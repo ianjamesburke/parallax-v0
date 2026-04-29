@@ -58,6 +58,10 @@ When a phase or block flips to `[COMPLETE]`, the flag is updated *in place* — 
 
 ---
 
+## 2026-04-29 — [CHANGED] Phase 1.2 — single-provider consolidation (OpenRouter only)
+Removed every fal_client and elevenlabs path. TTS now routes Gemini Flash Preview TTS via OpenRouter's `/api/v1/audio/speech` endpoint (rewrote `gemini_tts.py`). Video animation routes through `openrouter.generate_video` instead of `fal_client.subscribe`. Avatar generation deleted (no OpenRouter equivalent for fal-ai/creatify/aurora); chromakey + burn stages remain. Single env var: OPENROUTER_API_KEY.
+**Breaks if:** any TTS call attempts to hit a Google or ElevenLabs endpoint, any video clip arrives via fal, or the CLI rejects a real-mode run that has only OPENROUTER_API_KEY in the environment.
+
 ## 2026-04-28 — [FIX] `crop_to_aspect` deletes source after writing cropped variant
 `stills.crop_to_aspect` left the pandoc-extracted original in place after writing the `_aWxH` variant, so downstream readers of the concept's `media/` dir saw both files and the agent passed every reference twice (original + cropped) into the next image-edit call. Added `src.unlink(missing_ok=True)` after the save (and after the cached-out early-return), mirroring the pattern already used in `normalize_aspect`. Single source of truth for cleanup is the function that creates the variant; no need for periodic dedup sweeps in narrative-parallax.
 **Breaks if:** a concept folder's `media/` ends up containing both `imageN.png` and `imageN_a720x1280.png` after a stills_pending tick — should only ever see the cropped variant.

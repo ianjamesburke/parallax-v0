@@ -1,22 +1,24 @@
-"""Avatar generation, chroma-key, and PiP compositing.
+"""Avatar chroma-key + PiP composite.
 
-Three-stage pipeline:
-  1. `generate_avatar_clips` — call fal.ai/creatify/aurora to generate a
-     lip-synced talking-head from the character image + voiceover audio.
-  2. `key_avatar_track` — pre-key the blue/green-screen clip once into a
-     ProRes 4444 .mov with real alpha, so subsequent composites don't
-     have to re-run chromakey on every pass.
-  3. `burn_avatar` — composite the (raw or pre-keyed) avatar track as a
+Two-stage pipeline (generation is no longer supported through Parallax —
+OpenRouter does not host any equivalent of fal-ai/creatify/aurora):
+  1. `key_avatar_track` — pre-key a blue/green-screen avatar clip once
+     into a ProRes 4444 .mov with real alpha, so subsequent composites
+     don't have to re-run chromakey on every pass.
+  2. `burn_avatar` — composite the (raw or pre-keyed) avatar track as a
      picture-in-picture overlay onto the main video timeline.
+
+Avatars must be supplied as pre-recorded clips (`avatar.avatar_track`
+in plan YAML); set the path and the keying / overlay stages run as
+before.
 
 The chroma-key chain is the most regression-prone part of the pipeline
 (see commit 0241c22 for the ProRes color-range fix); tests at
-tests/test_avatar_chain.py exercise the full chain end-to-end.
+tests/test_avatar_chain.py exercise the chain end-to-end.
 """
 
 from __future__ import annotations
 
-import json
 import subprocess
 from pathlib import Path
 
@@ -24,119 +26,6 @@ from .ffmpeg_utils import _get_ffmpeg
 from .log import get_logger
 
 log = get_logger("tools_video")
-
-
-def generate_avatar_clips(
-    scenes_json: str,
-    audio_path: str,
-    character_image: str,
-    avatar_scene_indices: list[int],
-    out_dir: str,
-    aurora_prompt: str | None = None,
-    full_audio: bool = False,
-) -> str:
-    """Generate a lip-synced avatar track via fal-ai/creatify/aurora.
-
-    full_audio=True (recommended): one Aurora call with the full voiceover — one
-    continuous talking clip starting at t=0. avatar_scene_indices is ignored.
-
-    full_audio=False (legacy): splits audio per scene, calls Aurora once per scene,
-    concatenates. Use only when the avatar should only appear during specific scenes.
-
-    Returns JSON:
-      {"clips": [...], "avatar_track": path, "track_start_s": float}
-    """
-    import urllib.request
-    import fal_client
-
-    out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
-
-    aurora_args: dict = {"resolution": "720p"}
-    if aurora_prompt:
-        aurora_args["prompt"] = aurora_prompt
-
-    log.info("avatar: uploading character image %s", character_image)
-    aurora_args["image_url"] = fal_client.upload_file(Path(character_image))
-
-    if full_audio:
-        log.info("avatar: full-audio mode — uploading full voiceover")
-        aurora_args["audio_url"] = fal_client.upload_file(Path(audio_path))
-        log.info("avatar: calling Aurora (full voiceover)")
-        try:
-            result = fal_client.subscribe("fal-ai/creatify/aurora", arguments=aurora_args)
-        except Exception as e:
-            raise RuntimeError(f"Aurora failed: {e}") from e
-        video_url = (result.get("video") or {}).get("url") or result.get("url")
-        if not video_url:
-            raise RuntimeError(f"Aurora returned no video URL: {result}")
-        avatar_track = out / "avatar_track.mp4"
-        log.info("avatar: downloading full clip")
-        urllib.request.urlretrieve(video_url, str(avatar_track))
-        log.info("avatar: track written %s", avatar_track)
-        return json.dumps({
-            "clips": [{"index": -1, "path": str(avatar_track), "start_s": 0.0}],
-            "avatar_track": str(avatar_track),
-            "track_start_s": 0.0,
-        })
-
-    # Per-scene mode (legacy)
-    ffmpeg = _get_ffmpeg()
-    scenes: list[dict] = json.loads(scenes_json)
-    clips: list[dict] = []
-    for scene in scenes:
-        idx = scene["index"]
-        if idx not in avatar_scene_indices:
-            continue
-        start_s = scene.get("start_s", 0.0)
-        dur = scene.get("duration_s", 0.0)
-        if dur <= 0:
-            log.warning("avatar: scene %d has zero duration, skipping", idx)
-            continue
-
-        audio_clip = out / f"avatar_audio_{idx:03d}.mp3"
-        subprocess.run(
-            [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-             "-i", audio_path, "-ss", str(start_s), "-t", str(dur),
-             "-c", "copy", str(audio_clip)],
-            check=True,
-        )
-        log.info("avatar: scene %d — uploading audio clip (%.2fs)", idx, dur)
-        scene_args = {**aurora_args, "audio_url": fal_client.upload_file(audio_clip)}
-        log.info("avatar: scene %d — calling Aurora", idx)
-        try:
-            result = fal_client.subscribe("fal-ai/creatify/aurora", arguments=scene_args)
-        except Exception as e:
-            raise RuntimeError(f"Aurora failed for scene {idx}: {e}") from e
-        video_url = (result.get("video") or {}).get("url") or result.get("url")
-        if not video_url:
-            raise RuntimeError(f"Aurora returned no video URL for scene {idx}: {result}")
-        clip_path = out / f"avatar_clip_{idx:03d}.mp4"
-        log.info("avatar: scene %d — downloading clip", idx)
-        urllib.request.urlretrieve(video_url, str(clip_path))
-        clips.append({"index": idx, "path": str(clip_path),
-                      "start_s": start_s, "end_s": scene.get("end_s", start_s + dur),
-                      "duration_s": dur})
-
-    if not clips:
-        raise RuntimeError("No avatar clips generated — check avatar_scene_indices")
-
-    concat_list = out / "avatar_concat.txt"
-    concat_list.write_text("\n".join(f"file '{c['path']}'" for c in clips))
-    avatar_track = out / "avatar_track.mp4"
-    subprocess.run(
-        [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-         "-f", "concat", "-safe", "0", "-i", str(concat_list),
-         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-         "-c:a", "aac", str(avatar_track)],
-        check=True,
-    )
-    log.info("avatar: track written %s (%d clips)", avatar_track, len(clips))
-    return json.dumps({
-        "clips": clips,
-        "avatar_track": str(avatar_track),
-        "track_start_s": clips[0]["start_s"],
-    })
 
 
 def key_avatar_track(

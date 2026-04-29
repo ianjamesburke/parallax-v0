@@ -208,10 +208,9 @@ def resolve_settings(plan: dict[str, Any], folder: Path, plan_path: Path) -> Set
 
     model = plan.get("model", "mid")
     voice = plan.get("voice", "Kore")
-    # ElevenLabs path defaults to 1.1 atempo; Gemini path stays at 1.0
-    # (pacing is controlled via `style`). Plan can override either.
-    default_speed = 1.1 if str(voice).startswith("eleven:") else 1.0
-    speed = float(plan.get("speed", default_speed))
+    # Gemini TTS pacing is controlled via `style` (e.g. rapid_fire); leave
+    # the atempo speed knob neutral by default. Plans can still override.
+    speed = float(plan.get("speed", 1.0))
     style = plan.get("style")
     style_hint = plan.get("style_hint")
 

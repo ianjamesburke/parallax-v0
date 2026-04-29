@@ -1,17 +1,15 @@
 """Voiceover synthesis with pacing transforms.
 
-`generate_voiceover` is the parallax-pipeline entry point. It dispatches
-to ElevenLabs (`voice='eleven:<id>'`) or Gemini Flash TTS (everything
-else) via openrouter.generate_tts, then runs `_apply_atempo` for speed
-adjustment and `_trim_long_pauses` to surgically cut overlong inter-word
-silence. `_mock_voiceover` produces a deterministic silent stand-in for
+`generate_voiceover` calls `openrouter.generate_tts` (always Gemini TTS via
+OpenRouter), then runs `_apply_atempo` for speed adjustment and
+`_trim_long_pauses` to surgically cut overlong inter-word silence.
+`_mock_voiceover` produces a deterministic silent stand-in for
 PARALLAX_TEST_MODE.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import time
 from pathlib import Path
@@ -32,20 +30,18 @@ def generate_voiceover(
 ) -> str:
     """Generate voiceover and apply pacing transforms.
 
-    Backends route by voice value:
-      - `voice='eleven:<voice_id>'` → ElevenLabs (per-word alignment;
-        legacy default `speed=1.1`).
-      - any other voice (e.g. 'Kore', 'Puck') → Gemini Flash TTS direct
-        with `style` preset / `style_hint` directive control. Gemini has
-        no numeric speed knob — speech pace is prompt-controlled.
+    Calls `openrouter.generate_tts` (always Gemini TTS via OpenRouter),
+    then post-processes with `_apply_atempo` and `_trim_long_pauses`.
 
-    `speed` is an ffmpeg `atempo` factor applied AFTER synthesis, so it
-    works the same for both backends. For Gemini, prefer `style` /
-    `style_hint` for pacing; reserve `speed` for hard duration targets.
+    `voice` is a Gemini prebuilt voice name (e.g. 'Kore', 'Puck'). See
+    `parallax models show gemini-flash-tts` for the full list.
+
+    `speed` is an ffmpeg `atempo` factor applied AFTER synthesis. For
+    Gemini, prefer `style` / `style_hint` for pacing; reserve `speed`
+    for hard duration targets.
 
     `style` accepts presets from `gemini_tts.STYLE_PRESETS`
-    (`rapid_fire`, `fast`, `calm`, `natural`); `style_hint` is freeform
-    text. Both are no-ops on the ElevenLabs path.
+    (`rapid_fire`, `fast`, `calm`, `natural`); `style_hint` is freeform.
 
     Returns JSON: {audio_path, words_path, words, total_duration_s}.
     """
@@ -57,24 +53,8 @@ def generate_voiceover(
 
     from . import openrouter
 
-    use_eleven = voice.startswith("eleven:")
-    if use_eleven:
-        from . import elevenlabs as _eleven
-        key = os.environ.get("AI_VIDEO_ELEVENLABS_KEY") or os.environ.get("ELEVENLABS_API_KEY")
-        if not key:
-            raise RuntimeError(
-                "ElevenLabs key required for voice='eleven:<id>': "
-                "set AI_VIDEO_ELEVENLABS_KEY or ELEVENLABS_API_KEY"
-            )
-        voice_id = voice.split(":", 1)[1]
-        # Allow legacy alias resolution (e.g. voice='eleven:george')
-        if not voice_id or len(voice_id) < 18:
-            voice_id = _eleven.resolve_voice(voice_id or "george", key)
-        tts_voice = f"eleven:{voice_id}"
-        tts_alias = "eleven_multilingual_v2"
-    else:
-        tts_voice = voice
-        tts_alias = "gemini-flash-tts"
+    tts_voice = voice
+    tts_alias = "gemini-flash-tts"
 
     t0 = time.monotonic()
     log.info(

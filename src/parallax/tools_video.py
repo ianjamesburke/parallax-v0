@@ -9,8 +9,7 @@ ffmpeg helpers. Each domain now lives in its own module:
   - parallax.assembly        (align_scenes, ken_burns_assemble,
                               assemble_clip_video, _zoom_filter,
                               _make_kb_clip, _make_clip_segment)
-  - parallax.avatar          (generate_avatar_clips, key_avatar_track,
-                              burn_avatar)
+  - parallax.avatar          (key_avatar_track, burn_avatar)
   - parallax.headline        (burn_titles, burn_headline)
   - parallax.voiceover       (generate_voiceover, _apply_atempo,
                               _trim_long_pauses, _mock_voiceover)
@@ -34,7 +33,7 @@ from .assembly import (  # noqa: F401
     assemble_clip_video,
     ken_burns_assemble,
 )
-from .avatar import burn_avatar, generate_avatar_clips, key_avatar_track  # noqa: F401
+from .avatar import burn_avatar, key_avatar_track  # noqa: F401
 from .captions import (  # noqa: F401
     CAPTION_STYLES,
     _FONTS_DIR,
@@ -56,9 +55,6 @@ from .ffmpeg_utils import (  # noqa: F401
 from .headline import burn_headline, burn_titles  # noqa: F401
 from .manifest import read_manifest, write_manifest  # noqa: F401
 from .project import (  # noqa: F401
-    _GROK_I2V_INPUT_FEE,
-    _GROK_I2V_RATE_480P,
-    _GROK_I2V_RATE_720P,
     IMAGE_EXTS,
     VIDEO_EXTS,
     animate_scenes,

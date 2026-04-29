@@ -6,15 +6,15 @@ align_scenes → write_manifest → ken_burns_assemble → (optionally)
 burn_captions → burn_headline.
 
 Plan YAML schema:
-  voice: Kore                # Gemini voice (default: Kore). Use 'eleven:<voice_id>'
-                             # for ElevenLabs (e.g. 'eleven:JBFqnCBsd6RMkjVDRZzb').
+  voice: Kore                # Gemini voice (default: Kore). See
+                             # `parallax models show gemini-flash-tts`
+                             # for the full list of prebuilt voices.
   style: rapid_fire          # Gemini TTS pacing preset. Default for ads.
                              # Options: rapid_fire | fast | calm | natural.
   style_hint: "..."          # Freeform Gemini directive (overrides `style`).
-                             # Ignored on the ElevenLabs path.
   speed: 1.0                 # ffmpeg atempo multiplier applied AFTER synthesis
-                             # (default: 1.0 for Gemini, 1.1 for ElevenLabs).
-                             # Use sparingly — prefer `style` for natural speed.
+                             # (default: 1.0). Use sparingly — prefer `style`
+                             # for natural speed.
   model: nano-banana         # image model alias (default: mid)
   resolution: 1080x1920      # output resolution (default: 1080x1920)
   caption_style: bangers

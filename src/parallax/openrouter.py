@@ -1,18 +1,15 @@
 """Unified media-generation client.
 
 Three entry points: `generate_image`, `generate_video`, `generate_tts`. Each
-resolves an alias from `models/`, dispatches to the right backend, and
-returns a local file path (plus per-word timings for tts).
+resolves an alias from `models/`, dispatches to OpenRouter, and returns a
+local file path (plus per-word timings for tts).
 
 Backends:
   - test mode (`PARALLAX_TEST_MODE=1`): all three route through `shim.py`.
     No network, no spend, fully deterministic.
-  - real mode: routes through OpenRouter's media APIs. The HTTP request shape
-    varies per kind and is intentionally NOT yet implemented here — the
-    contract gets verified once an OPENROUTER_API_KEY is in hand. Calling
-    real-mode raises NotImplementedError with a clear message.
-  - voice escape hatch: when `voice` starts with `eleven:`, `generate_tts`
-    delegates to ElevenLabs directly (the brand-locked-voice path).
+  - real mode: routes through OpenRouter (image + video via the chat /
+    videos endpoints, TTS via `/api/v1/audio/speech`). OPENROUTER_API_KEY
+    is the single required env var.
 
 The fallback chain encoded in models.ModelSpec.fallback_alias is honored on
 RuntimeError: if the primary errors, the resolver walks one step down and
@@ -156,19 +153,10 @@ def generate_tts(
 ) -> tuple[Path, list[dict[str, Any]], float]:
     """Returns (audio_path, words [{word, start, end}], total_duration_s).
 
-    Routing rules:
-      - `voice='eleven:<voice_id>'` → ElevenLabs (escape hatch for brand-locked
-        voices; provides native per-word timestamps).
-      - alias starts with `gemini` → Google Gemini Flash TTS direct API
-        (primary path; PCM audio with evenly-distributed word timestamps).
-      - any other alias → OpenRouter `_tts_real` (currently unsupported until
-        OpenRouter ships a TTS model with alignment).
-
-    The `voice` arg for Gemini is a prebuilt voice name (e.g. 'Kore', 'Puck').
+    All TTS routes through OpenRouter — Gemini 2.5 Flash Preview TTS via
+    `/api/v1/audio/speech`. The `voice` arg is a prebuilt voice name (e.g.
+    'Kore', 'Puck'); the full list is on `models show gemini-flash-tts`.
     """
-    if voice.startswith("eleven:"):
-        return _tts_elevenlabs(text, voice_id=voice.split(":", 1)[1], out_dir=out_dir)
-
     out = out_dir or output_dir()
     if is_test_mode():
         spec = resolve(alias, kind="tts")
@@ -182,7 +170,7 @@ def generate_tts(
         # explicitly passed — passing style=None means "natural" (no prefix).
         effective_style = style if (style or style_hint) else _gtts.DEFAULT_STYLE
         runlog.event(
-            "gemini.tts.call", alias=alias, voice=gemini_voice, chars=len(text),
+            "openrouter.tts.call", alias=alias, voice=gemini_voice, chars=len(text),
             style=effective_style, style_hint=style_hint,
         )
         t0 = time.monotonic()
@@ -192,7 +180,7 @@ def generate_tts(
         )
         duration_ms = int((time.monotonic() - t0) * 1000)
         runlog.event(
-            "gemini.tts.response",
+            "openrouter.tts.response",
             alias=alias, voice=gemini_voice, duration_ms=duration_ms, ok=True,
             audio_seconds=round(duration, 3),
         )
@@ -813,67 +801,16 @@ def _video_real(
 def _tts_real(
     text: str, spec: ModelSpec, voice: str, voice_description: str | None, out_dir: Path,
 ) -> tuple[Path, list[dict[str, Any]], float]:
-    """OpenRouter's audio-output models (gpt-audio, lyria) are conversational
-    or musical, not per-word-aligned TTS. The parallax pipeline needs
-    word-level timestamps for caption alignment, which only ElevenLabs
-    currently provides.
-
-    Use `voice='eleven:<voice_id>'` for production TTS. The
-    `_tts_elevenlabs` path delegates to `parallax/elevenlabs.py:synthesize`.
+    """Guardrail. Every supported TTS alias starts with `gemini` and is
+    handled in `generate_tts` directly, so this branch is unreachable
+    under normal operation. If a non-gemini TTS alias gets added to the
+    catalog without a corresponding routing branch, fail loud here.
     """
-    _check_key()
-    raise NotImplementedError(
-        f"OpenRouter TTS aliases ({spec.alias!r}, model_id={spec.model_id!r}) "
-        f"do not provide per-word-aligned timestamps. Use voice='eleven:<voice_id>' "
-        f"for the parallax-pipeline TTS path, or PARALLAX_TEST_MODE=1 for stubs."
+    raise RuntimeError(
+        f"Unknown TTS alias {spec.alias!r}; only gemini-* aliases are supported. "
+        f"Add the model to src/parallax/models/tts.yaml and wire a routing branch "
+        f"in openrouter.generate_tts."
     )
-
-
-# ---------------------------------------------------------------------------
-# ElevenLabs direct (escape hatch for brand-locked voices)
-# ---------------------------------------------------------------------------
-
-def _tts_elevenlabs(
-    text: str, *, voice_id: str, out_dir: Path | None,
-) -> tuple[Path, list[dict[str, Any]], float]:
-    out = out_dir or output_dir()
-    out.mkdir(parents=True, exist_ok=True)
-
-    if is_test_mode():
-        runlog.event("openrouter.tts.test", alias="eleven", voice=voice_id, chars=len(text))
-        return render_mock_tts(text=text, voice=f"eleven_{voice_id[:6]}", out_dir=out)
-
-    key = os.environ.get("AI_VIDEO_ELEVENLABS_KEY") or os.environ.get("ELEVENLABS_API_KEY")
-    if not key:
-        raise RuntimeError(
-            "ElevenLabs requires AI_VIDEO_ELEVENLABS_KEY or ELEVENLABS_API_KEY for "
-            "voice='eleven:<id>'."
-        )
-
-    from . import elevenlabs as _eleven
-    runlog.event("openrouter.tts.call", alias="eleven", voice=voice_id, chars=len(text))
-    t0 = time.monotonic()
-    audio_path, words, duration = _eleven.synthesize(
-        text=text, voice_id=voice_id, out_dir=out, api_key=key,
-    )
-    duration_ms = int((time.monotonic() - t0) * 1000)
-    runlog.event(
-        "openrouter.tts.response",
-        alias="eleven", voice=voice_id, duration_ms=duration_ms, ok=True,
-    )
-    _usage.record(
-        session_id=current_session_id.get(),
-        backend="elevenlabs",
-        alias="eleven_multilingual_v2",
-        fal_id="",
-        tier="standard",
-        prompt=text[:120],
-        output_path=str(audio_path),
-        duration_ms=duration_ms,
-        cost_usd=_eleven.cost_for(text),
-        test_mode=False,
-    )
-    return audio_path, words, duration
 
 
 # ---------------------------------------------------------------------------

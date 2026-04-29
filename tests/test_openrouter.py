@@ -39,13 +39,6 @@ def test_tts_aliases_dispatch_test_mode(alias, tmp_path):
     assert total > 0
 
 
-def test_eleven_voice_escape_hatch_routes_to_shim_in_test_mode(tmp_path):
-    path, words, total = openrouter.generate_tts(
-        "hi", alias="gemini-flash-tts", voice="eleven:abc123", out_dir=tmp_path,
-    )
-    assert path.exists() and "eleven_abc123"[:6] in str(path)
-
-
 def test_kind_mismatch_raises(tmp_path):
     # `kling` is video-only — surfaces a kind mismatch when called via image.
     with pytest.raises(ValueError, match="image"):
@@ -106,14 +99,12 @@ def test_video_real_mode_with_bad_key_falls_back_through_chain(monkeypatch, tmp_
         openrouter.generate_video("x", alias="kling", duration_s=2.0, out_dir=tmp_path)
 
 
-def test_tts_real_mode_gemini_alias_requires_key(monkeypatch, tmp_path):
-    """gemini-flash-tts is now the primary path (direct Google API). Without
-    AI_VIDEO_GEMINI_KEY the call must surface a clear error, not stub-succeed."""
+def test_tts_real_mode_gemini_alias_requires_openrouter_key(monkeypatch, tmp_path):
+    """gemini-flash-tts now routes through OpenRouter; missing
+    OPENROUTER_API_KEY must surface a clear error, not stub-succeed."""
     monkeypatch.setenv("PARALLAX_TEST_MODE", "0")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")  # not used by Gemini path
-    monkeypatch.delenv("AI_VIDEO_GEMINI_KEY", raising=False)
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="AI_VIDEO_GEMINI_KEY|GEMINI_API_KEY"):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
         openrouter.generate_tts("hello", alias="gemini-flash-tts", out_dir=tmp_path)
 
 
