@@ -6,16 +6,18 @@ align_scenes → write_manifest → ken_burns_assemble → (optionally)
 burn_captions → burn_headline.
 
 Plan YAML schema:
-  voice: Kore                # Gemini voice (default: Kore). See
+  voice: Kore                # TTS voice (default: Kore). See
                              # `parallax models show tts-mini`
                              # for the full list of prebuilt voices.
-  style: rapid_fire          # Gemini TTS pacing preset. Default for ads.
+  voice_model: tts-mini      # TTS model alias (default: tts-mini).
+  style: rapid_fire          # TTS pacing preset. Default for ads.
                              # Options: rapid_fire | fast | calm | natural.
-  style_hint: "..."          # Freeform Gemini directive (overrides `style`).
-  speed: 1.0                 # ffmpeg atempo multiplier applied AFTER synthesis
+  style_hint: "..."          # Freeform TTS directive (overrides `style`).
+  voice_speed: 1.0           # ffmpeg atempo multiplier applied AFTER synthesis
                              # (default: 1.0). Use sparingly — prefer `style`
                              # for natural speed.
-  model: nano-banana         # image model alias (default: mid)
+  image_model: nano-banana   # image model alias (default: mid)
+  video_model: kling         # video model alias (default: mid)
   resolution: 1080x1920      # output resolution (default: 1080x1920)
   caption_style: bangers
   captions: skip             # omit to enable captions
@@ -45,6 +47,7 @@ from . import runlog
 from .context import current_session_id
 from .ffmpeg_utils import parse_resolution
 from .log import get_logger
+from .plan import Plan
 from .settings import ProductionMode, _infer_project_resolution, resolve_settings
 from .stages import STAGES, stage_scan, stage_stills
 
@@ -67,8 +70,11 @@ def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = Non
         print(f"Error: plan file not found: {plan_path}", file=sys.stderr)
         return 1
 
-    with plan_path.open() as f:
-        plan: dict[str, Any] = yaml.safe_load(f)
+    try:
+        plan: dict[str, Any] = Plan.from_yaml(plan_path).to_dict()
+    except Exception as e:
+        print(f"Error: invalid plan {plan_path}:\n{e}", file=sys.stderr)
+        return 1
 
     if aspect is not None:
         plan["aspect"] = aspect
@@ -117,7 +123,9 @@ def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = Non
     runlog.event(
         "plan.loaded",
         folder=str(settings.folder), plan_path=str(settings.plan_path),
-        scene_count=len(scenes_raw), model=settings.model, voice=settings.voice,
+        scene_count=len(scenes_raw),
+        image_model=settings.image_model, video_model=settings.video_model,
+        voice=settings.voice, voice_model=settings.voice_model,
         resolution=settings.resolution,
         test_mode=settings.mode == ProductionMode.TEST,
     )

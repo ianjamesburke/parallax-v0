@@ -18,7 +18,7 @@ from .drawtext import _burn_captions_drawtext
 from .pillow import _burn_captions_pillow
 from .styles import resolve_caption_style
 
-log = get_logger("tools_video")
+log = get_logger(__name__)
 
 
 def burn_captions(

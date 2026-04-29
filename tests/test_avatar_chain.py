@@ -20,7 +20,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from parallax import tools_video
+from parallax import avatar
 
 
 def _make_blue_avatar(path: Path, duration_s: float = 1.0,
@@ -66,7 +66,7 @@ def test_key_avatar_track_produces_prores_with_alpha(tmp_path):
     """Real ffmpeg chromakey pass: blue avatar → ProRes 4444 .mov with alpha."""
     src = tmp_path / "avatar.mp4"
     _make_blue_avatar(src, 1.0)
-    out = tools_video.key_avatar_track(str(src), chroma_key="0x0000FF")
+    out = avatar.key_avatar_track(str(src), chroma_key="0x0000FF")
     out_path = Path(out)
     assert out_path.exists() and out_path.suffix == ".mov"
 
@@ -91,11 +91,11 @@ def test_burn_avatar_with_chroma_key_at_composite_time(tmp_path):
     """End-to-end: blue avatar + base video → composited mp4 with key applied."""
     base = tmp_path / "base.mp4"
     _make_base_video(base, 1.5)
-    avatar = tmp_path / "avatar.mp4"
-    _make_blue_avatar(avatar, 1.0)
+    avatar_clip = tmp_path / "avatar.mp4"
+    _make_blue_avatar(avatar_clip, 1.0)
     out = tmp_path / "out.mp4"
-    result = tools_video.burn_avatar(
-        str(base), str(avatar), track_start_s=0.0, output_path=str(out),
+    result = avatar.burn_avatar(
+        str(base), str(avatar_clip), track_start_s=0.0, output_path=str(out),
         chroma_key="0x0000FF", size=0.4, out_width=540,
     )
     assert Path(result) == out
@@ -109,13 +109,13 @@ def test_burn_avatar_pre_keyed_chain(tmp_path):
     rectangle in the output (regression check)."""
     base = tmp_path / "base.mp4"
     _make_base_video(base, 1.5)
-    avatar = tmp_path / "avatar.mp4"
-    _make_blue_avatar(avatar, 1.0)
+    avatar_clip = tmp_path / "avatar.mp4"
+    _make_blue_avatar(avatar_clip, 1.0)
 
-    keyed = tools_video.key_avatar_track(str(avatar), chroma_key="0x0000FF")
+    keyed = avatar.key_avatar_track(str(avatar_clip), chroma_key="0x0000FF")
 
     out = tmp_path / "composited.mp4"
-    tools_video.burn_avatar(
+    avatar.burn_avatar(
         str(base), keyed, track_start_s=0.0, output_path=str(out),
         size=0.3, out_width=540,
     )
@@ -126,11 +126,11 @@ def test_burn_avatar_pre_keyed_chain(tmp_path):
 def test_burn_avatar_position_top_right(tmp_path):
     base = tmp_path / "base.mp4"
     _make_base_video(base, 1.0)
-    avatar = tmp_path / "avatar.mp4"
-    _make_blue_avatar(avatar, 1.0)
+    avatar_clip = tmp_path / "avatar.mp4"
+    _make_blue_avatar(avatar_clip, 1.0)
     out = tmp_path / "tr.mp4"
-    tools_video.burn_avatar(
-        str(base), str(avatar), track_start_s=0.0, output_path=str(out),
+    avatar.burn_avatar(
+        str(base), str(avatar_clip), track_start_s=0.0, output_path=str(out),
         position="top_right", chroma_key="0x0000FF", out_width=540,
     )
     assert out.exists()

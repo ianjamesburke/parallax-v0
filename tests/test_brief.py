@@ -136,7 +136,7 @@ def test_to_plan_skeleton_carries_aspect_voice_and_scenes(tmp_path):
     plan = brief.to_plan_skeleton()
     assert plan["aspect"] == "16:9"
     assert plan["voice"] == "Puck"
-    assert plan["speed"] == 1.2
+    assert plan["voice_speed"] == 1.2
     assert len(plan["scenes"]) == 2
     assert plan["scenes"][1]["animate"] is True
     assert plan["scenes"][1]["motion_prompt"] == "slow zoom"

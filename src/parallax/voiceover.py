@@ -17,7 +17,7 @@ from pathlib import Path
 from .log import get_logger
 from .shim import is_test_mode, output_dir
 
-log = get_logger("tools_video")
+log = get_logger(__name__)
 
 
 def generate_voiceover(
@@ -27,6 +27,7 @@ def generate_voiceover(
     out_dir: str | None = None,
     style: str | None = None,
     style_hint: str | None = None,
+    voice_model: str = "tts-mini",
 ) -> str:
     """Generate voiceover and apply pacing transforms.
 
@@ -54,12 +55,12 @@ def generate_voiceover(
     from . import openrouter
 
     tts_voice = voice
-    tts_alias = "tts-mini"
+    tts_alias = voice_model
 
     t0 = time.monotonic()
     log.info(
-        "voiceover: voice=%s speed=%.2f chars=%d style=%s",
-        voice, speed, len(text), style or style_hint or "default",
+        "voiceover: voice=%s voice_model=%s speed=%.2f chars=%d style=%s",
+        voice, voice_model, speed, len(text), style or style_hint or "default",
     )
 
     raw_path, words_with_ends, _raw_duration = openrouter.generate_tts(

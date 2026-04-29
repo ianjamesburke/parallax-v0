@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from parallax import tools_video
+from parallax import project
 
 
 def test_animate_skips_non_animate_scenes(tmp_path, monkeypatch):
@@ -24,7 +24,7 @@ def test_animate_skips_non_animate_scenes(tmp_path, monkeypatch):
         {"index": 1, "animate": True, "still_path": str(tmp_path / "fake.png"),
          "duration_s": 1.0, "motion_prompt": "drift"},
     ]
-    out = json.loads(tools_video.animate_scenes(json.dumps(scenes), str(tmp_path)))
+    out = json.loads(project.animate_scenes(json.dumps(scenes), str(tmp_path)))
     assert "clip_path" not in out[0]
     assert "clip_path" in out[1]
     assert Path(out[1]["clip_path"]).exists()
@@ -39,7 +39,7 @@ def test_animate_skips_scenes_with_existing_clip(tmp_path, monkeypatch):
         {"index": 0, "animate": True, "still_path": str(tmp_path / "fake.png"),
          "duration_s": 1.0, "clip_path": str(existing)},
     ]
-    out = json.loads(tools_video.animate_scenes(json.dumps(scenes), str(tmp_path)))
+    out = json.loads(project.animate_scenes(json.dumps(scenes), str(tmp_path)))
     assert out[0]["clip_path"] == str(existing)
     # File unchanged (1 byte)
     assert existing.stat().st_size == 1
@@ -52,6 +52,6 @@ def test_animate_renders_when_clip_missing(tmp_path, monkeypatch):
          "duration_s": 1.0, "clip_path": str(tmp_path / "does_not_exist.mp4"),
          "motion_prompt": "drift"},
     ]
-    out = json.loads(tools_video.animate_scenes(json.dumps(scenes), str(tmp_path)))
+    out = json.loads(project.animate_scenes(json.dumps(scenes), str(tmp_path)))
     # New clip path was assigned (different from the missing path)
     assert Path(out[0]["clip_path"]).exists()

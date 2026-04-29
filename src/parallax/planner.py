@@ -36,8 +36,10 @@ from .brief import Brief
 _TOP_LEVEL_ORDER = (
     "aspect",
     "voice",
-    "speed",
-    "model",
+    "voice_speed",
+    "voice_model",
+    "image_model",
+    "video_model",
     "caption_style",
     "character_image",
     "scenes",
@@ -154,6 +156,7 @@ def plan_from_brief(
     *,
     image_model: str = "mid",
     video_model: str = "mid",
+    voice_model: str = "tts-mini",
     caption_style: str = "anton",
 ) -> PlanResult:
     """Translate a brief.yaml into a fully-resolved plan.yaml.
@@ -179,11 +182,6 @@ def plan_from_brief(
         On missing assets, `questions_path` points at the written
         questions.yaml and no plan.yaml is written.
     """
-    # video_model is currently unused but reserved for the upcoming
-    # per-scene model split; keep the parameter to avoid churning the
-    # call sites later.
-    del video_model
-
     brief_path = Path(brief_path)
     folder = Path(folder).expanduser().resolve()
 
@@ -207,7 +205,9 @@ def plan_from_brief(
 
     # All assets present — build the plan.
     plan = brief.to_plan_skeleton()
-    plan["model"] = image_model
+    plan["image_model"] = image_model
+    plan["video_model"] = video_model
+    plan["voice_model"] = voice_model
     plan["caption_style"] = caption_style
 
     character_image = _first_character_ref(brief, folder)

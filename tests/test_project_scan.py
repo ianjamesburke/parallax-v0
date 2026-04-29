@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 
-from parallax.tools_video import scan_project_folder
+from parallax.project import scan_project_folder
 
 
 def _w(p, content="x"):

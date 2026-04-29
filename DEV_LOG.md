@@ -2,6 +2,23 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-29 — [CHANGED] Cleanup pass — Plan model, field renames, provider consolidation
+- Pydantic `Plan` model in `src/parallax/plan.py` — strict (extra="forbid"),
+  single load point in `produce.run_plan`. Mirrors `Brief`.
+- Renamed `plan.model`→`image_model`, `plan.animate_model`→`video_model`;
+  added `plan.voice_model` (default `tts-mini`). Per-scene overrides for
+  all three. Old field names rejected at load with "rename to <new>" message.
+- `openrouter_tts.py` folded into `openrouter.py`. Hoisted single shared
+  client config (`_BASE`, `_BASE_HEADERS`, `_post`, `_stream_post`) so
+  endpoint URL + headers live in exactly one place.
+- Deleted `tools.py` and `tools_video.py` compat shims. Test imports now
+  point directly at the real modules.
+- `install.sh` rewritten for the OpenRouter-only era — prompts for
+  OPENROUTER_API_KEY, drops the FAL/Anthropic backend logic.
+**Breaks if:** plan.yaml using `model:` or `animate_model:` parses without
+error; `parallax models list` fails; `from parallax.tools import generate_image`
+or `from parallax.tools_video import ...` resolves; `openrouter_tts.py` exists.
+
 ## 2026-04-29 — [CHANGED] Phase 1.7 — CLI wiring (plan / ingest / --brief)
 Added `parallax plan` and `parallax ingest` subcommands; `--brief` on `parallax produce` runs the planner first then produces from the materialized plan. `parallax test-scene` collapsed into `parallax produce --scene <N>`. Aspirational V2 commands (`generate`, `script`, `edit`, `compose`, `setup`, `status`, `web`, `project`, `publish`) intentionally NOT added — they have no implementation and stub commands create dead surface area. Help-text order matches the V2 namespace.
 **Breaks if:** `parallax test-scene` is still a registered subcommand, or `parallax plan --folder X` succeeds when X has no brief.yaml, or `parallax produce --brief` and `parallax produce --plan` can both be passed simultaneously without an error.

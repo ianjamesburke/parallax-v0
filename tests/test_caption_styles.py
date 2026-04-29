@@ -14,7 +14,7 @@ caption styles inline — `caption_style: <dict>` in plan.yaml.
 
 from __future__ import annotations
 
-from parallax.tools_video import (
+from parallax.captions import (
     CAPTION_STYLES,
     _expand_animation_keyframes,
     resolve_caption_style,

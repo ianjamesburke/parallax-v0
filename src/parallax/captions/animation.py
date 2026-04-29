@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from ..log import get_logger
 
-log = get_logger("tools_video")
+log = get_logger(__name__)
 
 
 def _expand_animation_keyframes(
