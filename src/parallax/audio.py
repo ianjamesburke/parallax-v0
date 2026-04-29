@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
