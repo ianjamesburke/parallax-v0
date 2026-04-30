@@ -6,7 +6,7 @@ align_scenes → write_manifest → ken_burns_assemble → (optionally)
 burn_captions → burn_headline.
 
 Plan YAML schema:
-  voice: Kore                # TTS voice (default: Kore). See
+  voice: nova                # TTS voice (default: nova). See
                              # `parallax models show tts-mini`
                              # for the full list of prebuilt voices.
   voice_model: tts-mini      # TTS model alias (default: tts-mini).

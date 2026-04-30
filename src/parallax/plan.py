@@ -153,7 +153,7 @@ class Plan(BaseModel):
     resolution: str | None = None
 
     # Voice
-    voice: str = "Kore"
+    voice: str = "nova"
     voice_speed: float = 1.0
     voice_model: str = "tts-mini"
     style: str | None = None

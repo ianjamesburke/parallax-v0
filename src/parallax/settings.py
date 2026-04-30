@@ -242,7 +242,7 @@ def resolve_settings(plan: dict[str, Any], folder: Path, plan_path: Path) -> Set
 
     image_model = plan.get("image_model", "mid")
     video_model = plan.get("video_model", "mid")
-    voice = plan.get("voice", "Kore")
+    voice = plan.get("voice", "nova")
     voice_model = plan.get("voice_model", "tts-mini")
     # TTS pacing is controlled via `style` (e.g. rapid_fire); leave the
     # atempo speed knob neutral by default. Plans can still override.
