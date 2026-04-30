@@ -20,13 +20,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/parallax"]
-# Ensure non-.py assets under the package make it into the wheel so
-# importlib.resources.files("parallax") can resolve them after `uv tool
-# install`. Specifically: skills/*.md (loaded by narrative-parallax's
-# orchestrator agent) and the existing fonts/captions runtime assets.
-artifacts = [
-  "src/parallax/skills/*.md",
-]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

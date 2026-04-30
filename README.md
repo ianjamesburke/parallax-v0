@@ -97,3 +97,5 @@ uv run parallax verify-suite tests/fixtures/verify_suite_smoke/
 ```
 
 `DEV_LOG.md` is the canonical record of architectural decisions, gotchas, and deferrals — newest-first, `Breaks if:` lines on every shipped change.
+
+The Claude Code agent guide for operating this CLI lives in a standalone repo: [parallax-skill](https://github.com/ianjamesburke/parallax-skill).
