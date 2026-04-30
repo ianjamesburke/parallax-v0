@@ -542,6 +542,50 @@ def describe_reference(image_path: str | Path) -> str:
     return _describe_reference_cache[key]
 
 
+def analyze_image(
+    image_path: str | Path,
+    question: str | None = None,
+    *,
+    model: str = "google/gemini-2.5-flash",
+) -> str:
+    """Send an image to a vision model and return the text response.
+
+    `question` is passed verbatim as the user prompt. When omitted a neutral
+    describe prompt is used. `model` must be a raw OpenRouter model ID (not a
+    parallax tier alias — this is a general-purpose vision call, not a
+    generation call).
+
+    Raises on API failure (unlike `describe_reference` which swallows errors
+    for pipeline resilience — this is a user-facing command, so it should
+    fail loud).
+    """
+    import base64
+
+    _check_key()
+    p = Path(image_path).expanduser()
+    if not p.is_file():
+        raise ValueError(f"Image not found: {p}")
+    suffix = p.suffix.lstrip(".").lower() or "png"
+    b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+    prompt = question or "Describe this image in detail."
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {
+                "url": f"data:image/{suffix};base64,{b64}"
+            }},
+        ]}],
+    }
+    resp = _post("/chat/completions", body, timeout=60.0)
+    _raise_for_credits_or_status(resp)
+    data = resp.json()
+    content = data["choices"][0]["message"]["content"]
+    if isinstance(content, list):
+        content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+    return (content or "").strip()
+
+
 def _aspect_cue(aspect_ratio: str | None) -> str:
     """Textual prefix to nudge image models that ignore the body `aspect_ratio` field.
 
