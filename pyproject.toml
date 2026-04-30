@@ -1,6 +1,6 @@
 [project]
 name = "parallax"
-version = "0.4.6"
+version = "0.4.7"
 description = "Minimal agentic creative production CLI — image generation v0"
 requires-python = ">=3.11"
 dependencies = [
@@ -9,7 +9,7 @@ dependencies = [
     "pillow>=10.0.0",
     "pydantic>=2.6",
     "pyyaml>=6.0",
-    "whisperx>=3.8.5",
+    "whisperx>=3.7.7,<3.8.0",
 ]
 
 [project.scripts]
