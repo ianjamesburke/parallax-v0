@@ -13,6 +13,12 @@ import pytest
 import yaml
 
 from parallax.verify_suite import cli_init, cli_run, init_case
+from parallax.ffmpeg_utils import _ffmpeg_has_drawtext
+
+_requires_drawtext = pytest.mark.skipif(
+    not _ffmpeg_has_drawtext(),
+    reason="ffmpeg on PATH lacks drawtext filter (install ffmpeg-full or a freetype-enabled build)",
+)
 
 
 REF_CASE = Path(__file__).parent.parent / "tests" / "integration" / "res-720x1280"
@@ -83,6 +89,7 @@ def test_init_from_with_resolution_rewrites_both_files(tmp_path):
     assert expected["name"] == "res-480"
 
 
+@_requires_drawtext
 def test_init_from_with_resolution_roundtrips_to_passing_run(tmp_path, capsys, monkeypatch):
     """Scaffolding with --resolution produces a case that passes verify suite."""
     monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
@@ -162,6 +169,7 @@ def test_cli_init_returns_nonzero_on_existing_target(tmp_path, capsys):
 # Roundtrip — scaffolded case passes verify suite
 # --------------------------------------------------------------------------
 
+@_requires_drawtext
 def test_roundtrip_scaffolded_case_passes_verify_suite(tmp_path, capsys, monkeypatch):
     """verify init --from <ref> | verify suite <new> → [PASS]."""
     monkeypatch.setenv("PARALLAX_TEST_MODE", "1")

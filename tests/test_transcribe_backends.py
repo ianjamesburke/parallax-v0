@@ -82,7 +82,7 @@ class TestForcedAlignBackendSelection:
 
         assert words == _stub_word_list()
 
-    def test_fallback_logs_warning(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    def test_fallback_logs_warning(self, tmp_path: Path) -> None:
         wav = _make_wav(tmp_path)
 
         mock_word = SimpleNamespace(word=" hi ", start=0.1, end=0.3)
@@ -92,13 +92,13 @@ class TestForcedAlignBackendSelection:
         mock_fw_model.transcribe.return_value = ([mock_segment], mock_info)
         MockWhisperModel = MagicMock(return_value=mock_fw_model)
 
-        import logging
-        with caplog.at_level(logging.WARNING, logger="parallax.forced_align"), \
+        with patch.object(fa_mod.log, "warning") as mock_warn, \
              patch.object(fa_mod, "_HAS_WHISPERX", False), \
              patch("faster_whisper.WhisperModel", MockWhisperModel):
             fa_mod.align_words(wav)
 
-        assert any("faster-whisper" in r.message for r in caplog.records)
+        mock_warn.assert_called_once()
+        assert "faster-whisper" in mock_warn.call_args[0][0]
 
     def test_output_shape_is_canonical(self, tmp_path: Path) -> None:
         """Both backends must return [{word, start, end}] with the right types."""
