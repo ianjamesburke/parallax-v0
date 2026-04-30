@@ -1,22 +1,26 @@
-"""Voiceover pipeline characterization: generate_voiceover, _apply_atempo,
-_trim_long_pauses, _mock_voiceover.
+"""Voiceover pipeline characterization: generate_voiceover, _trim_long_pauses,
+_mock_voiceover.
 
 Locks in:
   - generate_voiceover always routes through openrouter.generate_tts with
     alias=tts-mini and the supplied voice name.
-  - atempo scales word timestamps by 1/speed and writes the canonical mp3.
   - _trim_long_pauses collapses gaps > max_gap_s to keep_gap_s and shifts
     word timestamps by the cumulative removed duration.
   - PARALLAX_TEST_MODE produces a synthetic silence mp3 + word table.
+  - voiceover.generate_voiceover does NOT accept a `speed` kwarg — speed
+    adjustment lives in `audio.speedup` and runs as `stage_speed_adjust`.
 
 Network calls (openrouter.generate_tts) are stubbed via monkeypatch.
 """
 
 from __future__ import annotations
 
+import inspect
 import json
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from parallax import voiceover
 
@@ -56,42 +60,21 @@ def test_mock_voiceover_writes_silence_mp3_and_words(tmp_path, monkeypatch):
     assert out["total_duration_s"] > 0
 
 
-# ─── _apply_atempo ───────────────────────────────────────────────────────
+# ─── voiceover signature: speed kwarg is gone ────────────────────────────
 
 
-def test_apply_atempo_scales_word_timestamps(tmp_path):
-    raw = tmp_path / "raw.mp3"
-    _make_silent_mp3(raw, 2.0)
-    words = [
-        {"word": "a", "start": 0.0, "end": 0.5},
-        {"word": "b", "start": 0.5, "end": 1.0},
-        {"word": "c", "start": 1.0, "end": 2.0},
-    ]
-    out_path = tmp_path / "sped.mp3"
-    sped, dur = voiceover._apply_atempo(raw, words, out_path, 2.0)
-
-    # speed=2 → new timestamps are half the originals
-    assert sped[0]["start"] == 0.0
-    assert sped[0]["end"] == 0.25
-    assert sped[2]["end"] == 1.0
-    # output duration is roughly half (atempo scales by 1/speed)
-    assert dur == 1.0
-    assert out_path.exists()
-    actual_dur = _probe_duration(out_path)
-    assert abs(actual_dur - 1.0) < 0.15
+def test_generate_voiceover_does_not_accept_speed_kwarg():
+    sig = inspect.signature(voiceover.generate_voiceover)
+    assert "speed" not in sig.parameters, (
+        "voiceover.generate_voiceover must not accept `speed` — speed "
+        "adjustment lives in audio.speedup / stage_speed_adjust now."
+    )
 
 
-def test_apply_atempo_failure_falls_back_to_raw(tmp_path):
-    """Bad input still completes (renames raw to out)."""
-    raw = tmp_path / "raw.mp3"
-    raw.write_bytes(b"not-an-mp3")
-    words = [{"word": "x", "start": 0.0, "end": 1.0}]
-    out_path = tmp_path / "sped.mp3"
-    # ffmpeg will fail; function falls back to renaming raw -> out
-    sped, dur = voiceover._apply_atempo(raw, words, out_path, 2.0)
-    # words unchanged on failure
-    assert sped == words
-    assert dur == 1.0
+def test_apply_atempo_helper_removed():
+    assert not hasattr(voiceover, "_apply_atempo"), (
+        "voiceover._apply_atempo must be removed; use audio.speedup."
+    )
 
 
 # ─── _trim_long_pauses ───────────────────────────────────────────────────
@@ -124,16 +107,12 @@ def test_trim_long_pauses_collapses_2s_gap(tmp_path):
         audio, words, out_path, max_gap_s=0.4, keep_gap_s=0.1,
     )
 
-    # gap was 2.0s, keep_gap_s=0.1 → removed = 2.0 - 0.1 = 1.9s
-    # word "b" originally at 2.5 → shifted back by 1.9 → 0.6
     assert adjusted[0]["start"] == 0.0
     assert adjusted[0]["end"] == 0.5
     assert abs(adjusted[1]["start"] - 0.6) < 0.01
     assert abs(adjusted[1]["end"] - 1.1) < 0.01
-    # word "c" at 3.0 → shifted back by 1.9 → 1.1
     assert abs(adjusted[2]["start"] - 1.1) < 0.01
 
-    # Output duration roughly = original - 1.9
     actual_dur = _probe_duration(out_path)
     assert abs(actual_dur - 2.1) < 0.2
 
@@ -166,35 +145,11 @@ def test_generate_voiceover_routes_to_gemini_by_default(tmp_path, monkeypatch):
     monkeypatch.setattr(openrouter, "generate_tts", fake_tts)
 
     out = json.loads(voiceover.generate_voiceover(
-        "hi", voice="Kore", speed=1.0, out_dir=str(tmp_path),
+        "hi", voice="Kore", out_dir=str(tmp_path),
     ))
     assert captured["alias"] == "tts-mini"
     assert captured["voice"] == "Kore"
     assert Path(out["audio_path"]).exists()
-
-
-def test_generate_voiceover_applies_atempo_when_speed_changes(tmp_path, monkeypatch):
-    """With speed != 1.0, atempo runs and word timestamps scale."""
-    monkeypatch.delenv("PARALLAX_TEST_MODE", raising=False)
-
-    def fake_tts(*, text, alias, voice, out_dir, style, style_hint):
-        raw = Path(out_dir) / "raw_tts.mp3"
-        _make_silent_mp3(raw, 2.0)
-        words = [
-            {"word": "one", "start": 0.0, "end": 1.0},
-            {"word": "two", "start": 1.0, "end": 2.0},
-        ]
-        return str(raw), words, 2.0
-
-    from parallax import openrouter
-    monkeypatch.setattr(openrouter, "generate_tts", fake_tts)
-
-    out = json.loads(voiceover.generate_voiceover(
-        "one two", voice="Kore", speed=2.0, out_dir=str(tmp_path),
-    ))
-    # atempo=2 halves the timestamps
-    assert out["words"][0]["end"] == 0.5
-    assert out["words"][1]["end"] == 1.0
 
 
 def test_generate_voiceover_passes_style_through(tmp_path, monkeypatch):
@@ -212,8 +167,15 @@ def test_generate_voiceover_passes_style_through(tmp_path, monkeypatch):
     monkeypatch.setattr(openrouter, "generate_tts", fake_tts)
 
     voiceover.generate_voiceover(
-        "x", voice="Kore", speed=1.0, out_dir=str(tmp_path),
+        "x", voice="Kore", out_dir=str(tmp_path),
         style="rapid_fire", style_hint="urgent",
     )
     assert captured["style"] == "rapid_fire"
     assert captured["style_hint"] == "urgent"
+
+
+def test_generate_voiceover_rejects_speed_kwarg(tmp_path, monkeypatch):
+    monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
+    monkeypatch.setenv("PARALLAX_OUTPUT_DIR", str(tmp_path))
+    with pytest.raises(TypeError):
+        voiceover.generate_voiceover("hi", out_dir=str(tmp_path), speed=1.5)

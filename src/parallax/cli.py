@@ -168,6 +168,19 @@ def main(argv: list[str] | None = None) -> int:
     cap_p.add_argument("--crossfade", type=float, default=0.05,
                        help="Crossfade duration at each cut joint, in seconds (default: 0.05).")
 
+    speed_p = audio_sub.add_parser(
+        "speed",
+        help=("Apply ffmpeg atempo to retime an audio file. "
+              "Use --rate <multiplier> or --by <pct%>."),
+    )
+    speed_p.add_argument("--in", dest="in_path", required=True, help="Input audio file.")
+    speed_p.add_argument("--out", dest="out_path", required=True, help="Output audio path.")
+    rate_grp = speed_p.add_mutually_exclusive_group(required=True)
+    rate_grp.add_argument("--rate", type=float, default=None,
+                          help="atempo multiplier (e.g. 1.3 = 30% faster).")
+    rate_grp.add_argument("--by", type=str, default=None,
+                          help="Percent change with trailing %% — e.g. '30%%' (=1.3) or '-20%%' (=0.8).")
+
     # --- video subcommands ---
     video_p = sub.add_parser("video", help="Video utilities.")
     video_sub = video_p.add_subparsers(dest="video_command", required=True)
@@ -393,6 +406,14 @@ def main(argv: list[str] | None = None) -> int:
             if result["new_avatar"]:
                 print(f"  avatar → {result['new_avatar']}")
             print(f"plan.yaml updated. Run: parallax produce --folder {args.folder} --plan {args.plan}")
+            return 0
+
+        if args.audio_command == "speed":
+            from pathlib import Path as _P
+            from .audio import speedup, parse_by_pct
+            rate = args.rate if args.rate is not None else parse_by_pct(args.by)
+            out = speedup(_P(args.in_path), _P(args.out_path), rate)
+            print(f"audio speed: rate={rate:.4f} → {out}")
             return 0
 
         if args.audio_command == "cap-pauses":

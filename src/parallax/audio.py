@@ -1,4 +1,4 @@
-"""parallax.audio — audio utilities: transcription, word timestamps, silence trimming."""
+"""parallax.audio — audio utilities: transcription, word timestamps, silence trimming, speed adjust."""
 from __future__ import annotations
 
 import json
@@ -106,6 +106,87 @@ def transcribe_words(input_path: str, out_path: str) -> list[dict]:
     finally:
         if tmp_audio:
             Path(tmp_audio).unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Speed adjustment
+# ---------------------------------------------------------------------------
+
+def speedup(in_path: Path, out_path: Path, rate: float) -> Path:
+    """Re-time `in_path` by `rate` via ffmpeg `atempo`, writing `out_path`.
+
+    `rate > 1.0` shortens the audio (faster); `rate < 1.0` lengthens it.
+    `rate == 1.0` is a no-op identity copy through ffmpeg (re-encodes to
+    keep the output container/codec consistent with the speed-changed
+    branch).
+
+    Raises RuntimeError naming `audio.speedup` if ffmpeg fails or the
+    output file is missing — no silent fallback. The caller is expected
+    to handle the exception or let it propagate.
+
+    `atempo` accepts factors in [0.5, 100.0]; values outside that range
+    raise immediately so callers don't get a misleading ffmpeg error.
+    """
+    in_p = Path(in_path)
+    out_p = Path(out_path)
+    if not in_p.is_file():
+        raise FileNotFoundError(f"audio.speedup: input not found: {in_p}")
+    if rate <= 0:
+        raise ValueError(f"audio.speedup: rate must be > 0, got {rate}")
+    # ffmpeg's atempo filter is documented for [0.5, 100.0]; chain not
+    # supported here because we have no real-world need for it yet.
+    if rate < 0.5 or rate > 100.0:
+        raise ValueError(
+            f"audio.speedup: rate {rate} outside ffmpeg atempo range [0.5, 100.0]"
+        )
+    out_p.parent.mkdir(parents=True, exist_ok=True)
+
+    # Pick a codec by extension so the output stays in a sane format.
+    suffix = out_p.suffix.lower()
+    codec_args: list[str]
+    if suffix == ".wav":
+        codec_args = ["-c:a", "pcm_s16le"]
+    elif suffix == ".mp3":
+        codec_args = ["-c:a", "libmp3lame", "-b:a", "128k"]
+    elif suffix in (".m4a", ".aac"):
+        codec_args = ["-c:a", "aac", "-b:a", "192k"]
+    else:
+        # Default to libmp3lame; ffmpeg will fail loudly if the container
+        # disagrees with the codec, which is the right behaviour.
+        codec_args = ["-c:a", "libmp3lame", "-b:a", "128k"]
+
+    result = run_ffmpeg(
+        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+         "-i", str(in_p), "-af", f"atempo={rate}",
+         *codec_args, str(out_p)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not out_p.exists():
+        stderr = (result.stderr or "").strip().splitlines()[-1:] if result.stderr else []
+        tail = stderr[0] if stderr else "(no stderr)"
+        raise RuntimeError(
+            f"audio.speedup: ffmpeg atempo={rate} failed for {in_p} -> {out_p}: {tail}"
+        )
+    return out_p
+
+
+def parse_by_pct(by: str) -> float:
+    """Translate a `--by N%` string to a numeric atempo rate.
+
+    `--by 30%` -> 1.30 (30% faster); `--by -20%` -> 0.80 (20% slower).
+    The trailing `%` is required to make the "percent change" semantics
+    explicit at the call site — bare numbers should use `--rate`.
+    """
+    s = by.strip()
+    if not s.endswith("%"):
+        raise ValueError(
+            f"audio.parse_by_pct: '{by}' must end with '%' (e.g. '30%' or '-20%')"
+        )
+    try:
+        pct = float(s[:-1])
+    except ValueError as e:
+        raise ValueError(f"audio.parse_by_pct: cannot parse '{by}' as a percentage") from e
+    return 1.0 + pct / 100.0
 
 
 # ---------------------------------------------------------------------------

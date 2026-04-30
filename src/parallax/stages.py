@@ -412,10 +412,9 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
 
         _log(settings,
              f"generate_voiceover — voice={settings.voice} voice_model={voice_model} "
-             f"speed={settings.voice_speed} "
              f"style={settings.style or settings.style_hint or '<default>'}")
         vo_result = json.loads(generate_voiceover(
-            text=full_script, voice=settings.voice, speed=settings.voice_speed,
+            text=full_script, voice=settings.voice,
             out_dir=rt["audio_dir"], style=settings.style, style_hint=settings.style_hint,
             voice_model=voice_model,
         ))
@@ -426,6 +425,92 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     rt["audio_path"] = audio_path
     rt["words_path"] = words_path
     rt["vo_result"] = vo_result
+    return plan
+
+
+def stage_speed_adjust(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
+    """Apply `audio.speedup` to the voiceover when `voice_speed` != 1.0.
+
+    Driven by `plan["voice_speed"]` (top-level), with a uniform per-scene
+    override allowed if every overriding scene agrees. Mismatched per-
+    scene values raise — voiceover is synthesized as a single TTS chunk
+    so a per-scene split would silently break prosody.
+
+    Skipped (no-op) when:
+      - rate ≈ 1.0
+      - the voiceover stage produced no audio (empty script path)
+      - the run is in PARALLAX_TEST_MODE (mock voiceover writes a
+        deterministic silence track and we don't bother re-encoding it
+        through atempo for the synthetic words; the synthetic word table
+        is what downstream consumes)
+
+    Idempotent: re-running on already-sped audio uses the same source as
+    last time (the canonical voiceover.<ext> is overwritten in place via
+    a temporary file).
+
+    Breaks if: a plan with `voice_speed: 1.5` produces a voiceover whose
+    duration matches the `voice_speed: 1.0` baseline.
+    """
+    from . import audio
+
+    rt = _runtime(plan)
+    if "vo_result" not in rt or not rt.get("audio_path"):
+        return plan
+
+    # Locked voiceover paths in the plan are taken as-is — the user is
+    # locking the post-speed artifact, not the raw TTS. Re-applying
+    # atempo on every run would double-speed the locked file.
+    if plan.get("audio_path"):
+        return plan
+
+    plan_speed = float(plan.get("voice_speed", 1.0))
+
+    scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
+    scene_speeds = {float(s["voice_speed"]) for s in scenes_raw if s.get("voice_speed") is not None}
+    if len(scene_speeds) > 1:
+        raise RuntimeError(
+            f"per-scene voice_speed overrides disagree: {sorted(scene_speeds)}. "
+            f"Mixed-speed adjustment is not supported (voiceover is one TTS call). "
+            f"Set the same `voice_speed:` on every scene that overrides, or move "
+            f"the value to the plan-level `voice_speed:`."
+        )
+    rate = scene_speeds.pop() if scene_speeds else plan_speed
+
+    if abs(rate - 1.0) <= 1e-3:
+        return plan
+
+    audio_path = Path(rt["audio_path"])
+    words_path = Path(rt["words_path"])
+    tmp_out = audio_path.with_name(f"{audio_path.stem}_sped{audio_path.suffix}")
+    _log(settings, f"speed_adjust — rate={rate:.3f} ({audio_path.name})")
+    audio.speedup(audio_path, tmp_out, rate)
+    tmp_out.replace(audio_path)
+
+    scale = 1.0 / rate
+    vo_result = rt["vo_result"]
+    sped_words = [
+        {"word": w["word"],
+         "start": round(w["start"] * scale, 3),
+         "end": round(w["end"] * scale, 3)}
+        for w in vo_result.get("words", [])
+    ]
+    sped_dur = sped_words[-1]["end"] if sped_words else round(
+        float(vo_result.get("total_duration_s", 0.0)) * scale, 3
+    )
+
+    words_path.write_text(json.dumps(
+        {"words": sped_words, "total_duration_s": sped_dur}, indent=2,
+    ))
+
+    vo_result["words"] = sped_words
+    vo_result["total_duration_s"] = sped_dur
+    rt["vo_result"] = vo_result
+    runlog.event(
+        "audio.speed_adjust",
+        level="DEBUG",
+        rate=rate,
+        new_duration_s=sped_dur,
+    )
     return plan
 
 
@@ -744,6 +829,9 @@ _KNOWN_SCENE_FIELDS = {
     # Per-scene model overrides (image_model / video_model / voice_model
     # win over plan-level defaults).
     "image_model", "video_model", "voice_model",
+    # Per-scene speed override — applied uniformly across the run. See
+    # stage_speed_adjust for how mixed values are rejected.
+    "voice_speed",
     # video_references: character/style reference images passed to OpenRouter as
     # input_references for text-to-video consistency. Only effective when there is
     # no still_path driving frame_images (i.e. pure text-to-video scenes). Distinct
@@ -878,6 +966,7 @@ STAGES = [_wrap_stage(s) for s in (
     stage_stills,
     stage_animate,
     stage_voiceover,
+    stage_speed_adjust,
     stage_align,
     stage_manifest,
     stage_assemble,
