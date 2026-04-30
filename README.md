@@ -29,9 +29,9 @@ Tab completion for subcommands and flags is dynamic, driven by `argcomplete` (in
 
 ```sh
 PARALLAX_COMP=~/.cache/zsh/parallax-completion.zsh
-if [[ ! -f $PARALLAX_COMP ]] && command -v register-python-argcomplete &>/dev/null; then
+if [[ ! -f $PARALLAX_COMP ]] && command -v parallax &>/dev/null; then
   mkdir -p ~/.cache/zsh
-  register-python-argcomplete parallax > $PARALLAX_COMP
+  parallax completions zsh > $PARALLAX_COMP
 fi
 [[ -f $PARALLAX_COMP ]] && source $PARALLAX_COMP
 unset PARALLAX_COMP

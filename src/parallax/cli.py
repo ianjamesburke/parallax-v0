@@ -304,6 +304,12 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("update", help="Upgrade parallax via uv.")
 
+    completions_p = sub.add_parser(
+        "completions",
+        help="Print a shell completion stub. Usage: parallax completions zsh",
+    )
+    completions_p.add_argument("shell", choices=["zsh", "bash"], help="Target shell.")
+
     try:
         import argcomplete
 
@@ -335,6 +341,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "update":
         return _run_update()
+
+    if args.command == "completions":
+        return _run_completions(args.shell)
 
     if args.command == "credits":
         from .openrouter import InsufficientCreditsError, check_credits
@@ -664,6 +673,13 @@ def _print_model_show(models_pkg, alias: str, kind: str | None) -> int:
                 print(f"  - {v}")
     if spec.description:
         print(f"\n{spec.description}")
+    return 0
+
+
+def _run_completions(shell: str) -> int:
+    import argcomplete
+
+    print(argcomplete.shellcode(["parallax"], shell=shell))
     return 0
 
 
