@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-29 — [CHANGED] CLI prints help when a command group is invoked with no subcommand (PR #20 → main)
+Subparsers no longer error with `the following arguments are required` when called bare. A single tree-walk helper (`_enable_help_on_empty`) flips `required=False` on every subparsers action and stamps each parent's `print_help` into `args._help_on_empty`; leaf parsers clear the inherited default so concrete subcommands run normally. Adding new subgroups now gets this behavior for free — no hardcoded list to maintain. Also fixed two latent `%` escapes in audio help strings (`<pct%>` and `30%`) that only surfaced once those help texts started rendering.
+**Breaks if:** `parallax`, `parallax audio`, `parallax models`, `parallax video`, `parallax verify`, or `parallax completions` (each invoked bare) does not print its help and exit 0; or `parallax audio --help` raises `ValueError: unsupported format character`.
+
 ## 2026-04-29 — [CHANGED] WORK BLOCK: Stabilization round-out (PRs #13/#14/#15 → main)
 All three phases merged. `audio.speedup` + `parallax audio speed` + `stage_speed_adjust` lifted out of voiceover; `parallax verify {suite,init}` subgroup live; skill extracted to `~/Documents/GitHub/parallax-skill` with `~/.claude/skills/parallax` repointed.
 **Breaks if:** `voiceover.generate_voiceover` accepts a `speed` kwarg; `parallax verify-suite` resolves; `~/.claude/skills/parallax` resolves into parallax-v0; `src/parallax/skills/` exists.
