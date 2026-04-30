@@ -811,6 +811,10 @@ def _run_completions_install(shell: str | None, path: str | None) -> int:
 
 
 def _run_update() -> int:
+    import re
+    import urllib.request
+    from importlib.metadata import version as pkg_version
+
     uv = shutil.which("uv")
     if not uv:
         print(
@@ -819,7 +823,29 @@ def _run_update() -> int:
             file=sys.stderr,
         )
         return 1
-    print("Upgrading parallax via uv tool upgrade --reinstall…")
+
+    installed = pkg_version("parallax")
+
+    remote: str | None = None
+    try:
+        url = "https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/pyproject.toml"
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            content = resp.read().decode()
+        m = re.search(r'^version\s*=\s*"([^"]+)"', content, re.MULTILINE)
+        if m:
+            remote = m.group(1)
+    except Exception:
+        print("Could not check remote version, upgrading anyway…", file=sys.stderr)
+
+    if remote is not None and installed == remote:
+        print(f"Already up to date (v{installed}).")
+        return 0
+
+    if remote is not None:
+        print(f"Updating parallax v{installed} → v{remote}…")
+    else:
+        print("Upgrading parallax via uv tool upgrade --reinstall…")
+
     result = subprocess.run([uv, "tool", "upgrade", "parallax", "--reinstall"])
     return result.returncode
 
@@ -1052,7 +1078,7 @@ def _print_log_list(limit: int, since: str | None) -> int:
         cutoff = _dt.now(_tz.utc) - delta
         rows = [
             r for r in rows
-            if _safe_iso(r.get("started")) and _safe_iso(r.get("started")) >= cutoff
+            if (s := _safe_iso(r.get("started"))) and s >= cutoff
         ]
 
     rows = rows[:limit]
