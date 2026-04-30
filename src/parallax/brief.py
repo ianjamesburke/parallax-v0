@@ -14,7 +14,7 @@ Schema (informal):
 
     goal: "Promote the new Lion energy drink"
     aspect: 9:16          # 9:16 | 16:9 | 1:1 | 4:3 | 3:4
-    voice: Kore           # Gemini TTS voice name
+    voice: nova            # TTS voice name (OpenAI: nova, shimmer, alloy, echo, fable, onyx)
     voice_speed: 1.0
     success_criteria:
       - "Hook lands in <2s"
@@ -125,7 +125,7 @@ class Brief(BaseModel):
 
     goal: str
     aspect: Literal["9:16", "16:9", "1:1", "4:3", "3:4"] = "9:16"
-    voice: str = "Kore"
+    voice: str = "nova"
     voice_speed: float = 1.0
     success_criteria: list[str] = Field(default_factory=list)
     assets: Assets = Field(default_factory=Assets)
