@@ -51,7 +51,7 @@ def _default_emitter(event: str, fields: dict[str, Any]) -> None:
     """Print emitter — matches the legacy `==> {msg}` format.
 
     Used when nothing else is injected (the production CLI path). For
-    structured/test contexts (verify-suite, unit tests), pass a custom
+    structured/test contexts (verify suite, unit tests), pass a custom
     callable into `Settings.events`.
     """
     msg = fields.get("msg")
@@ -68,7 +68,7 @@ class UsageSession:
     after `resolve_settings`). `total_cost_usd` queries the existing
     global log filtered by run_id, so the global sink keeps working
     unchanged — this class is purely a typed accessor for stage code
-    and `expected.yaml` cost assertions in verify-suite.
+    and `expected.yaml` cost assertions in verify suite.
     """
 
     def __init__(self) -> None:
@@ -100,7 +100,7 @@ class ProductionMode(Enum):
     Resolved once at `resolve_settings` time from the
     `PARALLAX_TEST_MODE` env var. Stages should read `settings.mode`
     instead of touching `os.environ` directly so a single process can
-    run multiple modes in sequence (e.g. verify-suite).
+    run multiple modes in sequence (e.g. verify suite).
     """
 
     REAL = "real"

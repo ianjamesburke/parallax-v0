@@ -1,4 +1,4 @@
-# basic — verify-suite smoke case
+# basic — verify suite smoke case
 
 Two-scene plan run end-to-end in `PARALLAX_TEST_MODE=1` against the
 existing parallax stage mocks (no network, no spend).
@@ -13,7 +13,7 @@ from a future stage that bypasses the test-mode mocks.
 
 Run from the repo root:
 
-    PARALLAX_TEST_MODE=1 uv run parallax verify-suite tests/fixtures/verify_suite_smoke/
+    PARALLAX_TEST_MODE=1 uv run parallax verify suite tests/fixtures/verify_suite_smoke/
 
 Expect `[PASS] basic`. To see the failure renderer, mutate
 `expected.final.resolution` in this folder to `9999x9999` and re-run —

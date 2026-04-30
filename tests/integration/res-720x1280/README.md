@@ -1,7 +1,7 @@
 # res-720x1280 — canonical reference test case
 
-This is the operator-facing reference case for `parallax verify-suite`.
-Copy it (or use `parallax verify-init <name> --from
+This is the operator-facing reference case for `parallax verify suite`.
+Copy it (or use `parallax verify init <name> --from
 tests/integration/res-720x1280/`) when you author a new case.
 
 ## What it verifies
@@ -51,7 +51,7 @@ forwards `size`, this case can re-add `stages.stills.resolution:
 From the repo root:
 
 ```sh
-PARALLAX_TEST_MODE=1 uv run parallax verify-suite tests/integration/res-720x1280/
+PARALLAX_TEST_MODE=1 uv run parallax verify suite tests/integration/res-720x1280/
 ```
 
 Expect:
@@ -67,7 +67,7 @@ with a `final.resolution: expected …, got …` line.
 ## How to author a new case (by hand)
 
 1. Make a new sibling folder: `tests/integration/res-480x854/` (or
-   wherever — `verify-suite` accepts any directory of case folders).
+   wherever — `verify suite` accepts any directory of case folders).
 2. Copy `plan.yaml`, edit the `resolution:`, scenes, and any caption /
    headline options. Keep `voice`, `model`, and per-scene `prompt`/
    `vo_text` filled — the test-mode mocks honor `resolution:` but
@@ -75,12 +75,12 @@ with a `final.resolution: expected …, got …` line.
 3. Copy `expected.yaml`, update `name:`, `final.resolution`, and
    every per-stage `resolution:` to match. Update `final.scene_count`
    if the plan has a different number of scenes.
-4. Run `PARALLAX_TEST_MODE=1 uv run parallax verify-suite <new-folder>/`.
+4. Run `PARALLAX_TEST_MODE=1 uv run parallax verify suite <new-folder>/`.
 
 ## How to author a new case (with the scaffolder)
 
 ```sh
-parallax verify-init tests/integration/res-480x854/ \
+parallax verify init tests/integration/res-480x854/ \
   --from tests/integration/res-720x1280/ \
   --resolution 480x854
 ```
@@ -89,14 +89,14 @@ This copies the case verbatim, then rewrites both `plan.yaml`'s
 `resolution:` and `expected.final.resolution` to match. Refuses to
 overwrite an existing target unless `--force` is passed.
 
-Without `--from`, `verify-init` writes a minimal starter (one scene,
+Without `--from`, `verify init` writes a minimal starter (one scene,
 `final` block only) — useful for cases that don't need the full
 schema exercised.
 
 ## `--paid` semantics
 
 Cases with `paid: true` in `expected.yaml` are skipped by default.
-Pass `--paid` to `verify-suite` to include them — they run against
+Pass `--paid` to `verify suite` to include them — they run against
 real APIs and cost real money. This reference case is `paid: false`
 (test-mode only); paid reference cases live separately and ship in
 Block 2 / Phase 2.2.

@@ -527,8 +527,8 @@ def run_suite(suite_dir: Path, paid: bool = False,
     """Run every case subfolder of `suite_dir`, or `suite_dir` itself if it
     is already a case folder (contains both plan.yaml + expected.yaml).
 
-    The single-case shortcut means an operator can point verify-suite
-    directly at one case (e.g. `verify-suite tests/integration/res-720x1280/`)
+    The single-case shortcut means an operator can point verify suite
+    directly at one case (e.g. `verify suite tests/integration/res-720x1280/`)
     without having to wrap it in a parent directory.
     """
     suite_dir = Path(suite_dir).expanduser().resolve()
@@ -555,7 +555,7 @@ def run_suite(suite_dir: Path, paid: bool = False,
 # --------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------
-# Scaffolder — `parallax verify-init`
+# Scaffolder — `parallax verify init`
 # --------------------------------------------------------------------------
 
 _STARTER_PLAN = """\
@@ -576,7 +576,7 @@ scenes:
 
 _STARTER_EXPECTED = """\
 name: {name}
-description: Starter case scaffolded by `parallax verify-init`.
+description: Starter case scaffolded by `parallax verify init`.
 paid: false
 cost_usd_max: 0.0
 
@@ -586,14 +586,14 @@ final:
 """
 
 _STARTER_README = """\
-# {name} — verify-suite case
+# {name} — verify suite case
 
-Scaffolded by `parallax verify-init`. Runs free in
+Scaffolded by `parallax verify init`. Runs free in
 `PARALLAX_TEST_MODE=1` against the test-mode mocks.
 
 Run from the repo root:
 
-    PARALLAX_TEST_MODE=1 uv run parallax verify-suite {target_for_readme}
+    PARALLAX_TEST_MODE=1 uv run parallax verify suite {target_for_readme}
 
 For the full schema reference and a worked example of every assertion
 block, see `tests/integration/res-720x1280/README.md`.
@@ -693,7 +693,7 @@ def init_case(target_dir: Path, *, from_dir: Path | None = None,
 
 def cli_init(target_dir: str | Path, *, from_dir: str | Path | None = None,
              resolution: str | None = None, force: bool = False) -> int:
-    """`parallax verify-init` implementation. Returns 0 on success."""
+    """`parallax verify init` implementation. Returns 0 on success."""
     import sys
     try:
         init_case(
@@ -708,13 +708,13 @@ def cli_init(target_dir: str | Path, *, from_dir: str | Path | None = None,
 
     target = Path(target_dir).expanduser().resolve()
     print(f"Wrote case scaffold → {target}")
-    print(f"  Run it: PARALLAX_TEST_MODE=1 uv run parallax verify-suite {target}/")
+    print(f"  Run it: PARALLAX_TEST_MODE=1 uv run parallax verify suite {target}/")
     return 0
 
 
 def cli_run(suite_dir: str | Path, *, paid: bool = False,
             case: str | None = None) -> int:
-    """`parallax verify-suite` implementation. Returns 0 if all cases pass."""
+    """`parallax verify suite` implementation. Returns 0 if all cases pass."""
     import sys
     suite_path = Path(suite_dir).expanduser().resolve()
     if not suite_path.is_dir():

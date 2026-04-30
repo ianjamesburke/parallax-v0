@@ -67,7 +67,7 @@ parallax ingest ./clips/                # writes clips/index.json with per-clip 
 parallax ingest video.mov --estimate    # dry-run cost report
 ```
 
-Other commands: `parallax usage`, `parallax credits`, `parallax log <run|latest|list>`, `parallax verify-suite <dir>`, `parallax audio {transcribe,detect-silences,trim,cap-pauses}`, `parallax video {frame,color}`.
+Other commands: `parallax usage`, `parallax credits`, `parallax log <run|latest|list>`, `parallax verify suite <dir>`, `parallax audio {transcribe,detect-silences,trim,cap-pauses}`, `parallax video {frame,color}`.
 
 ## Vision
 
@@ -93,7 +93,7 @@ What it explicitly does NOT do (yet):
 ```sh
 uv sync
 uv run pytest -q                         # ~270 tests, mocks everything
-uv run parallax verify-suite tests/fixtures/verify_suite_smoke/
+uv run parallax verify suite tests/fixtures/verify_suite_smoke/
 ```
 
 `DEV_LOG.md` is the canonical record of architectural decisions, gotchas, and deferrals — newest-first, `Breaks if:` lines on every shipped change.

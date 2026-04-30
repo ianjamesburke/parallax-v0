@@ -1,4 +1,4 @@
-# Canonical reference test case for verify-suite.
+# Canonical reference test case for verify suite.
 # Two scenes, captions on, headline on, no avatar, 720x1280.
 # Runs free in PARALLAX_TEST_MODE=1 (no real APIs).
 voice: Kore
