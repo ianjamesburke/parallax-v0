@@ -16,16 +16,9 @@ final:
 
 stages:
   stills:
-    # NOTE: stages.stills.resolution intentionally omitted — the test-mode
-    # mock for generate_image goes through the parallax.tools shim which
-    # currently drops the `size` arg before reaching the resolution-aware
-    # mock in shim.py. Tracked as a Phase 1.3 leak in DEV_LOG ([FUTURE]
-    # tools.py size pass-through). The smoke fixture asserts on
-    # 1080x1920 stills, so the schema branch is still covered. The
-    # product-level resolution guarantee (final mp4 dimensions) is
-    # enforced by `final.resolution` and `assemble.resolution` below.
     files_must_exist:
       - "stills/*.png"
+    resolution: 720x1280
   voiceover:
     files_must_exist:
       - "audio/voiceover.*"
