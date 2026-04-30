@@ -304,6 +304,13 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("update", help="Upgrade parallax via uv.")
 
+    try:
+        import argcomplete
+
+        argcomplete.autocomplete(parser)
+    except ImportError:
+        pass
+
     args = parser.parse_args(argv)
 
     level: int | None = None
