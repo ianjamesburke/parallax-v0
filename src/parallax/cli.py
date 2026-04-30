@@ -306,9 +306,29 @@ def main(argv: list[str] | None = None) -> int:
 
     completions_p = sub.add_parser(
         "completions",
-        help="Print a shell completion stub. Usage: parallax completions zsh",
+        help="Manage shell tab completion.",
     )
-    completions_p.add_argument("shell", choices=["zsh", "bash"], help="Target shell.")
+    completions_sub = completions_p.add_subparsers(dest="completions_command", required=True)
+    completions_install_p = completions_sub.add_parser(
+        "install",
+        help="Write the completion stub to a cache file and print the line to add to your shell config.",
+    )
+    completions_install_p.add_argument(
+        "--shell",
+        choices=["zsh", "bash"],
+        default=None,
+        help="Target shell (default: detect from $SHELL).",
+    )
+    completions_install_p.add_argument(
+        "--path",
+        default=None,
+        help="Output path (default: ~/.cache/<shell>/parallax-completion.<shell>).",
+    )
+    completions_print_p = completions_sub.add_parser(
+        "print",
+        help="Print the completion stub to stdout (escape hatch — prefer `install`).",
+    )
+    completions_print_p.add_argument("shell", choices=["zsh", "bash"])
 
     try:
         import argcomplete
@@ -343,7 +363,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_update()
 
     if args.command == "completions":
-        return _run_completions(args.shell)
+        if args.completions_command == "install":
+            return _run_completions_install(args.shell, args.path)
+        if args.completions_command == "print":
+            return _run_completions_print(args.shell)
 
     if args.command == "credits":
         from .openrouter import InsufficientCreditsError, check_credits
@@ -676,10 +699,45 @@ def _print_model_show(models_pkg, alias: str, kind: str | None) -> int:
     return 0
 
 
-def _run_completions(shell: str) -> int:
+def _run_completions_print(shell: str) -> int:
     import argcomplete
 
     print(argcomplete.shellcode(["parallax"], shell=shell))
+    return 0
+
+
+def _detect_shell() -> str:
+    import os
+
+    name = os.path.basename(os.environ.get("SHELL", ""))
+    if name in {"zsh", "bash"}:
+        return name
+    return "zsh"
+
+
+def _run_completions_install(shell: str | None, path: str | None) -> int:
+    import argcomplete
+    from pathlib import Path
+
+    target_shell = shell or _detect_shell()
+    if target_shell not in {"zsh", "bash"}:
+        print(f"Unsupported shell: {target_shell}", file=sys.stderr)
+        return 1
+
+    if path:
+        out = Path(path).expanduser()
+    else:
+        out = Path.home() / ".cache" / target_shell / f"parallax-completion.{target_shell}"
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(argcomplete.shellcode(["parallax"], shell=target_shell))
+
+    print(f"Wrote {target_shell} completion stub to {out}")
+    print()
+    print("Add this line to your shell config (e.g. ~/.zshrc or ~/dotfiles/zshrc):")
+    print(f"  source {out}")
+    print()
+    print(f"Then restart your shell. To refresh later: rm {out} && parallax completions install")
     return 0
 
 

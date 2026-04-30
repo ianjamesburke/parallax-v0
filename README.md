@@ -23,21 +23,17 @@ parallax update       # uv tool upgrade parallax --reinstall (pulls from the ori
 
 Versioning is SemVer 0.x.y: `x` bumps on breaking CLI changes, `y` on additive ones. The DEV_LOG entries tagged `[CHANGED]` / `[FIX]` are the changelog.
 
-### Shell completion (zsh)
+### Shell completion
 
-Tab completion for subcommands and flags is dynamic, driven by `argcomplete` (installed with parallax). To enable, add this block to your shell config — it caches the completion stub on first use so there is no Python at shell startup:
+Tab completion for subcommands and flags is dynamic, driven by `argcomplete`. One command writes a cache file and tells you the one line to add to your shell config:
 
 ```sh
-PARALLAX_COMP=~/.cache/zsh/parallax-completion.zsh
-if [[ ! -f $PARALLAX_COMP ]] && command -v parallax &>/dev/null; then
-  mkdir -p ~/.cache/zsh
-  parallax completions zsh > $PARALLAX_COMP
-fi
-[[ -f $PARALLAX_COMP ]] && source $PARALLAX_COMP
-unset PARALLAX_COMP
+parallax completions install
 ```
 
-First-ever shell rebuilds the cache (~200ms one-time); every subsequent startup is a file source (sub-millisecond). To force a refresh: `rm ~/.cache/zsh/parallax-completion.zsh`. Tab-time latency (when you actually press Tab) is parallax startup itself.
+It auto-detects zsh / bash from `$SHELL`, writes the stub to `~/.cache/<shell>/parallax-completion.<shell>`, and prints the `source` line to drop into `~/.zshrc` (or your dotfiles' zshrc). Restart the shell and Tab completion works. To refresh after upgrading argcomplete, `rm` the cache file and run `parallax completions install` again.
+
+Shell startup cost: zero Python — just a `source` of the cached file. Tab-time cost is parallax startup itself.
 
 ## Setup
 
