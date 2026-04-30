@@ -5,8 +5,10 @@ Agentic creative production CLI. A brief goes in, a finished short-form video co
 ## Install
 
 ```sh
-uv tool install --python 3.11 git+https://github.com/ianjamesburke/parallax-v0
+curl -LsSf https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/install.sh | sh
 ```
+
+Installs uv (Python toolchain manager) and ffmpeg if either is missing, then installs parallax. If you already have both, it just runs the last step.
 
 From a local checkout:
 
