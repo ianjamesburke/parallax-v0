@@ -9,12 +9,29 @@ jobs:
   dispatch:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build changelog
+        id: changelog
+        run: |
+          CURRENT=${{ github.ref_name }}
+          PREV=$(git tag --sort=-version:refname | grep -v "^$CURRENT$" | head -1)
+          if [ -n "$PREV" ]; then
+            git log "$PREV".."$CURRENT" --oneline --no-merges > /tmp/changelog.txt
+          else
+            git log "$CURRENT" --oneline --no-merges > /tmp/changelog.txt
+          fi
+
       - name: Fire repository_dispatch to parallax-skill
         env:
           GH_TOKEN: ${{ secrets.PARALLAX_SKILL_PAT }}
           VERSION: ${{ github.ref_name }}
         run: |
-          gh api repos/ianjamesburke/parallax-skill/dispatches \
-            --method POST \
-            --field event_type=parallax-release \
-            --field "client_payload[version]=$VERSION"
+          CHANGELOG=$(cat /tmp/changelog.txt)
+          jq -n \
+            --arg version "$VERSION" \
+            --arg changelog "$CHANGELOG" \
+            '{event_type: "parallax-release", client_payload: {version: $version, changelog: $changelog}}' \
+          | gh api repos/ianjamesburke/parallax-skill/dispatches --method POST --input -
