@@ -15,7 +15,7 @@ def _write_plan(tmp_path, payload):
 def _minimal(**overrides):
     base = {
         "aspect": "9:16",
-        "voice": "Kore",
+        "voice": "nova",
         "voice_speed": 1.0,
         "image_model": "mid",
         "video_model": "mid",
@@ -36,7 +36,7 @@ def test_minimal_plan_parses(tmp_path):
     p = _write_plan(tmp_path, _minimal())
     plan = Plan.from_yaml(p)
     assert plan.aspect == "9:16"
-    assert plan.voice == "Kore"
+    assert plan.voice == "nova"
     assert plan.voice_speed == 1.0
     assert plan.image_model == "mid"
     assert plan.video_model == "mid"
@@ -50,7 +50,7 @@ def test_defaults_apply_when_optional_fields_omitted(tmp_path):
     })
     plan = Plan.from_yaml(p)
     assert plan.aspect == "9:16"
-    assert plan.voice == "Kore"
+    assert plan.voice == "nova"
     assert plan.voice_speed == 1.0
     assert plan.image_model == "mid"
     assert plan.video_model == "mid"
@@ -137,7 +137,7 @@ def test_to_dict_round_trip_shape_preserved(tmp_path):
     plan = Plan.from_yaml(p)
     d = plan.to_dict()
     assert d["aspect"] == "9:16"
-    assert d["voice"] == "Kore"
+    assert d["voice"] == "nova"
     assert d["image_model"] == "mid"
     assert d["video_model"] == "mid"
     assert d["voice_model"] == "tts-mini"

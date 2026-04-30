@@ -336,7 +336,13 @@ def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
                     for r in video_refs_raw
                 ]
 
-            _log(settings, f"  [{idx:02d}] openrouter {scene_model}"
+            # Per-scene animate_resolution wins; fall back to settings default.
+            # This is the resolution sent to the video-gen model — cheaper than
+            # the output resolution and upscaled by ffmpeg during assembly.
+            scene_animate_res = s.get("animate_resolution") or settings.animate_resolution
+
+            _log(settings, f"  [{idx:02d}] openrouter {scene_model} "
+                 f"gen={scene_animate_res} → output={settings.resolution}"
                  + (f" + end_frame" if end_frame else "")
                  + (f" + {len(input_references)} ref(s)" if input_references else ""))
             clip_path = _openrouter.generate_video(
@@ -347,6 +353,7 @@ def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
                 input_references=input_references,
                 out_dir=Path(rt["video_dir"]),
                 aspect_ratio=aspect_ratio,
+                size=scene_animate_res,
             )
             s["clip_path"] = str(clip_path)
 

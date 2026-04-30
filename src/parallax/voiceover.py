@@ -25,7 +25,7 @@ log = get_logger(__name__)
 
 def generate_voiceover(
     text: str,
-    voice: str = "Kore",
+    voice: str = "nova",
     out_dir: str | None = None,
     style: str | None = None,
     style_hint: str | None = None,
@@ -37,7 +37,7 @@ def generate_voiceover(
     then post-processes with `_trim_long_pauses`. Speed adjustment is
     handled separately by `audio.speedup` / `stage_speed_adjust`.
 
-    `voice` is a Gemini prebuilt voice name (e.g. 'Kore', 'Puck'). See
+    `voice` is an OpenAI voice name (e.g. 'nova', 'shimmer', 'alloy'). See
     `parallax models show tts-mini` for the full list.
 
     `style` accepts presets from `gemini_tts.STYLE_PRESETS`

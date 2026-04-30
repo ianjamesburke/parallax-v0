@@ -145,10 +145,10 @@ def test_generate_voiceover_routes_to_gemini_by_default(tmp_path, monkeypatch):
     monkeypatch.setattr(openrouter, "generate_tts", fake_tts)
 
     out = json.loads(voiceover.generate_voiceover(
-        "hi", voice="Kore", out_dir=str(tmp_path),
+        "hi", voice="nova", out_dir=str(tmp_path),
     ))
     assert captured["alias"] == "tts-mini"
-    assert captured["voice"] == "Kore"
+    assert captured["voice"] == "nova"
     assert Path(out["audio_path"]).exists()
 
 
@@ -167,7 +167,7 @@ def test_generate_voiceover_passes_style_through(tmp_path, monkeypatch):
     monkeypatch.setattr(openrouter, "generate_tts", fake_tts)
 
     voiceover.generate_voiceover(
-        "x", voice="Kore", out_dir=str(tmp_path),
+        "x", voice="nova", out_dir=str(tmp_path),
         style="rapid_fire", style_hint="urgent",
     )
     assert captured["style"] == "rapid_fire"

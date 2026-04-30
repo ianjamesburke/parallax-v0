@@ -24,7 +24,7 @@ def _brief_payload(**overrides) -> dict:
     base = {
         "goal": "Promote the new Lion energy drink",
         "aspect": "9:16",
-        "voice": "Kore",
+        "voice": "nova",
         "voice_speed": 1.0,
         "assets": {
             "provided": [

@@ -6,7 +6,7 @@ align_scenes → write_manifest → ken_burns_assemble → (optionally)
 burn_captions → burn_headline.
 
 Plan YAML schema:
-  voice: Kore                # TTS voice (default: Kore). See
+  voice: nova                # TTS voice (default: nova). See
                              # `parallax models show tts-mini`
                              # for the full list of prebuilt voices.
   voice_model: tts-mini      # TTS model alias (default: tts-mini).
@@ -18,7 +18,12 @@ Plan YAML schema:
                              # for natural speed.
   image_model: nano-banana   # image model alias (default: mid)
   video_model: kling         # video model alias (default: mid)
-  resolution: 1080x1920      # output resolution (default: 1080x1920)
+  resolution: 1080x1920      # final output resolution (default: 1080x1920)
+  animate_resolution: 480x854  # resolution sent to the video-gen model (default: 480x854
+                               # for 9:16). Clips are upscaled to `resolution:` by ffmpeg
+                               # during assembly. Lower = cheaper.
+                               # Seedance 2.0 Fast: 480p=$0.054/s, 720p=$0.121/s, 1080p=$0.272/s
+                               # Set per-scene to override a single clip.
   caption_style: bangers
   captions: skip             # omit to enable captions
   headline: THE TITLE        # omit to skip headline

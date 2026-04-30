@@ -16,7 +16,7 @@ def _minimal_payload(**overrides):
     base = {
         "goal": "Promote the new Lion energy drink",
         "aspect": "9:16",
-        "voice": "Kore",
+        "voice": "nova",
         "voice_speed": 1.0,
         "success_criteria": ["Hook lands in <2s"],
         "assets": {
@@ -47,7 +47,7 @@ def test_minimal_brief_parses(tmp_path):
     brief = Brief.from_yaml(p)
     assert brief.goal.startswith("Promote")
     assert brief.aspect == "9:16"
-    assert brief.voice == "Kore"
+    assert brief.voice == "nova"
     assert brief.voice_speed == 1.0
     assert len(brief.script.scenes) == 1
     assert brief.assets.provided[0].kind == "product_ref"
@@ -60,7 +60,7 @@ def test_brief_defaults_apply_when_optional_fields_omitted(tmp_path):
     })
     brief = Brief.from_yaml(p)
     assert brief.aspect == "9:16"
-    assert brief.voice == "Kore"
+    assert brief.voice == "nova"
     assert brief.voice_speed == 1.0
     assert brief.script.scenes[0].shot_type == "broll"
     assert brief.script.scenes[0].animate is False

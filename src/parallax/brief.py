@@ -14,7 +14,7 @@ Schema (informal):
 
     goal: "Promote the new Lion energy drink"
     aspect: 9:16          # 9:16 | 16:9 | 1:1 | 4:3 | 3:4
-    voice: Kore           # Gemini TTS voice name
+    voice: nova            # TTS voice name (OpenAI: nova, shimmer, alloy, echo, fable, onyx)
     voice_speed: 1.0
     success_criteria:
       - "Hook lands in <2s"
@@ -125,8 +125,12 @@ class Brief(BaseModel):
 
     goal: str
     aspect: Literal["9:16", "16:9", "1:1", "4:3", "3:4"] = "9:16"
-    voice: str = "Kore"
+    voice: str = "nova"
     voice_speed: float = 1.0
+    # Video-gen resolution — upscaled to the output resolution during assembly.
+    # Lower is cheaper. Seedance 2.0 Fast: 480p=$0.054/s, 720p=$0.121/s, 1080p=$0.272/s.
+    # Defaults are aspect-aware (9:16→480x854, 16:9→854x480, 1:1→480x480).
+    animate_resolution: str | None = None  # None = use aspect-derived default
     success_criteria: list[str] = Field(default_factory=list)
     assets: Assets = Field(default_factory=Assets)
     script: Script

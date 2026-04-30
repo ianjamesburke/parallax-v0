@@ -76,7 +76,7 @@ def test_run_suite_skips_subdirs_missing_required_files(tmp_path):
     # Subdir with only a plan but no expected — should be skipped silently.
     incomplete = tmp_path / "incomplete"
     incomplete.mkdir()
-    (incomplete / "plan.yaml").write_text("voice: Kore\nscenes: []\n")
+    (incomplete / "plan.yaml").write_text("voice: nova\nscenes: []\n")
     results = run_suite(tmp_path)
     assert results == []
 

@@ -3,16 +3,27 @@
 # Defaults are image-to-video; `capabilities.start_frame` flags i2v support
 # and `capabilities.end_frame` flags end-frame conditioning. Models without
 # either capability are text-to-video only.
+#
+# Pricing note: Seedance 2.0 Fast is resolution-tiered. Parallax defaults to
+# generating at 480p (animate_resolution) and upscaling to the output
+# resolution during ffmpeg assembly. The `cost` below reflects the 480p rate.
+# Override animate_resolution: in the plan to change the generation resolution.
+#   Seedance 2.0 Fast:  480p = $0.054/s | 720p = $0.121/s | 1080p = $0.272/s
+#   Kling Video O1:     flat = $0.112/s (no resolution tiers)
+#   Veo 3.1:            1080p+audio = $0.40/s | 1080p no-audio = $0.20/s | 4K = $0.60/s
+#   Wan 2.7:            flat = $0.10/s
+#   Sora 2 Pro:         720p = $0.30/s | 1080p = $0.50/s
 
 - alias: draft
   model_id: openrouter/bytedance/seedance-2.0-fast
   tier: draft
-  cost: 0.06
+  cost: 0.054
   unit: second
-  description: ByteDance Seedance 2.0 Fast. Cheapest video gen — best $/quality at this tier.
+  description: "ByteDance Seedance 2.0 Fast. Resolution-tiered: $0.054/s at 480p (default), $0.121/s at 720p, $0.272/s at 1080p."
   fallback: wan
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1"]
+    resolutions: ["480p", "720p", "1080p"]
     start_frame: true
     end_frame: true
   inputs: []
@@ -20,9 +31,9 @@
 - alias: mid
   model_id: openrouter/kwaivgi/kling-video-o1
   tier: mid
-  cost: 0.10
+  cost: 0.112
   unit: second
-  description: Kling Video O1. Strong motion and prompt adherence.
+  description: Kling Video O1. Strong motion and prompt adherence. Flat $0.112/s regardless of resolution.
   fallback: draft
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1"]
@@ -33,12 +44,13 @@
 - alias: premium
   model_id: openrouter/google/veo-3.1
   tier: premium
-  cost: 0.50
+  cost: 0.40
   unit: second
-  description: Google Veo 3.1. Premium quality; expensive.
+  description: "Google Veo 3.1. $0.40/s at 1080p with audio, $0.20/s without audio, $0.60/s at 4K."
   fallback: mid
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1"]
+    resolutions: ["1080p", "4K"]
     start_frame: true
     end_frame: true
   inputs: []
@@ -48,12 +60,13 @@
 - alias: seedance
   model_id: openrouter/bytedance/seedance-2.0-fast
   tier: default
-  cost: 0.06
+  cost: 0.054
   unit: second
-  description: ByteDance Seedance 2.0 Fast. Best $/quality in this band.
+  description: "ByteDance Seedance 2.0 Fast. Resolution-tiered: $0.054/s at 480p (default), $0.121/s at 720p, $0.272/s at 1080p."
   fallback: wan
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1"]
+    resolutions: ["480p", "720p", "1080p"]
     start_frame: true
     end_frame: true
   inputs: []
@@ -61,9 +74,9 @@
 - alias: kling
   model_id: openrouter/kwaivgi/kling-video-o1
   tier: default
-  cost: 0.10
+  cost: 0.112
   unit: second
-  description: Kling Video O1. Strong motion and prompt adherence.
+  description: Kling Video O1. Strong motion and prompt adherence. Flat $0.112/s regardless of resolution.
   fallback: seedance
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1"]
@@ -74,12 +87,13 @@
 - alias: veo
   model_id: openrouter/google/veo-3.1
   tier: default
-  cost: 0.50
+  cost: 0.40
   unit: second
-  description: Google Veo 3.1. Premium quality; expensive.
+  description: "Google Veo 3.1. $0.40/s at 1080p with audio, $0.20/s without audio, $0.60/s at 4K."
   fallback: kling
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1"]
+    resolutions: ["1080p", "4K"]
     start_frame: true
     end_frame: true
   inputs: []
@@ -87,9 +101,9 @@
 - alias: wan
   model_id: openrouter/alibaba/wan-2.7
   tier: default
-  cost: 0.05
+  cost: 0.10
   unit: second
-  description: Alibaba Wan 2.7. Open-weights baseline.
+  description: Alibaba Wan 2.7. Open-weights baseline. Flat $0.10/s.
   fallback: seedance
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1"]
@@ -100,9 +114,9 @@
 - alias: sora
   model_id: openrouter/openai/sora-2-pro
   tier: default
-  cost: 0.40
+  cost: 0.50
   unit: second
-  description: OpenAI Sora 2 Pro. Premium quality; expensive. Text-to-video only — no frame conditioning.
+  description: "OpenAI Sora 2 Pro. Text-to-video only — no frame conditioning. $0.30/s at 720p, $0.50/s at 1080p."
   fallback: kling
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1"]
