@@ -88,7 +88,17 @@ parallax ingest ./clips/                # writes clips/index.json with per-clip 
 parallax ingest video.mov --estimate    # dry-run cost report
 ```
 
-Other commands: `parallax usage`, `parallax credits`, `parallax log <run|latest|list>`, `parallax verify suite <dir>`, `parallax audio {transcribe,detect-silences,trim,cap-pauses}`, `parallax video {frame,color}`.
+Generate a standalone image or analyze an existing one:
+
+```sh
+parallax image generate "a neon-lit street at night" --aspect 9:16
+parallax image generate "product on white background" --model draft --out ./stills/
+parallax image generate "character close-up" --ref ./refs/face.png --aspect 1:1
+parallax image analyze ./stills/frame.png
+parallax image analyze ./stills/frame.png "what is the dominant color palette?"
+```
+
+Other commands: `parallax usage`, `parallax credits`, `parallax log <run|latest|list>`, `parallax verify suite <dir>`, `parallax audio {transcribe,detect-silences,trim,cap-pauses,speed}`, `parallax video {frame,color}`.
 
 ## Vision
 
@@ -113,7 +123,7 @@ What it explicitly does NOT do (yet):
 
 ```sh
 uv sync
-uv run pytest -q                         # ~270 tests, mocks everything
+uv run pytest -q
 uv run parallax verify suite tests/fixtures/verify_suite_smoke/
 ```
 
