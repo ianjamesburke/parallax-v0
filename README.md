@@ -14,6 +14,15 @@ From a local checkout:
 uv tool install --python 3.11 --from /path/to/parallax-v0 parallax
 ```
 
+Installs are snapshot-frozen — the CLI never auto-updates from the repo. Check what you're running and pull the latest manually:
+
+```sh
+parallax --version    # version of the installed CLI
+parallax update       # uv tool upgrade parallax --reinstall (pulls from the original source)
+```
+
+Versioning is SemVer 0.x.y: `x` bumps on breaking CLI changes, `y` on additive ones. The DEV_LOG entries tagged `[CHANGED]` / `[FIX]` are the changelog.
+
 ## Setup
 
 ```sh

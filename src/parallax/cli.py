@@ -6,12 +6,17 @@ import shutil
 import subprocess
 import sys
 
-from . import usage
+from . import __version__, usage
 from .log import configure as configure_logging
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="parallax", description="Agentic creative production CLI.")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"parallax {__version__}",
+    )
     parser.add_argument(
         "-v",
         "--verbose",
@@ -664,8 +669,8 @@ def _run_update() -> int:
             file=sys.stderr,
         )
         return 1
-    print("Upgrading parallax via uv tool upgrade…")
-    result = subprocess.run([uv, "tool", "upgrade", "parallax"])
+    print("Upgrading parallax via uv tool upgrade --reinstall…")
+    result = subprocess.run([uv, "tool", "upgrade", "parallax", "--reinstall"])
     return result.returncode
 
 
