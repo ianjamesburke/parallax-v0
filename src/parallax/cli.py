@@ -856,7 +856,7 @@ def _run_update() -> int:
 
 
 def _update_skill() -> None:
-    skill_dir = pathlib.Path.home() / ".agents" / "skills" / "parallax"
+    skill_dir = pathlib.Path.home() / ".claude" / "skills" / "parallax"
     if not skill_dir.is_dir():
         return
     git = shutil.which("git")
