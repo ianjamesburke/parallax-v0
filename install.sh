@@ -9,6 +9,18 @@ if ! command -v uv >/dev/null 2>&1; then
     export PATH="$HOME/.local/bin:$PATH"
 fi
 
+# ─── Homebrew (macOS only) ────────────────────────────────────────────────────
+if [ "$(uname)" = "Darwin" ] && ! command -v brew >/dev/null 2>&1; then
+    echo "→ Installing Homebrew..."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    # Add brew to PATH for the rest of this script (Apple Silicon vs Intel paths).
+    if [ -f /opt/homebrew/bin/brew ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [ -f /usr/local/bin/brew ]; then
+        eval "$(/usr/local/bin/brew shellenv)"
+    fi
+fi
+
 # ─── ffmpeg ───────────────────────────────────────────────────────────────────
 if ! command -v ffmpeg >/dev/null 2>&1; then
     echo "→ Installing ffmpeg..."
@@ -21,8 +33,6 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
     else
         echo ""
         echo "Error: ffmpeg not found and no known package manager available."
-        echo "Install ffmpeg manually, then re-run this script:"
-        echo "  macOS:  brew install ffmpeg  (requires Homebrew: https://brew.sh)"
         echo "  Linux:  sudo apt install ffmpeg"
         echo "  Other:  https://ffmpeg.org/download.html"
         exit 1
