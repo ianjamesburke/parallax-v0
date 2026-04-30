@@ -1,8 +1,11 @@
-"""Voiceover synthesis with pacing transforms.
+"""Voiceover synthesis (pure TTS).
 
 `generate_voiceover` calls `openrouter.generate_tts` (always Gemini TTS via
-OpenRouter), then runs `_apply_atempo` for speed adjustment and
-`_trim_long_pauses` to surgically cut overlong inter-word silence.
+OpenRouter) and runs `_trim_long_pauses` to surgically cut overlong
+inter-word silence. Speed adjustment is no longer the voiceover module's
+concern — it lives in `audio.speedup` and runs as `stage_speed_adjust`
+after this stage.
+
 `_mock_voiceover` produces a deterministic silent stand-in for
 PARALLAX_TEST_MODE.
 """
@@ -10,13 +13,12 @@ PARALLAX_TEST_MODE.
 from __future__ import annotations
 
 import json
-import subprocess
 import time
 from pathlib import Path
 
+from .ffmpeg_utils import run_ffmpeg
 from .log import get_logger
 from .shim import is_test_mode, output_dir
-from .ffmpeg_utils import run_ffmpeg
 
 log = get_logger(__name__)
 
@@ -24,23 +26,19 @@ log = get_logger(__name__)
 def generate_voiceover(
     text: str,
     voice: str = "Kore",
-    speed: float = 1.0,
     out_dir: str | None = None,
     style: str | None = None,
     style_hint: str | None = None,
     voice_model: str = "tts-mini",
 ) -> str:
-    """Generate voiceover and apply pacing transforms.
+    """Generate voiceover and trim overlong inter-word silences.
 
     Calls `openrouter.generate_tts` (always Gemini TTS via OpenRouter),
-    then post-processes with `_apply_atempo` and `_trim_long_pauses`.
+    then post-processes with `_trim_long_pauses`. Speed adjustment is
+    handled separately by `audio.speedup` / `stage_speed_adjust`.
 
     `voice` is a Gemini prebuilt voice name (e.g. 'Kore', 'Puck'). See
     `parallax models show tts-mini` for the full list.
-
-    `speed` is an ffmpeg `atempo` factor applied AFTER synthesis. For
-    Gemini, prefer `style` / `style_hint` for pacing; reserve `speed`
-    for hard duration targets.
 
     `style` accepts presets from `gemini_tts.STYLE_PRESETS`
     (`rapid_fire`, `fast`, `calm`, `natural`); `style_hint` is freeform.
@@ -55,19 +53,16 @@ def generate_voiceover(
 
     from . import openrouter
 
-    tts_voice = voice
-    tts_alias = voice_model
-
     t0 = time.monotonic()
     log.info(
-        "voiceover: voice=%s voice_model=%s speed=%.2f chars=%d style=%s",
-        voice, voice_model, speed, len(text), style or style_hint or "default",
+        "voiceover: voice=%s voice_model=%s chars=%d style=%s",
+        voice, voice_model, len(text), style or style_hint or "default",
     )
 
     raw_path, words_with_ends, _raw_duration = openrouter.generate_tts(
         text=text,
-        alias=tts_alias,
-        voice=tts_voice,
+        alias=voice_model,
+        voice=voice,
         out_dir=dest,
         style=style,
         style_hint=style_hint,
@@ -75,55 +70,25 @@ def generate_voiceover(
 
     raw_suffix = Path(raw_path).suffix or ".mp3"
     audio_path = dest / f"voiceover{raw_suffix}"
-    sped_path = dest / f"voiceover_sped_tmp{raw_suffix}"
-    if speed and abs(speed - 1.0) > 1e-3:
-        words_sped, sped_duration = _apply_atempo(Path(raw_path), words_with_ends, sped_path, speed)
-        words_sped, sped_duration = _trim_long_pauses(sped_path, words_sped, audio_path)
-        sped_path.unlink(missing_ok=True)
-    else:
-        # No atempo — copy the raw file under the canonical filename, then
-        # still run pause-trimming so silence between words gets cleaned up.
-        import shutil as _shutil
-        _shutil.copy2(raw_path, sped_path)
-        words_sped, sped_duration = _trim_long_pauses(sped_path, list(words_with_ends), audio_path)
-        sped_path.unlink(missing_ok=True)
+    words_trimmed, duration = _trim_long_pauses(
+        Path(raw_path), list(words_with_ends), audio_path,
+    )
 
     words_path = dest / "vo_words.json"
     words_path.write_text(json.dumps({
-        "words": words_sped,
-        "total_duration_s": sped_duration,
+        "words": words_trimmed,
+        "total_duration_s": duration,
     }, indent=2))
 
     elapsed = int((time.monotonic() - t0) * 1000)
-    log.info("voiceover: done duration=%.2fs elapsed=%dms", sped_duration, elapsed)
+    log.info("voiceover: done duration=%.2fs elapsed=%dms", duration, elapsed)
 
     return json.dumps({
         "audio_path": str(audio_path),
         "words_path": str(words_path),
-        "words": words_sped,
-        "total_duration_s": sped_duration,
+        "words": words_trimmed,
+        "total_duration_s": duration,
     })
-
-
-def _apply_atempo(raw_path: Path, words: list[dict], out_path: Path, speed: float) -> tuple[list[dict], float]:
-    result = run_ffmpeg(
-        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "warning",
-         "-i", str(raw_path), "-af", f"atempo={speed}",
-         "-c:a", "libmp3lame", "-b:a", "128k", str(out_path)],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0 or not out_path.exists():
-        log.warning("atempo failed, using raw audio: %s", result.stderr[:200])
-        raw_path.rename(out_path)
-        return words, words[-1]["end"] if words else 0.0
-
-    scale = 1.0 / speed
-    sped = [
-        {"word": w["word"], "start": round(w["start"] * scale, 3), "end": round(w["end"] * scale, 3)}
-        for w in words
-    ]
-    duration = sped[-1]["end"] if sped else 0.0
-    return sped, duration
 
 
 def _trim_long_pauses(

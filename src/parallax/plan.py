@@ -112,6 +112,8 @@ class PlanScene(BaseModel):
     image_model: str | None = None
     video_model: str | None = None
     voice_model: str | None = None
+    # Per-scene speed override; must agree across all overriding scenes.
+    voice_speed: float | None = None
 
     # Timing overrides
     duration_s: float | None = None
