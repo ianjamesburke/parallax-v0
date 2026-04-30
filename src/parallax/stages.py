@@ -34,8 +34,17 @@ from .voiceover import generate_voiceover
 
 
 def _log(settings: Settings, msg: str) -> None:
-    """Emit a human-readable progress line via the injected emitter."""
+    """Emit a human-readable progress line via the injected emitter.
+
+    Mirrors the same `msg` into the active runlog as a `stage.log` event so
+    stage-level activity is visible to tools that read `<output_dir>/run.log`
+    (verify-suite `run_log.must_contain`, `parallax log`). The stdout stream
+    via `settings.events` is unchanged — runlog is an additional, structured
+    sink. Mirrored at `_log()` rather than inside `Settings.events` so the
+    behavior is independent of which emitter callers inject.
+    """
     settings.events("log", {"msg": msg})
+    runlog.event("stage.log", msg=msg)
 
 
 def _runtime(plan: dict[str, Any]) -> dict[str, Any]:
