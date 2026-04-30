@@ -26,25 +26,38 @@ For dry runs without spending: `export PARALLAX_TEST_MODE=1` — the pipeline pr
 
 ## Use
 
-The two iteration artifacts are `brief.yaml` (human spec) and `plan.yaml` (engine spec).
+The two iteration artifacts are `brief.yaml` (human spec) and `plan.yaml` (engine spec). Author the brief once with all your creative intent — goal, voice, aspect ratio, scene scripts — and let the planner materialize it into a plan.yaml.
+
+```yaml
+# my-project/brief.yaml
+goal: "30-second product launch"
+aspect: "9:16"          # 9:16 | 16:9 | 1:1 | 4:3 | 3:4 — drives framing, prompts, ref-image cropping
+voice: nova
+script:
+  scenes:
+    - index: 0
+      vo_text: "..."
+      prompt: "..."
+```
 
 ```sh
-# author brief.yaml in your project folder, then:
 parallax plan    --folder ./my-project
 parallax produce --folder ./my-project --plan ./my-project/parallax/scratch/plan.yaml
 
 # or one-shot:
-parallax produce --folder ./my-project --brief ./my-project/brief.yaml --aspect 9:16
+parallax produce --folder ./my-project --brief ./my-project/brief.yaml
 ```
 
-Iterate by editing `plan.yaml` between runs. Lock approved stills with `still_path:`, audio with `audio_path:` + `words_path:`, animated clips with `clip_path:` — locked assets are reused and only changed scenes regenerate.
+Iterate by editing `plan.yaml` between runs. Lock approved stills with `still_path:`, audio with `audio_path:` + `words_path:`, animated clips with `clip_path:` — locked assets are reused and only changed scenes regenerate. Per-scene `aspect:` overrides the brief-level value when a single scene needs a different shape.
+
+`--aspect <ratio>` exists on `produce` as an ad-hoc override (e.g. re-render the same brief at 16:9 once without editing it). Don't use it as the primary way to set aspect — put it in the brief.
 
 Browse the model catalog:
 
 ```sh
 parallax models list                    # tier + named aliases per modality
 parallax models show mid --kind image
-parallax models show gemini-flash-tts   # full Gemini voice list
+parallax models show tts-mini           # full TTS voice list
 ```
 
 Index existing footage into a searchable JSON:
@@ -54,7 +67,7 @@ parallax ingest ./clips/                # writes clips/index.json with per-clip 
 parallax ingest video.mov --estimate    # dry-run cost report
 ```
 
-Other commands: `parallax usage`, `parallax credits`, `parallax tail <run_id>`, `parallax verify-suite <dir>`, `parallax audio {transcribe,detect-silences,trim,cap-pauses}`, `parallax video {frame,color}`.
+Other commands: `parallax usage`, `parallax credits`, `parallax log <run|latest|list>`, `parallax verify-suite <dir>`, `parallax audio {transcribe,detect-silences,trim,cap-pauses}`, `parallax video {frame,color}`.
 
 ## Vision
 
@@ -66,7 +79,7 @@ What v0 ships:
 - Single-provider router (OpenRouter only — no fal, no ElevenLabs, no Google direct).
 - `brief.yaml` → `parallax plan` → `plan.yaml` → `parallax produce` loop.
 - Three model tiers per modality (`draft`/`mid`/`premium`) plus named-alias overrides; capabilities + voice lists in `src/parallax/models/`.
-- Aspect ratio first-class (`--aspect`, plus per-scene override).
+- Aspect ratio first-class (top-level on `brief.yaml` / `plan.yaml`; per-scene override; `--aspect` CLI flag for ad-hoc overrides).
 - Mock-mode pipeline that mirrors paid-mode end-to-end for fast iteration and CI.
 
 What it explicitly does NOT do (yet):
