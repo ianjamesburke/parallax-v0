@@ -2,7 +2,11 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
-## 2026-04-29 — [INCOMPLETE] WORK BLOCK: Stabilization round-out
+## 2026-04-29 — [CHANGED] WORK BLOCK: Stabilization round-out (PRs #13/#14/#15 → main)
+All three phases merged. `audio.speedup` + `parallax audio speed` + `stage_speed_adjust` lifted out of voiceover; `parallax verify {suite,init}` subgroup live; skill extracted to `~/Documents/GitHub/parallax-skill` with `~/.claude/skills/parallax` repointed.
+**Breaks if:** `voiceover.generate_voiceover` accepts a `speed` kwarg; `parallax verify-suite` resolves; `~/.claude/skills/parallax` resolves into parallax-v0; `src/parallax/skills/` exists.
+
+## 2026-04-29 — [HISTORY] WORK BLOCK scope (original — see PRs above for shipped state)
 
 **Goal:** Tie up the loose ends surfaced during the Layer 1 + cleanup + logging refactors so the CLI surface is internally consistent before we layer anything new on top. Three small, independent phases — each is one PR's worth of work and none block the others.
 
