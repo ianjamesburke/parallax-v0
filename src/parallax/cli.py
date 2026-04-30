@@ -176,13 +176,13 @@ def main(argv: list[str] | None = None) -> int:
     speed_p = audio_sub.add_parser(
         "speed",
         help=("Apply ffmpeg atempo to retime an audio file. "
-              "Use --rate <multiplier> or --by <pct%>."),
+              "Use --rate <multiplier> or --by <pct%%>."),
     )
     speed_p.add_argument("--in", dest="in_path", required=True, help="Input audio file.")
     speed_p.add_argument("--out", dest="out_path", required=True, help="Output audio path.")
     rate_grp = speed_p.add_mutually_exclusive_group(required=True)
     rate_grp.add_argument("--rate", type=float, default=None,
-                          help="atempo multiplier (e.g. 1.3 = 30% faster).")
+                          help="atempo multiplier (e.g. 1.3 = 30%% faster).")
     rate_grp.add_argument("--by", type=str, default=None,
                           help="Percent change with trailing %% — e.g. '30%%' (=1.3) or '-20%%' (=0.8).")
 
@@ -330,6 +330,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     completions_print_p.add_argument("shell", choices=["zsh", "bash"])
 
+    _enable_help_on_empty(parser)
+
     try:
         import argcomplete
 
@@ -338,6 +340,10 @@ def main(argv: list[str] | None = None) -> int:
         pass
 
     args = parser.parse_args(argv)
+
+    if getattr(args, "_help_on_empty", None) is not None:
+        args._help_on_empty()
+        return 0
 
     level: int | None = None
     if args.verbose >= 2:
@@ -697,6 +703,23 @@ def _print_model_show(models_pkg, alias: str, kind: str | None) -> int:
     if spec.description:
         print(f"\n{spec.description}")
     return 0
+
+
+def _enable_help_on_empty(parser: argparse.ArgumentParser) -> None:
+    """Walk the parser tree: any parser with subparsers prints its help when
+    invoked with no subcommand, instead of erroring. Each ancestor stamps its
+    own print_help into args._help_on_empty; the deepest matched parser wins.
+    Leaf parsers clear the default so concrete subcommands run normally."""
+    has_subparsers = False
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            has_subparsers = True
+            action.required = False
+            parser.set_defaults(_help_on_empty=parser.print_help)
+            for subparser in action.choices.values():
+                _enable_help_on_empty(subparser)
+    if not has_subparsers:
+        parser.set_defaults(_help_on_empty=None)
 
 
 def _run_completions_print(shell: str) -> int:
