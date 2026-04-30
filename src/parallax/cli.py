@@ -214,8 +214,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Model alias (draft/mid/premium or a named alias). Default: mid.",
     )
     img_gen_p.add_argument(
-        "--aspect", default=None,
-        help="Aspect ratio, e.g. '9:16', '16:9', '1:1'. Default: model default.",
+        "--aspect", default="9:16",
+        help="Aspect ratio, e.g. '9:16', '16:9', '1:1'. Default: 9:16.",
     )
     img_gen_p.add_argument(
         "--size", default=None,
