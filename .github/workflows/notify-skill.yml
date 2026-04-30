@@ -1,0 +1,20 @@
+name: Notify parallax-skill on release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fire repository_dispatch to parallax-skill
+        env:
+          GH_TOKEN: ${{ secrets.PARALLAX_SKILL_PAT }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          gh api repos/ianjamesburke/parallax-skill/dispatches \
+            --method POST \
+            --field event_type=parallax-release \
+            --field "client_payload[version]=$VERSION"
