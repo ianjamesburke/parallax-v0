@@ -127,6 +127,10 @@ class Brief(BaseModel):
     aspect: Literal["9:16", "16:9", "1:1", "4:3", "3:4"] = "9:16"
     voice: str = "nova"
     voice_speed: float = 1.0
+    # Video-gen resolution — upscaled to the output resolution during assembly.
+    # Lower is cheaper. Seedance 2.0 Fast: 480p=$0.054/s, 720p=$0.121/s, 1080p=$0.272/s.
+    # Defaults are aspect-aware (9:16→480x854, 16:9→854x480, 1:1→480x480).
+    animate_resolution: str | None = None  # None = use aspect-derived default
     success_criteria: list[str] = Field(default_factory=list)
     assets: Assets = Field(default_factory=Assets)
     script: Script

@@ -19,7 +19,7 @@ def _payload(**overrides) -> dict:
     base = {
         "goal": "Promote the new Lion energy drink",
         "aspect": "9:16",
-        "voice": "Kore",
+        "voice": "nova",
         "voice_speed": 1.0,
         "assets": {
             "provided": [
@@ -81,7 +81,7 @@ def test_happy_path_writes_plan(tmp_path):
 
     plan = yaml.safe_load(result.plan_path.read_text())
     assert plan["aspect"] == "9:16"
-    assert plan["voice"] == "Kore"
+    assert plan["voice"] == "nova"
     assert plan["voice_speed"] == 1.0
     assert plan["image_model"] == "mid"
     assert plan["video_model"] == "mid"

@@ -164,7 +164,7 @@ def test_produce_in_test_mode_outputs_correct_dimensions(monkeypatch, tmp_path, 
     folder = tmp_path / "0099_aspect_smoke"
     folder.mkdir()
     plan = {
-        "voice": "Kore",
+        "voice": "nova",
         "image_model": "mid",
         "video_model": "mid",
         "captions": "skip",

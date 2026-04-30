@@ -37,6 +37,17 @@ _ASPECT_TO_RESOLUTION: dict[str, str] = {
     "3:4":  "810x1080",
 }
 
+# Default video-generation resolution by aspect. Cheaper than the output
+# resolution — clips are upscaled to `resolution` during ffmpeg assembly.
+# Seedance 2.0 Fast: 480p = $0.054/s, 720p = $0.121/s, 1080p = $0.272/s.
+_ASPECT_TO_ANIMATE_RESOLUTION: dict[str, str] = {
+    "9:16": "480x854",
+    "16:9": "854x480",
+    "1:1":  "480x480",
+    "4:3":  "640x480",
+    "3:4":  "480x640",
+}
+
 VALID_ASPECTS: frozenset[str] = frozenset(_ASPECT_TO_RESOLUTION.keys())
 
 
@@ -131,7 +142,8 @@ class Settings:
     image_model: str
     video_model: str
     aspect: str  # e.g. "9:16", "16:9", "1:1", "4:3", "3:4"
-    resolution: str
+    resolution: str          # final output resolution (e.g. "1080x1920")
+    animate_resolution: str  # video-gen resolution — upscaled to resolution: at assembly (e.g. "480x854")
     video_width: int
     video_height: int
     res_scale: float
@@ -268,6 +280,14 @@ def resolve_settings(plan: dict[str, Any], folder: Path, plan_path: Path) -> Set
     video_width, video_height = parse_resolution(resolution)
     res_scale = video_width / 1080  # font sizes scale to output width
 
+    # animate_resolution: resolution passed to the video-gen model. Defaults to
+    # 480p for the plan's aspect — cheaper than the output resolution and
+    # upscaled by ffmpeg during assembly. Set explicitly in the plan to override.
+    animate_resolution = (
+        plan.get("animate_resolution")
+        or _ASPECT_TO_ANIMATE_RESOLUTION.get(aspect, "480x854")
+    )
+
     caption_style = plan.get("caption_style", "bangers")
     fontsize = max(12, int(plan.get("fontsize", 55) * res_scale))
     wpc_raw = plan.get("words_per_chunk", "smart")
@@ -304,6 +324,7 @@ def resolve_settings(plan: dict[str, Any], folder: Path, plan_path: Path) -> Set
         video_model=video_model,
         aspect=aspect,
         resolution=resolution,
+        animate_resolution=animate_resolution,
         video_width=video_width,
         video_height=video_height,
         res_scale=res_scale,
