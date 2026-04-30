@@ -1,4 +1,4 @@
-"""verify-suite runner tests.
+"""verify suite runner tests.
 
 Covers the schema branches, paid-gating, empty-suite handling, and the
 deliberate-mutation path so we know the failure renderer reports the

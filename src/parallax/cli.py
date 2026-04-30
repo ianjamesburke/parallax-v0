@@ -233,7 +233,13 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     verify_p = sub.add_parser(
-        "verify-suite",
+        "verify",
+        help="Run or scaffold verify suite cases.",
+    )
+    verify_sub = verify_p.add_subparsers(dest="verify_command", required=True)
+
+    verify_suite_p = verify_sub.add_parser(
+        "suite",
         help="Run case folders against expected.yaml.",
         description=(
             "Each case subfolder must contain a plan.yaml + expected.yaml. "
@@ -244,19 +250,19 @@ def main(argv: list[str] | None = None) -> int:
             "run_log.{must_not_contain,must_contain}, cost_usd_max, paid."
         ),
     )
-    verify_p.add_argument("suite_dir", help="Directory containing one or more case subfolders.")
-    verify_p.add_argument(
+    verify_suite_p.add_argument("suite_dir", help="Directory containing one or more case subfolders.")
+    verify_suite_p.add_argument(
         "--paid", action="store_true",
         help="Run cases marked paid: true (default skips them).",
     )
-    verify_p.add_argument(
+    verify_suite_p.add_argument(
         "--case", default=None,
         help="Run only a single case subfolder by name (default: all).",
     )
 
-    init_p = sub.add_parser(
-        "verify-init",
-        help="Scaffold a new verify-suite case.",
+    verify_init_p = verify_sub.add_parser(
+        "init",
+        help="Scaffold a new verify suite case.",
         description=(
             "Creates a new case folder at <target>. With --from <existing>, "
             "copies that case verbatim and optionally rewrites the resolution. "
@@ -264,16 +270,16 @@ def main(argv: list[str] | None = None) -> int:
             "at the canonical reference case for the full schema."
         ),
     )
-    init_p.add_argument("target", help="Path to the new case folder.")
-    init_p.add_argument(
+    verify_init_p.add_argument("target", help="Path to the new case folder.")
+    verify_init_p.add_argument(
         "--from", dest="from_dir", default=None,
         help="Copy from an existing case folder (must contain plan.yaml + expected.yaml).",
     )
-    init_p.add_argument(
+    verify_init_p.add_argument(
         "--resolution", default=None,
         help="WxH (e.g. 480x854). Rewrites plan.yaml's resolution and expected.final.resolution.",
     )
-    init_p.add_argument(
+    verify_init_p.add_argument(
         "--force", action="store_true",
         help="Overwrite the target if it already exists (default: refuse).",
     )
@@ -335,18 +341,19 @@ def main(argv: list[str] | None = None) -> int:
             return _print_model_show(_models_pkg, alias=args.alias, kind=args.kind)
         return 1
 
-    if args.command == "verify-suite":
-        from .verify_suite import cli_run
-        return cli_run(args.suite_dir, paid=args.paid, case=args.case)
-
-    if args.command == "verify-init":
-        from .verify_suite import cli_init
-        return cli_init(
-            args.target,
-            from_dir=args.from_dir,
-            resolution=args.resolution,
-            force=args.force,
-        )
+    if args.command == "verify":
+        if args.verify_command == "suite":
+            from .verify_suite import cli_run
+            return cli_run(args.suite_dir, paid=args.paid, case=args.case)
+        if args.verify_command == "init":
+            from .verify_suite import cli_init
+            return cli_init(
+                args.target,
+                from_dir=args.from_dir,
+                resolution=args.resolution,
+                force=args.force,
+            )
+        return 1
 
     if args.command == "log":
         return _run_log_command(args)

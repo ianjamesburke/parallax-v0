@@ -1,8 +1,8 @@
-"""verify-init scaffolder tests.
+"""verify init scaffolder tests.
 
 Covers minimal-starter mode, --from copy mode, --resolution rewrite,
 overwrite refusal, --force, bad inputs, and a roundtrip that the
-scaffolded case actually passes verify-suite.
+scaffolded case actually passes verify suite.
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ def test_init_from_with_resolution_rewrites_both_files(tmp_path):
 
 
 def test_init_from_with_resolution_roundtrips_to_passing_run(tmp_path, capsys, monkeypatch):
-    """Scaffolding with --resolution produces a case that passes verify-suite."""
+    """Scaffolding with --resolution produces a case that passes verify suite."""
     monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
     target = tmp_path / "res-480"
     init_case(target, from_dir=_ref_case(), resolution="480x854")
@@ -159,11 +159,11 @@ def test_cli_init_returns_nonzero_on_existing_target(tmp_path, capsys):
 
 
 # --------------------------------------------------------------------------
-# Roundtrip — scaffolded case passes verify-suite
+# Roundtrip — scaffolded case passes verify suite
 # --------------------------------------------------------------------------
 
 def test_roundtrip_scaffolded_case_passes_verify_suite(tmp_path, capsys, monkeypatch):
-    """verify-init --from <ref> | verify-suite <new> → [PASS]."""
+    """verify init --from <ref> | verify suite <new> → [PASS]."""
     monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
     target = tmp_path / "roundtrip"
     init_case(target, from_dir=_ref_case())
