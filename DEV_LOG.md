@@ -2,6 +2,67 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-29 — [INCOMPLETE] WORK BLOCK: Stabilization round-out
+
+**Goal:** Tie up the loose ends surfaced during the Layer 1 + cleanup + logging refactors so the CLI surface is internally consistent before we layer anything new on top. Three small, independent phases — each is one PR's worth of work and none block the others.
+
+**Why this scope, why now:** Layer 1 + cleanup + logging shipped fast and surfaced a handful of "we said we'd do this later" items. None are urgent in isolation; together they're the difference between "the CLI works" and "the CLI is clean." Doing them now while the architecture is fresh in context is cheaper than rediscovering them later. Skill repo extraction in particular blocks any second consumer of the skill (a Claude Code instance on a fresh machine still pulls the skill from inside the parallax-v0 repo).
+
+**Out of scope:**
+- Narrative-parallax Layer 3 / Layer 4 work — separate repo, separate concern.
+- Plan/brief schema additions beyond what each phase explicitly calls out.
+- Real-API verify-suite cases — `--paid` cases stay deferred until we have a budget loop.
+- Any new commands beyond what the phases below introduce (`parallax audio speed`, `parallax verify suite|init`).
+
+### Phase 1 — Speed separation: lift `_apply_atempo` into `audio.py`  [INCOMPLETE]
+
+**Description:** The atempo pass currently lives inside `voiceover.py` as `_apply_atempo`, gated by the plan-level `voice_speed:` field. Speed is a generic audio transform, not a voiceover-specific concern. Lift it into `src/parallax/audio.py` as `audio.speedup(in_path, out_path, rate) -> Path` (also accept a natural-English `--by 30%` form on the CLI side that translates to a numeric rate). Expose as `parallax audio speed --in <file> --out <file> --rate <multiplier>`. Add a new produce stage `stage_speed_adjust` driven by the existing plan-level `voice_speed:` (and per-scene override) that calls the same function. `voiceover.generate_voiceover` drops the `speed` arg — voiceover becomes pure TTS. The same shape `parallax audio speed` would generalize to any in-pipeline audio transform later (cap-pauses, normalize, etc. are already CLI-first; speed joins the pattern).
+
+**Acceptance:**
+- `parallax audio speed --in a.wav --out b.wav --rate 1.3` produces a 1.3× wav.
+- `parallax audio speed --in a.wav --out b.wav --by 30%` produces the same.
+- A produce run with `voice_speed: 1.2` in the plan still ships an mp4 whose voiceover is sped up — but the work happens in `stage_speed_adjust`, not inside voiceover.
+- `voiceover.generate_voiceover()` no longer accepts a `speed` kwarg.
+- `audio.speedup()` is unit-tested in isolation (rate=1.0 = identity, rate=1.5 shortens duration by 33%, ffmpeg failure raises with a clear message).
+
+**Self-verification (subagent):** `uv run pytest -q` green; `parallax audio speed` round-trips a fixture wav at three rates; `PARALLAX_TEST_MODE=1 parallax produce` with `voice_speed: 1.2` produces an mp4 whose voiceover.wav is shorter than the natural-pace baseline.
+
+**Human verification steps:** Listen to a real-API run with `voice_speed: 0.9` (slower) and `voice_speed: 1.3` (faster) and confirm the audio actually changes.
+
+**Breaks if:** `voiceover.generate_voiceover` still accepts a `speed` kwarg, or a plan with `voice_speed: 1.5` produces an mp4 the same length as a plan with `voice_speed: 1.0`.
+
+### Phase 2 — `parallax verify suite|init` subgroup rename  [INCOMPLETE]
+
+**Description:** `verify-suite` and `verify-init` are obviously paired but currently flat-named at the top level. Move them under a `verify` subgroup: `parallax verify suite <dir>` and `parallax verify init <target>`. Drop the dashed forms entirely (single-user, one release; no shim). The implementation lives in `verify_suite.py` already; only the argparse wiring changes.
+
+**Acceptance:**
+- `parallax verify --help` lists `suite` and `init` as subcommands.
+- `parallax verify suite tests/fixtures/verify_suite_smoke/` runs the smoke suite.
+- `parallax verify init <target> --from <existing>` scaffolds a new case.
+- `parallax verify-suite` and `parallax verify-init` are gone (not registered, not aliased).
+- Existing `tests/test_verify_*.py` updated for the new invocation surface.
+
+**Breaks if:** `parallax verify-suite tests/fixtures/verify_suite_smoke/` still resolves, or `parallax verify suite` is missing.
+
+### Phase 3 — Layer 2.5: Extract the parallax skill into its own repo  [INCOMPLETE]
+
+**Description:** Today the canonical generic Parallax skill ships inside this repo at `src/parallax/skills/parallax-cli.skill.md` (≤3K, accurate against the current CLI). For any other Claude Code session on any other machine to use it, that machine has to either clone parallax-v0 just for the skill or symlink into the parallax-v0 worktree. Extract the skill into a standalone `parallax-skill` repo so it can stand alone:
+
+1. `git init ~/Documents/GitHub/parallax-skill`. Add the skill content as the new repo's main file (filename + frontmatter to match Claude Code skill conventions).
+2. Repoint the user's `~/.claude/skills/parallax` symlink from `parallax-v0/src/parallax/skills/parallax-cli.skill.md` (or wherever it currently points) to the new repo.
+3. In a follow-up commit on `parallax-v0`, delete `src/parallax/skills/` and the `[tool.hatch.build.targets.wheel].artifacts` entry that ships the skill in the wheel. Update `pyproject.toml` accordingly.
+4. Add a one-line note in this repo's README pointing at `parallax-skill` so anyone reading parallax-v0 knows where the agent guide actually lives.
+
+**Acceptance:**
+- `~/.claude/skills/parallax` resolves to the new `parallax-skill` repo (verifiable via `ls -la`).
+- `parallax-v0` no longer contains `src/parallax/skills/`.
+- The new repo has its own minimal README pointing at parallax-v0.
+- `parallax produce` etc. still work (the CLI never depended on the skill at runtime).
+
+**Breaks if:** `~/.claude/skills/parallax` resolves to a path inside `parallax-v0`, or the parallax-v0 wheel still ships the skill.markdown file.
+
+---
+
 ## 2026-04-29 — [CHANGED] Logging overhaul — output-dir runlog, runs.ndjson index, `parallax log`
 - Run log moved from `~/.parallax/logs/<run_id>.log` to `<output_dir>/run.log`
   — single canonical location, no symlinks, no duplication. Pre-output_dir
