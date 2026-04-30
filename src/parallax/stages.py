@@ -196,6 +196,7 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
                     reference_images=refs,
                     out_dir=Path(rt["stills_dir"]),
                     aspect_ratio=scene_aspect,
+                    size=settings.resolution,
                 )
                 check = check_aspect(raw_still_path, settings.resolution)
                 if check.within_tolerance:

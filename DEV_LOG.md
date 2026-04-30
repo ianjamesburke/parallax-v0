@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-04-29 — [CHANGED] `stage_stills` threads `size` into `generate_image` (PR → main)
+`stage_stills` now passes `size=settings.resolution` when calling `openrouter.generate_image`. Previously it only passed `aspect_ratio`, which fell back to the aspect-derived default (`9:16` → `1080x1920`) inside the test-mode shim regardless of the project's actual resolution. As a result, verify-suite cases at non-default resolutions (e.g. `720x1280`) could not assert `stages.stills.resolution`. Real-mode was already correct because the underlying provider call resolves size from the same plan field through a different path. Re-enabled the `stages.stills.resolution: 720x1280` assertion in `tests/integration/res-720x1280/expected.yaml` and removed the workaround comment. The original [FUTURE] entry below ("`parallax.tools.generate_image` drops `size` arg") was misleading — there is no `tools.py` module; the leak was in the `stage_stills` call site, not a separate shim.
+**Breaks if:** `PARALLAX_TEST_MODE=1 uv run parallax verify suite tests/integration/res-720x1280/` does not print `[PASS] res-720x1280` and exit 0; or generated stills under that case are 1080x1920 rather than 720x1280.
+
 ## 2026-04-29 — [CHANGED] CLI prints help when a command group is invoked with no subcommand (PR #20 → main)
 Subparsers no longer error with `the following arguments are required` when called bare. A single tree-walk helper (`_enable_help_on_empty`) flips `required=False` on every subparsers action and stamps each parent's `print_help` into `args._help_on_empty`; leaf parsers clear the inherited default so concrete subcommands run normally. Adding new subgroups now gets this behavior for free — no hardcoded list to maintain. Also fixed two latent `%` escapes in audio help strings (`<pct%>` and `30%`) that only surfaced once those help texts started rendering.
 **Breaks if:** `parallax`, `parallax audio`, `parallax models`, `parallax video`, `parallax verify`, or `parallax completions` (each invoked bare) does not print its help and exit 0; or `parallax audio --help` raises `ValueError: unsupported format character`.
@@ -201,7 +205,7 @@ Wrapped the per-spec call in `_call_with_transient_retry`: 3 attempts with expon
 
 **Breaks if:** a single `httpx.ReadError` / `SSLError` / `ConnectError` from `_image_real` jumps straight to the fallback spec (it should now log `openrouter.image.error` with `transient: true` and retry the same alias up to 3 times before falling through); the runlog should show repeated `attempt` numbers for the same `model_id` on a transient blip.
 
-## 2026-04-28 — [FUTURE] `parallax.tools.generate_image` drops `size` arg
+## 2026-04-28 — [FUTURE] `parallax.tools.generate_image` drops `size` arg  [SUPERSEDED — see 2026-04-29 entry]
 Phase 1.3 threaded `size` through `parallax.openrouter.generate_image` so test-mode mocks could honor requested resolution. The thin compatibility shim at `parallax.tools.generate_image` (used by `stage_stills`) was missed — it accepts no `size` param and so always lands on `render_mock_image` with `resolution="1080x1920"` regardless of the plan. Real-mode is unaffected (the underlying image-gen path goes through the openrouter dispatcher with size set elsewhere), but it means verify-suite cases at non-1080x1920 resolution can't assert `stages.stills.resolution`. The Phase 1.4 canonical case (`tests/integration/res-720x1280/`) works around this by omitting that one assertion and relying on `final.resolution` + `assemble.resolution` for the product-level guarantee. Fix is a 2-line shim update — accept `size`, forward to `_generate_image` — but it touches the `produce` path so it gets its own pass. Do this before Phase 2.1 lands so the resolution-adaptation cases can assert at every stage.
 
 ## 2026-04-28 — [CHANGED] verify-suite shipped — three schema deviations from the draft
@@ -461,7 +465,7 @@ PARALLAX_TEST_MODE=1 uv run parallax verify-suite tests/fixtures/verify_suite_sm
   - AGENTS.md updated with `verify-init` doc + single-case shortcut for `verify-suite`.
 
 **Phase 1.4 carry-overs:**
-- `stages.stills.resolution` is intentionally omitted from the canonical case's `expected.yaml`. See [FUTURE] entry below: `parallax.tools.generate_image` shim drops the `size` arg before reaching the resolution-aware mock, so test-mode stills always come back 1080×1920. The smoke fixture covers the schema branch (asserts 1080x1920); the canonical case relies on `final.resolution` + `assemble.resolution` for the product-level guarantee.
+- `stages.stills.resolution` was originally omitted from the canonical case's `expected.yaml` because the `stage_stills` call into `openrouter.generate_image` did not pass `size` through, so test-mode mocks always rendered 1080×1920. Resolved 2026-04-29 — see top-of-log [CHANGED] entry; the assertion is now `720x1280` in the canonical case.
 
 - 2026-04-28 — user signed off ("move on"); flag flipped to [COMPLETE]. Block 1 (Test Harness Foundation) closes — all 4 phases [COMPLETE]. Block 2 + Block 3 of the Integration Test Suite work block remain [INCOMPLETE] and are deferred per the 6-hour pivot to live agent-driven e2e (narrative-parallax Block 5).
 
