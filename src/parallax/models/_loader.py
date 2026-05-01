@@ -49,6 +49,7 @@ def _to_spec(entry: dict[str, Any], kind: Kind) -> ModelSpec:
         end_frame=bool(caps.get("end_frame", False)),
         inputs=inputs,
         voices=voices,
+        tts_backend=entry.get("tts_backend", "chat_audio"),
     )
 
 

@@ -19,6 +19,7 @@ retries. Test-mode never fails, so fallbacks are real-mode-only.
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -165,10 +166,14 @@ def generate_tts(
 ) -> tuple[Path, list[dict[str, Any]], float]:
     """Returns (audio_path, words [{word, start, end}], total_duration_s).
 
-    All TTS routes through OpenRouter — OpenAI gpt-audio-mini via the
-    chat-completions audio modality (`modalities=["text","audio"]` +
-    streaming pcm16). The `voice` arg is an OpenAI voice name (e.g.
-    'nova', 'alloy'); full list via `parallax models show tts-mini`.
+    Two backends are supported depending on the alias:
+      chat_audio (tts-mini): OpenAI gpt-audio-mini via chat-completions audio
+        modality. Inline [emotional] tags are stripped before sending.
+      speech (tts-gemini): Gemini TTS via /api/v1/audio/speech. Inline
+        [emotional] tags are passed through to the model unchanged — Gemini
+        interprets them natively for expressive delivery.
+
+    Voice names are backend-specific; see `parallax models show <alias>`.
     """
     out = out_dir or output_dir()
     spec = resolve(alias, kind="tts")
@@ -176,23 +181,36 @@ def generate_tts(
         runlog.event("openrouter.tts.test", alias=alias, chars=len(text), voice=voice)
         return render_mock_tts(text=text, voice=voice, out_dir=out)
 
-    chosen_voice = voice if voice and voice != "default" else _TTS_DEFAULT_VOICE
-    # Default style applies only when neither style nor style_hint was
-    # explicitly passed — passing style=None means "natural" (no prefix).
-    effective_style = style if (style or style_hint) else _TTS_DEFAULT_STYLE
-    runlog.event(
-        "openrouter.tts.call", alias=alias, voice=chosen_voice, chars=len(text),
-        style=effective_style, style_hint=style_hint,
-    )
-    t0 = time.monotonic()
-    # Strip the `openrouter/` prefix from the catalog model_id so we pass the
-    # bare provider slug to the streaming endpoint.
     model_id = _strip_or_prefix(spec.model_id)
-    path, words, duration = _tts_real(
-        text, voice=chosen_voice, out_dir=out,
-        style=effective_style, style_hint=style_hint,
-        model=model_id,
-    )
+    t0 = time.monotonic()
+
+    if spec.tts_backend == "speech":
+        chosen_voice = voice if voice and voice != "default" else _GEMINI_TTS_DEFAULT_VOICE
+        runlog.event(
+            "openrouter.tts.call", alias=alias, voice=chosen_voice, chars=len(text),
+            backend="speech",
+        )
+        # Gemini: pass emotional tags through unchanged
+        path, words, duration = _tts_real_speech(
+            text, voice=chosen_voice, out_dir=out, model=model_id,
+        )
+    else:
+        chosen_voice = voice if voice and voice != "default" else _TTS_DEFAULT_VOICE
+        # Default style applies only when neither style nor style_hint was
+        # explicitly passed — passing style=None means "natural" (no prefix).
+        effective_style = style if (style or style_hint) else _TTS_DEFAULT_STYLE
+        runlog.event(
+            "openrouter.tts.call", alias=alias, voice=chosen_voice, chars=len(text),
+            style=effective_style, style_hint=style_hint, backend="chat_audio",
+        )
+        # chat_audio backends don't interpret inline tags — strip them so the
+        # model reads clean text rather than pronouncing the brackets literally.
+        path, words, duration = _tts_real(
+            strip_emotional_tags(text), voice=chosen_voice, out_dir=out,
+            style=effective_style, style_hint=style_hint,
+            model=model_id,
+        )
+
     duration_ms = int((time.monotonic() - t0) * 1000)
     runlog.event(
         "openrouter.tts.response",
@@ -876,6 +894,21 @@ _TTS_DEFAULT_MODEL = "openai/gpt-audio-mini"
 _TTS_PCM_SAMPLE_RATE = 24_000
 _TTS_PCM_BYTES_PER_SAMPLE = 2  # 16-bit
 
+_GEMINI_TTS_DEFAULT_VOICE = "Kore"
+
+# Matches [tag] tokens anywhere in text — used to strip inline emotional
+# tags before sending to backends that don't interpret them (chat_audio).
+_EMOTIONAL_TAG_RE = re.compile(r"\[[^\]]+\]")
+
+
+def strip_emotional_tags(text: str) -> str:
+    """Remove inline [emotional] tags and normalize whitespace.
+
+    Used for chat_audio backends (e.g. gpt-audio-mini) that would pronounce
+    brackets literally. Gemini TTS (speech backend) receives tags unchanged.
+    """
+    return re.sub(r" {2,}", " ", _EMOTIONAL_TAG_RE.sub("", text)).strip()
+
 
 # Style presets prepend a directive to the spoken text. gpt-audio-mini
 # follows freeform delivery hints in the user message.
@@ -1011,6 +1044,75 @@ def _tts_real(
             exc,
         )
         words = _tts_evenly_distributed_words(transcript or text, duration_s)
+
+    return wav_path, words, duration_s
+
+
+def _tts_real_speech(
+    text: str,
+    *,
+    voice: str,
+    out_dir: Path,
+    model: str,
+) -> tuple[Path, list[dict[str, Any]], float]:
+    """Synthesize via /api/v1/audio/speech (Gemini TTS on OpenRouter).
+
+    Inline [emotional] tags are passed through unchanged — the Gemini model
+    interprets them natively for expressive delivery (e.g. [dramatically],
+    [whispering], [speaking quickly]).
+
+    OpenRouter's /audio/speech only accepts response_format "mp3" or "pcm"
+    (verified live 2026-04-30 — "wav" returns ZodError 400). We request "pcm"
+    and wrap the raw bytes into a WAV ourselves, consistent with _tts_real.
+
+    Returns (wav_path, words, duration_s). Word timings come from forced
+    alignment (WhisperX), falling back to evenly-distributed if alignment
+    fails.
+    """
+    import time as _time
+    import wave
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _check_key()
+
+    body = {
+        "model": model,
+        "input": text,
+        "voice": voice,
+        "response_format": "pcm",
+    }
+
+    resp = _post("/audio/speech", body, timeout=120.0)
+    _raise_for_credits_or_status(resp)
+
+    if not resp.content:
+        raise RuntimeError(
+            f"OpenRouter Gemini TTS returned empty audio for {text[:60]!r}"
+        )
+
+    wav_path = out_dir / f"openrouter_tts_{voice}_{int(_time.time()*1000)}.wav"
+    with wave.open(str(wav_path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(_TTS_PCM_BYTES_PER_SAMPLE)
+        w.setframerate(_TTS_PCM_SAMPLE_RATE)
+        w.writeframes(resp.content)
+
+    duration_s = len(resp.content) / (_TTS_PCM_SAMPLE_RATE * _TTS_PCM_BYTES_PER_SAMPLE)
+
+    # Forced alignment for word timestamps, same as chat_audio backend.
+    try:
+        from . import forced_align
+        words = forced_align.align_words(wav_path)
+    except Exception as exc:
+        import logging
+        logging.getLogger("parallax.openrouter.tts").warning(
+            "forced_align failed (%s); falling back to evenly-distributed word timings",
+            exc,
+        )
+        words = _tts_evenly_distributed_words(
+            strip_emotional_tags(text),  # strip tags for word-count accuracy
+            duration_s,
+        )
 
     return wav_path, words, duration_s
 

@@ -290,3 +290,126 @@ def test_video_pricing_model_ids_match_live_openrouter_slugs():
             f"alias {alias!r} drifted: have {VIDEO_MODELS[alias].model_id!r}, "
             f"expected {expected_id!r} (verified hosted on OpenRouter 2026-04-28)"
         )
+
+
+# ---------------------------------------------------------------------------
+# Gemini TTS — /api/v1/audio/speech request shape
+# ---------------------------------------------------------------------------
+
+def _make_minimal_pcm() -> bytes:
+    # Raw 16-bit mono PCM at 24kHz (1 second of silence)
+    # OpenRouter /audio/speech returns raw PCM when response_format="pcm"
+    return b"\x00\x00" * 24000
+
+
+def test_gemini_tts_posts_to_audio_speech_endpoint(monkeypatch, tmp_path):
+    """tts-gemini must POST to /audio/speech, not /chat/completions."""
+    rec = _Recorder()
+
+    def fake_post(url, *, headers, json, timeout):
+        rec.posts.append((url, json))
+        return _FakeResponse(200, content=_make_minimal_pcm())
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    openrouter.generate_tts("Hello world", alias="tts-gemini", voice="Kore", out_dir=tmp_path)
+
+    assert len(rec.posts) == 1
+    url, body = rec.posts[0]
+    assert url.endswith("/audio/speech"), (
+        f"tts-gemini must use /audio/speech endpoint, got: {url}"
+    )
+
+
+def test_gemini_tts_request_body_shape(monkeypatch, tmp_path):
+    """Wire shape: model (no 'openrouter/' prefix), input, voice, response_format."""
+    rec = _Recorder()
+
+    def fake_post(url, *, headers, json, timeout):
+        rec.posts.append((url, json))
+        return _FakeResponse(200, content=_make_minimal_pcm())
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    openrouter.generate_tts(
+        "[dramatically] Hello world", alias="tts-gemini", voice="Fenrir", out_dir=tmp_path,
+    )
+
+    _, body = rec.posts[0]
+    assert body["model"] == "google/gemini-3.1-flash-tts-preview"  # no 'openrouter/' prefix
+    assert body["voice"] == "Fenrir"
+    # "wav" returns ZodError 400 — only "mp3" or "pcm" accepted (verified live 2026-04-30)
+    assert body["response_format"] == "pcm"
+    assert "input" in body
+
+
+def test_gemini_tts_passes_emotional_tags_in_input(monkeypatch, tmp_path):
+    """Emotional tags must appear in the `input` field sent to the API — not stripped."""
+    rec = _Recorder()
+
+    def fake_post(url, *, headers, json, timeout):
+        rec.posts.append((url, json))
+        return _FakeResponse(200, content=_make_minimal_pcm())
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    text = "[dramatically] The world ends. [softly] Just like that."
+    openrouter.generate_tts(text, alias="tts-gemini", voice="Kore", out_dir=tmp_path)
+
+    _, body = rec.posts[0]
+    assert "[dramatically]" in body["input"], (
+        "Gemini TTS must receive emotional tags in input unchanged"
+    )
+    assert "[softly]" in body["input"]
+
+
+def test_openai_tts_strips_tags_from_chat_completions_body(monkeypatch, tmp_path):
+    """tts-mini must strip [emotional] tags before the text reaches the API."""
+    import json as _json
+
+    posted_bodies: list[dict] = []
+    pcm_chunk = _json.dumps({
+        "choices": [{
+            "delta": {
+                "audio": {
+                    "data": __import__("base64").b64encode(b"\x00\x00" * 100).decode(),
+                    "transcript": "hello",
+                }
+            }
+        }]
+    })
+
+    class _FakeStreamResponse:
+        status_code = 200
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def iter_lines(self):
+            yield f"data: {pcm_chunk}"
+            yield "data: [DONE]"
+
+    import contextlib
+
+    @contextlib.contextmanager
+    def fake_stream(method, url, *, headers, json, timeout):
+        posted_bodies.append(json)
+        yield _FakeStreamResponse()
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+
+    text = "[dramatically] Everything changed. [softly] No one knew."
+    openrouter.generate_tts(text, alias="tts-mini", voice="nova", out_dir=tmp_path)
+
+    assert posted_bodies, "expected at least one stream POST"
+    user_content = posted_bodies[0]["messages"][0]["content"]
+    assert "[dramatically]" not in user_content, (
+        "tts-mini must strip emotional tags before sending to chat/completions"
+    )
+    assert "Everything changed." in user_content
+
+
+def test_tts_gemini_model_id_matches_openrouter_slug():
+    """Lock in the Gemini TTS model ID. Verified hosted on OpenRouter 2026-04-30."""
+    from parallax.models import TTS_MODELS
+    assert "tts-gemini" in TTS_MODELS
+    assert TTS_MODELS["tts-gemini"].model_id == "openrouter/google/gemini-3.1-flash-tts-preview"
+    assert TTS_MODELS["tts-gemini"].tts_backend == "speech"
