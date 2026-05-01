@@ -7,12 +7,10 @@ Locks in:
   - uppercase=True flag forces the rendered text to upper-case.
   - _burn_captions_drawtext writes a video of correct duration with the
     drawtext filter chain applied.
-  - _burn_captions_pillow falls back without ffmpeg drawtext and produces
-    a video of the same duration with audio preserved.
   - burn_captions orchestrator: chunking + animation expansion +
     drawtext path end-to-end.
+  - burn_captions raises RuntimeError when ffmpeg lacks drawtext.
   - _probe_fps reads stream r_frame_rate; returns 30.0 on bad input.
-  - _parse_color: white/black/hex strings.
 """
 
 from __future__ import annotations
@@ -23,18 +21,23 @@ from pathlib import Path
 
 import pytest
 
+import pytest
+
 from parallax import captions
 from parallax.captions import (
     _burn_captions_drawtext,
-    _burn_captions_pillow,
     _style_drawtext_filter,
     resolve_caption_style,
 )
 from parallax.ffmpeg_utils import (
     _ffmpeg_has_drawtext,
     _get_ffmpeg,
-    _parse_color,
     _probe_fps,
+)
+
+_requires_drawtext = pytest.mark.skipif(
+    not _ffmpeg_has_drawtext(),
+    reason="ffmpeg on PATH lacks drawtext (libfreetype) — install ffmpeg-full",
 )
 
 
@@ -127,27 +130,6 @@ def test_probe_fps_bad_path_falls_back_to_30(tmp_path):
     assert fps == 30.0
 
 
-# ─── _parse_color ───────────────────────────────────────────────────────
-
-
-def test_parse_color_named_white_black():
-    assert _parse_color("white") == (255, 255, 255)
-    assert _parse_color("black") == (0, 0, 0)
-
-
-def test_parse_color_hex():
-    assert _parse_color("#FFE600") == (255, 230, 0)
-    assert _parse_color("#000000") == (0, 0, 0)
-
-
-def test_parse_color_strips_alpha_suffix():
-    assert _parse_color("black@0.55") == (0, 0, 0)
-
-
-def test_parse_color_none_defaults_to_white():
-    assert _parse_color(None) == (255, 255, 255)
-
-
 # ─── _get_ffmpeg / _ffmpeg_has_drawtext ─────────────────────────────────
 
 
@@ -167,8 +149,7 @@ def test_ffmpeg_has_drawtext_returns_bool():
 # ─── _burn_captions_drawtext ────────────────────────────────────────────
 
 
-@pytest.mark.skipif(not _ffmpeg_has_drawtext(),
-                    reason="local ffmpeg lacks drawtext (libfreetype)")
+@_requires_drawtext
 def test_burn_captions_drawtext_produces_video(tmp_path):
     v = tmp_path / "in.mp4"
     _make_video_with_audio(v, 1.0)
@@ -183,23 +164,22 @@ def test_burn_captions_drawtext_produces_video(tmp_path):
     assert abs(_probe_dur(out) - 1.0) < 0.2
 
 
-# ─── _burn_captions_pillow ──────────────────────────────────────────────
-
-
-def test_burn_captions_pillow_produces_video(tmp_path):
-    v = tmp_path / "in.mp4"
-    _make_video_with_audio(v, 0.5)
-    out = tmp_path / "captioned_pillow.mp4"
-    chunks = [{"text": "HI", "start": 0.0, "end": 0.5}]
-    style = resolve_caption_style("bangers")
-    _burn_captions_pillow(str(v), chunks, out, fontsize=64, style=style)
-    assert out.exists() and out.stat().st_size > 0
-    assert abs(_probe_dur(out) - 0.5) < 0.2
-
-
 # ─── burn_captions orchestrator ─────────────────────────────────────────
 
 
+def test_burn_captions_raises_when_drawtext_unavailable(tmp_path):
+    """burn_captions raises RuntimeError with install instructions when
+    the available ffmpeg lacks drawtext support."""
+    from unittest.mock import patch
+    v = tmp_path / "in.mp4"
+    _make_video_with_audio(v, 0.5)
+    words = [{"word": "hi", "start": 0.0, "end": 0.4}]
+    with patch("parallax.ffmpeg_utils._ffmpeg_has_drawtext", return_value=False):
+        with pytest.raises(RuntimeError, match="drawtext"):
+            captions.burn_captions(str(v), json.dumps(words))
+
+
+@_requires_drawtext
 def test_burn_captions_end_to_end(tmp_path):
     v = tmp_path / "in.mp4"
     _make_video_with_audio(v, 1.0)
@@ -216,6 +196,7 @@ def test_burn_captions_end_to_end(tmp_path):
     assert out.exists() and out.stat().st_size > 0
 
 
+@_requires_drawtext
 def test_burn_captions_no_words_returns_original(tmp_path):
     v = tmp_path / "in.mp4"
     _make_video_with_audio(v, 0.5)
@@ -223,6 +204,7 @@ def test_burn_captions_no_words_returns_original(tmp_path):
     assert out == str(v)
 
 
+@_requires_drawtext
 def test_burn_captions_words_path_argument(tmp_path):
     """Caller can pass a file path to vo_words.json."""
     v = tmp_path / "in.mp4"
@@ -237,6 +219,7 @@ def test_burn_captions_words_path_argument(tmp_path):
     assert out.exists()
 
 
+@_requires_drawtext
 def test_burn_captions_shift_s_offsets_chunks(tmp_path):
     """shift_s shifts chunk start/end; clamping at 0 prevents negative."""
     v = tmp_path / "in.mp4"
@@ -257,6 +240,7 @@ def test_burn_captions_shift_s_offsets_chunks(tmp_path):
 # the produce.py convention `fontsize_base * (width / 1080)` so they
 # also verify the scaled fontsize doesn't blow up Pillow/drawtext.
 
+@_requires_drawtext
 @pytest.mark.parametrize("w,h", [(480, 854), (720, 1280), (1080, 1920)])
 def test_burn_captions_adapts_to_resolution(tmp_path, w, h):
     """End-to-end caption burn at multiple resolutions — output must

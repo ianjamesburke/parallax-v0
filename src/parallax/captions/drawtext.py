@@ -60,7 +60,7 @@ def _burn_captions_drawtext(
     fontsize: int,
     style: dict,
 ) -> None:
-    from ..ffmpeg_utils import _get_ffmpeg
+    from ..ffmpeg_utils import _get_drawtext_ffmpeg
 
     # Each chunk may have its own per-keyframe fontsize set by
     # `_expand_pop_keyframes`; fall back to the global fontsize for
@@ -73,7 +73,7 @@ def _burn_captions_drawtext(
         for c in chunks
     ]
     result = run_ffmpeg(
-        [_get_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
+        [_get_drawtext_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
          "-i", video_path,
          "-vf", ",".join(filters),
          "-c:v", "libx264", "-preset", "fast", "-crf", "18",

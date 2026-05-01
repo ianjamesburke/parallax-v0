@@ -6,10 +6,16 @@ probing, and color string parsing for the Pillow caption fallback.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
-_FFMPEG_FULL = "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg"
+# Known locations to search when looking for a drawtext-capable ffmpeg.
+# Checked in order; first working binary with drawtext wins.
+_DRAWTEXT_SEARCH_PATHS = [
+    None,  # sentinel: system PATH ffmpeg (filled in at call time)
+    "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg",
+]
 
 
 def run_ffmpeg(cmd: list[str], **kwargs):
@@ -52,20 +58,46 @@ def parse_resolution(s: str) -> tuple[int, int]:
 
 
 def _get_ffmpeg() -> str:
-    """Return the best available ffmpeg binary — ffmpeg-full (has drawtext) first."""
-    import shutil
-    if Path(_FFMPEG_FULL).exists():
-        return _FFMPEG_FULL
+    """Return the ffmpeg binary on PATH."""
     return shutil.which("ffmpeg") or "ffmpeg"
 
 
+def _supports_drawtext(binary: str) -> bool:
+    """Return True if the given ffmpeg binary supports the drawtext filter."""
+    try:
+        result = subprocess.run(
+            [binary, "-hide_banner", "-filters"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return "drawtext" in result.stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _get_drawtext_ffmpeg() -> str:
+    """Return the best available ffmpeg that supports drawtext.
+
+    Tries the system ffmpeg first. If it lacks drawtext (e.g. standard Homebrew
+    build without libfreetype), walks _DRAWTEXT_SEARCH_PATHS for a working
+    alternative (e.g. ffmpeg-full). Falls back to the system ffmpeg if nothing
+    better is found — callers should check _ffmpeg_has_drawtext() and fall back
+    to the Pillow path if needed.
+    """
+    system = _get_ffmpeg()
+    if _supports_drawtext(system):
+        return system
+    for path in _DRAWTEXT_SEARCH_PATHS:
+        candidate = path or system
+        if candidate == system:
+            continue
+        if Path(candidate).exists() and _supports_drawtext(candidate):
+            return candidate
+    return system
+
+
 def _ffmpeg_has_drawtext() -> bool:
-    """Return True if the resolved ffmpeg binary supports the drawtext filter."""
-    result = subprocess.run(
-        [_get_ffmpeg(), "-hide_banner", "-filters"],
-        capture_output=True, text=True,
-    )
-    return "drawtext" in result.stdout
+    """Return True if any available ffmpeg supports the drawtext filter."""
+    return _supports_drawtext(_get_drawtext_ffmpeg())
 
 
 def _probe_fps(video_path: str) -> float:
@@ -84,14 +116,3 @@ def _probe_fps(video_path: str) -> float:
         return 30.0
 
 
-def _parse_color(color: str | None) -> tuple[int, int, int]:
-    if not color:
-        return (255, 255, 255)
-    color = color.split("@")[0].strip()
-    if color.lower() == "white":
-        return (255, 255, 255)
-    if color.lower() == "black":
-        return (0, 0, 0)
-    if color.startswith("#") and len(color) == 7:
-        return (int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16))
-    return (255, 255, 255)

@@ -2,8 +2,11 @@
 
 `burn_captions` is the entry point: it loads words, builds chunks via the
 chunker, applies gap-hold + global timing shift, expands the style's
-animation profile into keyframes, then dispatches to the drawtext or
-Pillow backend depending on ffmpeg capabilities.
+animation profile into keyframes, then dispatches to the drawtext backend.
+
+Requires a drawtext-capable ffmpeg (one built with libfreetype). The
+installer provides this via ffmpeg-full on macOS. Raises RuntimeError if
+the available ffmpeg lacks drawtext support.
 """
 
 from __future__ import annotations
@@ -15,7 +18,6 @@ from ..log import get_logger
 from .animation import _expand_animation_keyframes
 from .chunker import _smart_chunk_words
 from .drawtext import _burn_captions_drawtext
-from .pillow import _burn_captions_pillow
 from .styles import resolve_caption_style
 
 log = get_logger(__name__)
@@ -55,6 +57,12 @@ def burn_captions(
     Returns captioned video path.
     """
     from ..ffmpeg_utils import _ffmpeg_has_drawtext, _probe_fps
+    if not _ffmpeg_has_drawtext():
+        raise RuntimeError(
+            "burn_captions: ffmpeg on PATH lacks drawtext support (libfreetype). "
+            "On macOS run: brew install ffmpeg-full. "
+            "On Linux run: sudo apt install ffmpeg (Ubuntu/Debian ships with freetype enabled)."
+        )
 
     wjson_path = Path(words_json)
     if wjson_path.exists():
@@ -119,17 +127,7 @@ def burn_captions(
 
     keyed = _expand_animation_keyframes(chunks, fontsize, anim)
 
-    if _ffmpeg_has_drawtext():
-        try:
-            _burn_captions_drawtext(video_path, keyed, out, fontsize, style)
-        except RuntimeError as e:
-            log.warning("burn_captions: drawtext failed (%s), falling back to Pillow", e)
-            if out.exists():
-                out.unlink()
-            _burn_captions_pillow(video_path, chunks, out, fontsize, style)
-    else:
-        log.info("burn_captions: drawtext unavailable, using Pillow fallback")
-        _burn_captions_pillow(video_path, chunks, out, fontsize, style)
+    _burn_captions_drawtext(video_path, keyed, out, fontsize, style)
 
     log.info("burn_captions: wrote %s", out)
     return str(out)
