@@ -1,7 +1,7 @@
 """ffmpeg/ffprobe utility helpers.
 
-Pure helpers: locating the ffmpeg binary, capability checks, frame-rate
-probing, and color string parsing for the Pillow caption fallback.
+Pure helpers: locating the ffmpeg binary, capability checks, and frame-rate
+probing.
 """
 
 from __future__ import annotations

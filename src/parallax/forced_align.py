@@ -95,7 +95,13 @@ def _align_whisperx(wav: str, model_name: str, device: str, compute_type: str) -
 
 
 def _align_faster_whisper(wav: str, model_name: str, device: str, compute_type: str) -> list[dict]:
-    from faster_whisper import WhisperModel
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as e:
+        raise RuntimeError(
+            "forced_align: faster-whisper is not installed. "
+            "Run: uv pip install faster-whisper"
+        ) from e
 
     log.info("forced_align: transcribing %s with faster-whisper (%s, %s)", Path(wav).name, model_name, device)
     model = WhisperModel(model_name, device=device, compute_type=compute_type)
