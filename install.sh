@@ -22,10 +22,13 @@ if [ "$(uname)" = "Darwin" ] && ! command -v brew >/dev/null 2>&1; then
 fi
 
 # ─── ffmpeg ───────────────────────────────────────────────────────────────────
+# parallax requires a drawtext-capable ffmpeg (built with libfreetype).
+# On macOS, the standard Homebrew ffmpeg bottle omits freetype — ffmpeg-full
+# includes it. On Linux, the distro ffmpeg package already includes freetype.
 if ! command -v ffmpeg >/dev/null 2>&1; then
     echo "→ Installing ffmpeg..."
     if command -v brew >/dev/null 2>&1; then
-        brew install ffmpeg
+        brew install ffmpeg-full
     elif command -v apt-get >/dev/null 2>&1; then
         sudo apt-get install -y ffmpeg
     elif command -v yum >/dev/null 2>&1; then
@@ -33,9 +36,16 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
     else
         echo ""
         echo "Error: ffmpeg not found and no known package manager available."
+        echo "  macOS:  brew install ffmpeg-full"
         echo "  Linux:  sudo apt install ffmpeg"
         echo "  Other:  https://ffmpeg.org/download.html"
         exit 1
+    fi
+elif [ "$(uname)" = "Darwin" ]; then
+    # Already have ffmpeg — check it supports drawtext (libfreetype).
+    if ! ffmpeg -hide_banner -filters 2>/dev/null | grep -q drawtext; then
+        echo "→ Upgrading to ffmpeg-full (drawtext/libfreetype required)..."
+        brew install ffmpeg-full
     fi
 fi
 

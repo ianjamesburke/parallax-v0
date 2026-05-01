@@ -116,14 +116,3 @@ def _probe_fps(video_path: str) -> float:
         return 30.0
 
 
-def _parse_color(color: str | None) -> tuple[int, int, int]:
-    if not color:
-        return (255, 255, 255)
-    color = color.split("@")[0].strip()
-    if color.lower() == "white":
-        return (255, 255, 255)
-    if color.lower() == "black":
-        return (0, 0, 0)
-    if color.startswith("#") and len(color) == 7:
-        return (int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16))
-    return (255, 255, 255)
