@@ -12,10 +12,16 @@ import subprocess
 from pathlib import Path
 
 from .captions.styles import CAPTION_STYLES, _FONTS_DIR
-from .ffmpeg_utils import _get_drawtext_ffmpeg, run_ffmpeg
+from .ffmpeg_utils import _ffmpeg_has_drawtext, _get_drawtext_ffmpeg, run_ffmpeg
 from .log import get_logger
 
 log = get_logger(__name__)
+
+_DRAWTEXT_REQUIRED_MSG = (
+    "ffmpeg on PATH lacks drawtext support (libfreetype). "
+    "On macOS run: brew install ffmpeg-full. "
+    "On Linux run: sudo apt install ffmpeg (Ubuntu/Debian ships with freetype enabled)."
+)
 
 
 def burn_titles(
@@ -33,6 +39,8 @@ def burn_titles(
     """
     if not titles:
         return video_path
+    if not _ffmpeg_has_drawtext():
+        raise RuntimeError(f"burn_titles: {_DRAWTEXT_REQUIRED_MSG}")
 
     out = Path(output_path or str(Path(video_path).with_stem(Path(video_path).stem + "_titled")))
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -96,6 +104,9 @@ def burn_headline(
     font_name: one of bangers, impact, bebas, anton, clean (uses bundled fonts).
     Returns the output video path.
     """
+    if not _ffmpeg_has_drawtext():
+        raise RuntimeError(f"burn_headline: {_DRAWTEXT_REQUIRED_MSG}")
+
     out = Path(output_path or str(Path(video_path).with_stem(Path(video_path).stem + "_headline")))
     out.parent.mkdir(parents=True, exist_ok=True)
 
