@@ -176,9 +176,15 @@ def generate_tts(
     Voice names are backend-specific; see `parallax models show <alias>`.
     """
     out = out_dir or output_dir()
+    spec0 = resolve(alias, kind="tts")
+
+    if voice and voice != "default" and spec0.voices and voice not in spec0.voices:
+        raise ValueError(
+            f"Voice {voice!r} is not available for {spec0.alias!r}. "
+            f"Valid voices: {', '.join(spec0.voices)}"
+        )
 
     if is_test_mode():
-        spec0 = resolve(alias, kind="tts")
         runlog.event("openrouter.tts.test", alias=alias, chars=len(text), voice=voice)
         result = render_mock_tts(text=text, voice=voice, out_dir=out)
         _record_usage(spec0, text, str(result[0]), duration_ms=0, cost_usd=0.0, test=True)
