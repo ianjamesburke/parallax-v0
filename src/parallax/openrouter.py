@@ -1043,8 +1043,9 @@ def _tts_real_speech(
     """Synthesize via /api/v1/audio/speech (Gemini TTS on OpenRouter).
 
     Inline [emotional] tags are passed through unchanged — the Gemini model
-    interprets them natively for expressive delivery (e.g. [dramatically],
-    [whispering], [speaking quickly]).
+    interprets them natively for expressive delivery. Use single-word
+    gerund/adjective/adverb form: [dramatically], [whispering], [rapidly],
+    [excitedly], [softly].
 
     OpenRouter's /audio/speech only accepts response_format "mp3" or "pcm"
     (verified live 2026-04-30 — "wav" returns ZodError 400). We request "pcm"

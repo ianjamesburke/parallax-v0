@@ -35,15 +35,16 @@
   unit: 1k_chars
   description: |
     Expressive TTS. Gemini 3.1 Flash TTS via OpenRouter (/audio/speech endpoint).
-    Supports inline [emotional] tags for style control — e.g. [dramatically],
-    [whispering], [speaking quickly], [with excitement]. Tags are passed through
+    Supports inline [emotional] tags for style control. Use single-word
+    gerund/adjective/adverb form for best results — e.g. [dramatically],
+    [whispering], [rapidly], [excitedly], [softly]. Tags are passed through
     to the model; use them anywhere in the voiceover text.
 
     Example:
       voice: Kore
       text: |
         [dramatically] Everything was about to change.
-        [speaking quickly] Three seconds. Two. One.
+        [rapidly] Three seconds. Two. One.
         [softly] And then — silence.
 
     Dramatic voices: Kore (firm), Fenrir (excitable), Charon (informative), Puck (upbeat)

@@ -60,7 +60,7 @@ def test_gemini_tts_round_trip_with_emotional_tags(tmp_path):
 
     text = (
         "[dramatically] The Fast Talker. "
-        "[speaking quickly] Built for speed. No pauses. No mercy. Buy now. "
+        "[rapidly] Built for speed. No pauses. No mercy. Buy now. "
         "[softly] Or don't."
     )
 
@@ -91,11 +91,11 @@ def test_gemini_tts_fast_talker_sample(tmp_path):
     from parallax import openrouter
 
     text = (
-        "[speaking quickly] "
+        "[rapidly] "
         "This is the fastest pitch you've ever heard. "
         "No filler. No fluff. Just results. "
-        "[with excitement] Results that matter. "
-        "[speaking quickly] "
+        "[excitedly] Results that matter. "
+        "[rapidly] "
         "Sign up today. Cancel anytime. "
         "[dramatically] But you won't want to."
     )

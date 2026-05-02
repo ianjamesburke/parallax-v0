@@ -111,8 +111,10 @@ def _print_model_show(models_pkg, alias: str, kind: str | None) -> int:
         if spec.tts_backend == "speech":
             print()
             print("Emotional tags — inline in your voiceover text, passed to Gemini:")
+            print("  Use single-word gerund/adjective/adverb form: [whispering], [excitedly],")
+            print("  [dramatically], [rapidly], [softly], [cheerfully], [angrily], etc.")
             print('  "[dramatically] Everything changed. [softly] No one knew."')
-            print('  "[speaking quickly] Three. Two. One. [with excitement] Go!"')
+            print('  "[rapidly] Three. Two. One. [excitedly] Go!"')
             print('  "[whispering] The secret was simple."')
             print()
             print("Usage (plan.yaml):")
@@ -120,7 +122,7 @@ def _print_model_show(models_pkg, alias: str, kind: str | None) -> int:
             print("  voice: Kore")
             print("  voiceover: |")
             print("    [dramatically] The world you knew is gone.")
-            print("    [speaking quickly] You have five seconds to decide.")
+            print("    [rapidly] You have five seconds to decide.")
             print("    [softly] Choose wisely.")
         elif spec.tts_backend == "chat_audio":
             print()
