@@ -176,49 +176,33 @@ def generate_tts(
     Voice names are backend-specific; see `parallax models show <alias>`.
     """
     out = out_dir or output_dir()
-    spec = resolve(alias, kind="tts")
+
     if is_test_mode():
+        spec0 = resolve(alias, kind="tts")
         runlog.event("openrouter.tts.test", alias=alias, chars=len(text), voice=voice)
-        return render_mock_tts(text=text, voice=voice, out_dir=out)
+        result = render_mock_tts(text=text, voice=voice, out_dir=out)
+        _record_usage(spec0, text, str(result[0]), duration_ms=0, cost_usd=0.0, test=True)
+        return result
 
-    model_id = _strip_or_prefix(spec.model_id)
-    t0 = time.monotonic()
+    def _tts_call(spec):
+        model_id = _strip_or_prefix(spec.model_id)
+        if spec.tts_backend == "speech":
+            chosen_voice = voice if voice and voice != "default" else _GEMINI_TTS_DEFAULT_VOICE
+            # Gemini: pass emotional tags through unchanged
+            return _tts_real_speech(text, voice=chosen_voice, out_dir=out, model=model_id)
+        else:
+            chosen_voice = voice if voice and voice != "default" else _TTS_DEFAULT_VOICE
+            # Default style applies only when neither style nor style_hint was
+            # explicitly passed — passing style=None means "natural" (no prefix).
+            effective_style = style if (style or style_hint) else _TTS_DEFAULT_STYLE
+            # chat_audio backends don't interpret inline tags — strip them so the
+            # model reads clean text rather than pronouncing the brackets literally.
+            return _tts_real(
+                strip_emotional_tags(text), voice=chosen_voice, out_dir=out,
+                style=effective_style, style_hint=style_hint, model=model_id,
+            )
 
-    if spec.tts_backend == "speech":
-        chosen_voice = voice if voice and voice != "default" else _GEMINI_TTS_DEFAULT_VOICE
-        runlog.event(
-            "openrouter.tts.call", alias=alias, voice=chosen_voice, chars=len(text),
-            backend="speech",
-        )
-        # Gemini: pass emotional tags through unchanged
-        path, words, duration = _tts_real_speech(
-            text, voice=chosen_voice, out_dir=out, model=model_id,
-        )
-    else:
-        chosen_voice = voice if voice and voice != "default" else _TTS_DEFAULT_VOICE
-        # Default style applies only when neither style nor style_hint was
-        # explicitly passed — passing style=None means "natural" (no prefix).
-        effective_style = style if (style or style_hint) else _TTS_DEFAULT_STYLE
-        runlog.event(
-            "openrouter.tts.call", alias=alias, voice=chosen_voice, chars=len(text),
-            style=effective_style, style_hint=style_hint, backend="chat_audio",
-        )
-        # chat_audio backends don't interpret inline tags — strip them so the
-        # model reads clean text rather than pronouncing the brackets literally.
-        path, words, duration = _tts_real(
-            strip_emotional_tags(text), voice=chosen_voice, out_dir=out,
-            style=effective_style, style_hint=style_hint,
-            model=model_id,
-        )
-
-    duration_ms = int((time.monotonic() - t0) * 1000)
-    runlog.event(
-        "openrouter.tts.response",
-        alias=alias, voice=chosen_voice, duration_ms=duration_ms, ok=True,
-        audio_seconds=round(duration, 3),
-    )
-    _record_usage(spec, text, str(path), duration_ms=duration_ms, cost_usd=0.0, test=False)
-    return path, words, duration
+    return _with_fallback(kind="tts", alias=alias, primary_call=_tts_call)
 
 
 # ---------------------------------------------------------------------------
@@ -1022,7 +1006,8 @@ def _tts_real(
             f"OpenRouter TTS stream produced no audio for {text[:60]!r}"
         )
 
-    wav_path = out_dir / f"openrouter_tts_{voice}_{int(_time.time()*1000)}.wav"
+    safe_voice = "".join(c for c in voice if c.isalnum() or c in ("-", "_")).strip() or "voice"
+    wav_path = out_dir / f"openrouter_tts_{safe_voice}_{int(_time.time()*1000)}.wav"
     with wave.open(str(wav_path), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(_TTS_PCM_BYTES_PER_SAMPLE)
@@ -1090,7 +1075,8 @@ def _tts_real_speech(
             f"OpenRouter Gemini TTS returned empty audio for {text[:60]!r}"
         )
 
-    wav_path = out_dir / f"openrouter_tts_{voice}_{int(_time.time()*1000)}.wav"
+    safe_voice = "".join(c for c in voice if c.isalnum() or c in ("-", "_")).strip() or "voice"
+    wav_path = out_dir / f"openrouter_tts_{safe_voice}_{int(_time.time()*1000)}.wav"
     with wave.open(str(wav_path), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(_TTS_PCM_BYTES_PER_SAMPLE)
