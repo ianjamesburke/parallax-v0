@@ -54,7 +54,7 @@ from .ffmpeg_utils import parse_resolution
 from .log import get_logger
 from .plan import Plan
 from .settings import ProductionMode, _infer_project_resolution, resolve_settings
-from .stages import STAGES, _wrap_stage, stage_scan, stage_stills
+from .stages import STAGES, PipelineState, _wrap_stage, stage_scan, stage_stills
 
 log = get_logger("produce")
 
@@ -143,28 +143,28 @@ def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = Non
     # `stills_only` short-circuits after stage_stills with its own end-of-run
     # path — no audio/video stages, no convention rename, no full mp4.
     if settings.stills_only:
-        plan = _wrap_stage(stage_scan)(plan, settings)
-        plan = _wrap_stage(stage_stills)(plan, settings)
-        rt = plan["_runtime"]
+        state = PipelineState()
+        plan = _wrap_stage(stage_scan)(plan, settings, state)
+        plan = _wrap_stage(stage_stills)(plan, settings, state)
         settings.events("log", {"msg": "stills_only — skipping audio, video, and assembly stages"})
         run_cost = settings.usage.total_cost_usd
         cost_data = {
             "run_id": run_id,
             "session_id": current_session_id.get(),
             "cost_usd": run_cost,
-            "version": rt["version"],
+            "version": state.version,
         }
-        (Path(rt["out_dir"]) / "cost.json").write_text(json.dumps(cost_data, indent=2) + "\n")
-        print(f"\n✓ stills → {rt['stills_dir']}", flush=True)
-        runlog.end_run(status="ok", final_video=rt["stills_dir"])
+        (Path(state.out_dir) / "cost.json").write_text(json.dumps(cost_data, indent=2) + "\n")
+        print(f"\n✓ stills → {state.stills_dir}", flush=True)
+        runlog.end_run(status="ok", final_video=state.stills_dir)
         return 0
 
+    state = PipelineState()
     for stage in STAGES:
-        plan = stage(plan, settings)
+        plan = stage(plan, settings, state)
 
-    rt = plan["_runtime"]
-    print(f"\n✓ {rt['current_video']}", flush=True)
-    runlog.end_run(status="ok", final_video=str(rt["current_video"]))
+    print(f"\n✓ {state.current_video}", flush=True)
+    runlog.end_run(status="ok", final_video=str(state.current_video))
     return 0
 
 
