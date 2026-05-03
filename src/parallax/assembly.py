@@ -133,6 +133,11 @@ def _xfade_filter_complex(
 
     for i in range(1, n):
         trans = transitions[i] or "fade"
+        if trans not in _SUPPORTED_XFADE_TRANSITIONS:
+            raise ValueError(
+                f"Unknown xfade transition {trans!r}. "
+                f"Supported: {sorted(_SUPPORTED_XFADE_TRANSITIONS)}"
+            )
         tdur = transition_duration_s[i]
         # Clamp transition duration to half the shorter adjacent clip
         tdur = min(tdur, durations[i - 1] * 0.5, durations[i] * 0.5)
@@ -150,7 +155,7 @@ def _xfade_filter_complex(
 
 def ken_burns_assemble(
     scenes_json: str,
-    audio_path: str,
+    audio_path: str | None,
     output_path: str | None = None,
     resolution: str = "1080x1920",
     transitions: list[str | None] | None = None,
