@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 
 _ALLOWED_ASPECTS = ("9:16", "16:9", "1:1", "4:3", "3:4")
@@ -125,6 +125,11 @@ class PlanScene(BaseModel):
     zoom_direction: str | None = None
     zoom_amount: float | None = None
 
+    # Transition into this scene from the previous one (xfade). None = hard cut.
+    # Applies to this scene's ENTRY transition; scene 0 transition is a no-op.
+    transition: str | None = None
+    transition_duration_s: float | None = None
+
     @model_validator(mode="before")
     @classmethod
     def _reject_renamed_fields(cls, data: Any) -> Any:
@@ -188,6 +193,10 @@ class Plan(BaseModel):
     # Pipeline behavior
     stills_only: bool = False
     titles: list[dict[str, Any]] | None = None
+
+    # Transitions
+    default_transition: str | None = None
+    default_transition_duration_s: float = 0.5
 
     # Scenes
     scenes: list[PlanScene]

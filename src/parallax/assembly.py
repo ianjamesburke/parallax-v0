@@ -99,11 +99,67 @@ def align_scenes(scenes_json: str, words_json: str) -> str:
     return json.dumps(scenes)
 
 
+_SUPPORTED_XFADE_TRANSITIONS = frozenset({
+    "fade", "fadeblack", "fadewhite", "dissolve", "pixelize",
+    "wipeleft", "wiperight", "wipeup", "wipedown",
+    "hlslice", "hrslice", "vuslice", "vdslice",
+})
+
+
+def _xfade_filter_complex(
+    clip_paths: list[str],
+    transitions: list[str | None],
+    durations: list[float],
+    transition_duration_s: list[float],
+) -> str:
+    """Build an ffmpeg filter_complex xfade chain for N clips.
+
+    clips: already-rendered scene clips (each normalized to same codec/fps/res).
+    transitions[i]: xfade transition name for clip i's ENTRY (index 0 = no-op).
+    durations[i]: duration in seconds of clip i.
+    transition_duration_s[i]: xfade duration for the transition at clip i's entry.
+
+    Returns a filter_complex string that produces [vout] containing the full
+    xfade-chained video.
+    """
+    n = len(clip_paths)
+    if n < 2:
+        raise ValueError("xfade requires at least 2 clips")
+
+    parts: list[str] = []
+    # Cumulative offset tracker: accounts for each overlap already consumed.
+    cumulative_dur = durations[0]
+    prev_label = "[0:v]"
+
+    for i in range(1, n):
+        trans = transitions[i] or "fade"
+        if trans not in _SUPPORTED_XFADE_TRANSITIONS:
+            raise ValueError(
+                f"Unknown xfade transition {trans!r}. "
+                f"Supported: {sorted(_SUPPORTED_XFADE_TRANSITIONS)}"
+            )
+        tdur = transition_duration_s[i]
+        # Clamp transition duration to half the shorter adjacent clip
+        tdur = min(tdur, durations[i - 1] * 0.5, durations[i] * 0.5)
+        offset = round(cumulative_dur - tdur, 6)
+        out_label = f"[v{i:02d}]" if i < n - 1 else "[vout]"
+        parts.append(
+            f"{prev_label}[{i}:v]xfade=transition={trans}"
+            f":duration={tdur}:offset={offset}{out_label}"
+        )
+        prev_label = out_label
+        cumulative_dur += durations[i] - tdur
+
+    return ";".join(parts)
+
+
 def ken_burns_assemble(
     scenes_json: str,
-    audio_path: str,
+    audio_path: str | None,
     output_path: str | None = None,
     resolution: str = "1080x1920",
+    transitions: list[str | None] | None = None,
+    transition_duration_s: list[float] | None = None,
 ) -> str:
     """Assemble Ken Burns draft video from stills + aligned scene durations.
 
@@ -180,17 +236,58 @@ def ken_burns_assemble(
         if not clip_paths:
             raise RuntimeError("No scenes with valid stills to assemble")
 
-        # Concat — all clips already normalized to same codec/fps/resolution, stream copy is safe
-        list_file = Path(tmp_dir) / "clips.txt"
-        list_file.write_text("\n".join(f"file '{p}'" for p in clip_paths))
+        # Resolve per-clip durations (needed for xfade offset math)
+        clip_durations: list[float] = []
+        for cp in clip_paths:
+            probe = run_ffmpeg(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", cp],
+                capture_output=True, text=True,
+            )
+            clip_durations.append(float(probe.stdout.strip() or "0"))
+
         no_audio = Path(tmp_dir) / "no_audio.mp4"
-        run_ffmpeg(
-            [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-             "-f", "concat", "-safe", "0", "-i", str(list_file),
-             "-c:v", "copy", "-an",
-             str(no_audio)],
-            check=True,
+        use_xfade = (
+            transitions is not None
+            and len(clip_paths) >= 2
+            and any(t is not None for t in transitions[1:])
         )
+
+        if use_xfade:
+            assert transitions is not None
+            assert transition_duration_s is not None
+            # Pad lists to clip count (scene 0 transition is always None/no-op)
+            padded_transitions = list(transitions) + [None] * (len(clip_paths) - len(transitions))
+            padded_durations = list(transition_duration_s) + [0.5] * (len(clip_paths) - len(transition_duration_s))
+            # Clamp transition durations to half the clip
+            clamped_dur = [
+                min(d, clip_durations[i] * 0.5)
+                for i, d in enumerate(padded_durations)
+            ]
+            filter_complex = _xfade_filter_complex(
+                clip_paths, padded_transitions, clip_durations, clamped_dur,
+            )
+            cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error"]
+            for cp in clip_paths:
+                cmd += ["-i", cp]
+            cmd += [
+                "-filter_complex", filter_complex,
+                "-map", "[vout]",
+                "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+                "-an", str(no_audio),
+            ]
+            run_ffmpeg(cmd, check=True)
+        else:
+            # Hard-cut concat — stream copy is safe (all clips same codec/fps/res)
+            list_file = Path(tmp_dir) / "clips.txt"
+            list_file.write_text("\n".join(f"file '{p}'" for p in clip_paths))
+            run_ffmpeg(
+                [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                 "-f", "concat", "-safe", "0", "-i", str(list_file),
+                 "-c:v", "copy", "-an",
+                 str(no_audio)],
+                check=True,
+            )
 
         # Mux with voiceover (skip if no audio provided)
         if audio_path:
