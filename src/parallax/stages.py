@@ -612,15 +612,48 @@ def stage_assemble(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     Breaks if: the draft mp4 is missing from `out_dir/video/` or
     `current_video` is not set on `plan["_runtime"]`.
     """
+    from .assembly import _SUPPORTED_XFADE_TRANSITIONS
+
     rt = _runtime(plan)
     Path(rt["video_dir"]).mkdir(exist_ok=True)
     draft_path = str(Path(rt["video_dir"]) / f"{settings.concept_prefix}ken_burns_draft.mp4")
-    _log(settings, f"ken_burns_assemble → {draft_path}")
+
+    # Resolve per-scene transition lists from plan defaults + per-scene overrides.
+    default_transition = plan.get("default_transition")
+    default_transition_dur = float(plan.get("default_transition_duration_s", 0.5))
+    scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
+
+    resolved_transitions: list[str | None] = []
+    resolved_durations: list[float] = []
+    for i, s in enumerate(scenes_raw):
+        # Scene 0 never has an entry transition (no prior scene to fade from).
+        if i == 0:
+            resolved_transitions.append(None)
+            resolved_durations.append(default_transition_dur)
+            continue
+        trans = s.get("transition", default_transition)
+        if trans is not None and trans not in _SUPPORTED_XFADE_TRANSITIONS:
+            raise ValueError(
+                f"scene {s.get('index', i)}: unsupported transition {trans!r}. "
+                f"Supported: {sorted(_SUPPORTED_XFADE_TRANSITIONS)}"
+            )
+        resolved_transitions.append(trans)
+        resolved_durations.append(
+            float(s["transition_duration_s"]) if s.get("transition_duration_s") is not None
+            else default_transition_dur
+        )
+
+    any_transition = any(t is not None for t in resolved_transitions)
+    _log(settings, f"ken_burns_assemble → {draft_path}"
+         + (f" (transitions: {[t for t in resolved_transitions if t]})" if any_transition else ""))
+
     ken_burns_assemble(
         scenes_json=rt["aligned_json"],
         audio_path=rt.get("audio_path"),
         output_path=draft_path,
         resolution=settings.resolution,
+        transitions=resolved_transitions if any_transition else None,
+        transition_duration_s=resolved_durations if any_transition else None,
     )
     rt["current_video"] = draft_path
     return plan
@@ -857,6 +890,8 @@ _KNOWN_SCENE_FIELDS = {
     "zoom_direction", "zoom_amount",
     # Per-scene aspect override — defaults to plan.aspect when absent.
     "aspect",
+    # Transitions — per-scene entry transition (xfade). None = hard cut.
+    "transition", "transition_duration_s",
     # Timing overrides — null/absent = derive from VO. Future graphical editor writes here.
     "duration_s", "start_offset_s", "fade_in_s", "fade_out_s",
 }
