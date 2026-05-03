@@ -1,16 +1,16 @@
-# Text-to-speech models. Routed through OpenRouter chat-completions
-# audio modality (gpt-audio-mini streams pcm16 audio + transcript). Verified
-# live against /api/v1/models 2026-04-29.
+# Text-to-speech models. Two backends are supported:
+#   chat_audio: OpenAI gpt-audio-mini via /chat/completions audio modality
+#   speech:     Gemini TTS via /audio/speech (supports inline [emotional] tags)
 #
-# Voices: pass the OpenAI voice name verbatim (e.g. `voice: nova`). The list
-# below covers the full set OpenAI exposes for gpt-audio-mini.
+# Verified live against OpenRouter /api/v1/models 2026-04-29.
 
 - alias: tts-mini
   model_id: openrouter/openai/gpt-audio-mini
+  tts_backend: chat_audio
   tier: default
   cost: 0.0
   unit: 1k_chars
-  description: Default TTS. OpenAI gpt-audio-mini via OpenRouter (chat audio modality).
+  description: Default TTS. OpenAI gpt-audio-mini via OpenRouter (chat audio modality). Inline [emotional] tags are stripped before sending.
   fallback: null
   capabilities:
     aspect_ratios: []
@@ -26,3 +26,68 @@
     - sage
     - shimmer
     - verse
+
+- alias: tts-gemini
+  model_id: openrouter/google/gemini-3.1-flash-tts-preview
+  tts_backend: speech
+  tier: default
+  cost: 0.0
+  unit: 1k_chars
+  description: |
+    Expressive TTS. Gemini 3.1 Flash TTS via OpenRouter (/audio/speech endpoint).
+    Supports inline [emotional] tags for style control. Use single-word
+    gerund/adjective/adverb form for best results — e.g. [dramatically],
+    [whispering], [rapidly], [excitedly], [softly]. Tags are passed through
+    to the model; use them anywhere in the voiceover text.
+
+    Example:
+      voice: Kore
+      text: |
+        [dramatically] Everything was about to change.
+        [rapidly] Three seconds. Two. One.
+        [softly] And then — silence.
+
+    Dramatic voices: Kore (firm), Fenrir (excitable), Charon (informative), Puck (upbeat)
+    Warm voices:    Aoede (breezy), Sulafat (warm), Achird (friendly), Sadaltager (knowledgeable)
+    Soft voices:    Achernar (soft), Enceladus (breathy), Vindemiatrix (gentle)
+  fallback: tts-mini
+  capabilities:
+    aspect_ratios: []
+  voices:
+    # Dramatic / assertive
+    - Kore
+    - Fenrir
+    - Charon
+    - Orus
+    - Alnilam
+    - Schedar
+    # Upbeat / energetic
+    - Puck
+    - Laomedeia
+    - Sadachbia
+    - Leda
+    - Autonoe
+    # Breezy / warm / friendly
+    - Aoede
+    - Sulafat
+    - Achird
+    - Zephyr
+    - Sadaltager
+    - Zubenelgenubi
+    # Smooth / easy-going
+    - Algieba
+    - Despina
+    - Callirrhoe
+    - Umbriel
+    # Soft / breathy / gentle
+    - Achernar
+    - Enceladus
+    - Vindemiatrix
+    # Clear / informative
+    - Iapetus
+    - Erinome
+    - Rasalgethi
+    # Other
+    - Algenib
+    - Gacrux
+    - Pulcherrima

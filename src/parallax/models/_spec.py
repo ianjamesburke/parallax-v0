@@ -14,6 +14,7 @@ from typing import Literal
 Kind = Literal["image", "video", "tts"]
 Tier = Literal["draft", "mid", "premium", "default"]
 RefKind = Literal["style_ref", "product_ref", "character_ref"]
+TtsBackend = Literal["chat_audio", "speech"]
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,10 @@ class ModelSpec:
     inputs: tuple[RefKind, ...] = ()
     # TTS voice list. Empty for non-TTS or models with a single fixed voice.
     voices: tuple[str, ...] = ()
+    # TTS request format: "chat_audio" = OpenAI chat-completions audio modality
+    # (gpt-audio-mini); "speech" = /api/v1/audio/speech endpoint (Gemini TTS).
+    # Defaults to "chat_audio" so existing entries are unchanged.
+    tts_backend: TtsBackend = "chat_audio"
 
     @property
     def supports_reference(self) -> bool:
