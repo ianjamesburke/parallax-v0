@@ -22,7 +22,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .plan import Plan
 
 from .ffmpeg_utils import parse_resolution
 
@@ -239,19 +242,100 @@ def with_run_id(settings: "Settings", run_id: str) -> "Settings":
     return replace(settings, run_id=run_id)
 
 
-def resolve_settings(plan: dict[str, Any], folder: Path, plan_path: Path) -> Settings:
+def resolve_settings(plan: "Plan | dict[str, Any]", folder: Path, plan_path: Path) -> Settings:
     """Resolve a plan + folder into a frozen `Settings` snapshot.
 
-    Reads ~30 plan keys, applies defaults, and computes derived fields
-    (resolution scaling, character_image absolute path, concept prefix).
+    Accepts either a validated `Plan` Pydantic model or a raw dict (for
+    legacy call sites such as `test_scene`). When a `Plan` is given, fields
+    are read directly from the typed model; dict-shaped reads are preserved
+    for backward compatibility with the raw dict path.
+
     Raises FileNotFoundError if `character_image` is set but missing.
     """
+    from .plan import Plan as _Plan  # local import avoids circular at module level
+
     folder = Path(folder).expanduser().resolve()
     plan_path = Path(plan_path).expanduser().resolve()
 
     id_match = re.match(r"^(\d{4})", folder.name)
     concept_prefix = f"{id_match.group(1)}_" if id_match else ""
 
+    if isinstance(plan, _Plan):
+        return _resolve_settings_from_plan(plan, folder, plan_path, concept_prefix)
+    return _resolve_settings_from_dict(plan, folder, plan_path, concept_prefix)
+
+
+def _resolve_settings_from_plan(plan: "Plan", folder: Path, plan_path: Path, concept_prefix: str) -> Settings:
+    """Read settings directly from a validated Plan model."""
+    from .plan import Plan as _Plan  # keep import local
+
+    aspect = plan.aspect
+    resolution = plan.resolution or _infer_project_resolution(plan.model_dump(mode="python", exclude_none=True), folder, aspect)
+    video_width, video_height = parse_resolution(resolution)
+    res_scale = video_width / 1080
+
+    animate_resolution = plan.animate_resolution or _ASPECT_TO_ANIMATE_RESOLUTION.get(aspect, "480x854")
+    fontsize = max(12, int(plan.fontsize * res_scale))
+    wpc_raw = plan.words_per_chunk
+    words_per_chunk: int | str = wpc_raw if isinstance(wpc_raw, str) else int(wpc_raw)
+    skip_captions = str(plan.captions or "").lower() == "skip"
+
+    char_image_raw = plan.character_image
+    character_image: str | None = None
+    if char_image_raw:
+        p = Path(char_image_raw)
+        resolved = p if p.is_absolute() else (folder / p)
+        if not resolved.is_file():
+            variants = sorted(resolved.parent.glob(f"{resolved.stem}_a*x*.png"))
+            if variants:
+                resolved = variants[0]
+            else:
+                raise FileNotFoundError(f"character_image not found: {resolved}")
+        character_image = str(resolved)
+
+    avatar_cfg: dict[str, Any] | None = None
+    if plan.avatar is not None:
+        avatar_cfg = plan.avatar.model_dump(mode="python", exclude_none=True)
+
+    titles_cfg = plan.titles or []
+
+    return Settings(
+        folder=folder,
+        plan_path=plan_path,
+        concept_prefix=concept_prefix,
+        image_model=plan.image_model,
+        video_model=plan.video_model,
+        aspect=aspect,
+        resolution=resolution,
+        animate_resolution=animate_resolution,
+        video_width=video_width,
+        video_height=video_height,
+        res_scale=res_scale,
+        voice=plan.voice,
+        voice_model=plan.voice_model,
+        voice_speed=plan.voice_speed,
+        style=plan.style,
+        style_hint=plan.style_hint,
+        caption_style=plan.caption_style,
+        fontsize=fontsize,
+        words_per_chunk=words_per_chunk,
+        caption_animation_override=plan.caption_animation,
+        caption_shift_s=plan.caption_shift_s,
+        skip_captions=skip_captions,
+        headline=plan.headline,
+        headline_fontsize=plan.headline_fontsize,
+        headline_bg=plan.headline_bg,
+        headline_color=plan.headline_color,
+        character_image=character_image,
+        avatar_cfg=avatar_cfg,
+        stills_only=plan.stills_only,
+        mode=_resolve_mode(),
+        titles_cfg=titles_cfg,
+    )
+
+
+def _resolve_settings_from_dict(plan: dict[str, Any], folder: Path, plan_path: Path, concept_prefix: str) -> Settings:
+    """Legacy dict path — used by test_scene and any caller that hasn't migrated to Plan."""
     image_model = plan.get("image_model", "mid")
     video_model = plan.get("video_model", "mid")
     voice = plan.get("voice", "nova")

@@ -101,7 +101,7 @@ def align_scenes(scenes_json: str, words_json: str) -> str:
 
 def ken_burns_assemble(
     scenes_json: str,
-    audio_path: str,
+    audio_path: str | None,
     output_path: str | None = None,
     resolution: str = "1080x1920",
 ) -> str:

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import yaml
 
 from parallax.plan import Plan
+from parallax.settings import resolve_settings
 
 
 def _write_plan(tmp_path, payload):
@@ -171,6 +174,105 @@ def test_avatar_unknown_field_rejected(tmp_path):
         "avatar_track": "media/avatar.mov",
         "mystery": "x",
     }
+    p = _write_plan(tmp_path, payload)
+    with pytest.raises(Exception):
+        Plan.from_yaml(p)
+
+
+# --------------------------------------------------------------------------
+# Regression: typed Plan flows into resolve_settings
+# --------------------------------------------------------------------------
+
+def test_resolve_settings_accepts_plan_object(tmp_path):
+    """resolve_settings must accept a Plan model directly, not only a dict."""
+    p = _write_plan(tmp_path, _minimal())
+    plan = Plan.from_yaml(p)
+    settings = resolve_settings(plan, tmp_path, p)
+    assert settings.image_model == "mid"
+    assert settings.voice == "nova"
+    assert settings.aspect == "9:16"
+    assert settings.voice_model == "tts-mini"
+
+
+def test_resolve_settings_plan_defaults_match_dict_defaults(tmp_path):
+    """Plan object and its to_dict() must produce identical Settings."""
+    p = _write_plan(tmp_path, _minimal())
+    plan = Plan.from_yaml(p)
+    s_typed = resolve_settings(plan, tmp_path, p)
+    s_dict = resolve_settings(plan.to_dict(), tmp_path, p)
+    assert s_typed.image_model == s_dict.image_model
+    assert s_typed.video_model == s_dict.video_model
+    assert s_typed.voice == s_dict.voice
+    assert s_typed.voice_model == s_dict.voice_model
+    assert s_typed.aspect == s_dict.aspect
+    assert s_typed.resolution == s_dict.resolution
+    assert s_typed.skip_captions == s_dict.skip_captions
+    assert s_typed.stills_only == s_dict.stills_only
+
+
+def test_resolve_settings_plan_with_animate_resolution(tmp_path):
+    """Plan-level animate_resolution is honoured by resolve_settings."""
+    payload = _minimal()
+    payload["animate_resolution"] = "720x1280"
+    p = _write_plan(tmp_path, payload)
+    plan = Plan.from_yaml(p)
+    assert plan.animate_resolution == "720x1280"
+    settings = resolve_settings(plan, tmp_path, p)
+    assert settings.animate_resolution == "720x1280"
+
+
+def test_per_scene_model_overrides_preserved_in_plan(tmp_path):
+    """Per-scene image_model / video_model / voice_model survive Plan round-trip."""
+    payload = _minimal()
+    payload["scenes"][0]["image_model"] = "nano-banana"
+    payload["scenes"][0]["video_model"] = "kling"
+    payload["scenes"][0]["voice_model"] = "tts-hd"
+    p = _write_plan(tmp_path, payload)
+    plan = Plan.from_yaml(p)
+    sc = plan.scenes[0]
+    assert sc.image_model == "nano-banana"
+    assert sc.video_model == "kling"
+    assert sc.voice_model == "tts-hd"
+    # Must also survive to_dict() so the stage blackboard sees them.
+    d = plan.to_dict()
+    assert d["scenes"][0]["image_model"] == "nano-banana"
+    assert d["scenes"][0]["video_model"] == "kling"
+    assert d["scenes"][0]["voice_model"] == "tts-hd"
+
+
+def test_unknown_scene_field_rejected_at_load(tmp_path):
+    """Unknown scene fields must raise at Plan.from_yaml time, not silently pass."""
+    payload = _minimal()
+    payload["scenes"][0]["typo_field"] = "oops"
+    p = _write_plan(tmp_path, payload)
+    with pytest.raises(Exception) as exc:
+        Plan.from_yaml(p)
+    assert "typo_field" in str(exc.value)
+
+
+def test_renamed_scene_field_speed_rejected(tmp_path):
+    """Old `speed:` key on a scene must be rejected with a rename hint."""
+    payload = _minimal()
+    payload["scenes"][0]["speed"] = 1.25
+    p = _write_plan(tmp_path, payload)
+    with pytest.raises(Exception) as exc:
+        Plan.from_yaml(p)
+    assert "voice_speed" in str(exc.value)
+
+
+def test_per_scene_aspect_override_valid(tmp_path):
+    """A scene-level `aspect:` override from the allowed set must parse."""
+    payload = _minimal()
+    payload["scenes"][0]["aspect"] = "16:9"
+    p = _write_plan(tmp_path, payload)
+    plan = Plan.from_yaml(p)
+    assert plan.scenes[0].aspect == "16:9"
+
+
+def test_per_scene_aspect_override_invalid_rejected(tmp_path):
+    """A scene-level `aspect:` with an unsupported value must raise."""
+    payload = _minimal()
+    payload["scenes"][0]["aspect"] = "5:7"
     p = _write_plan(tmp_path, payload)
     with pytest.raises(Exception):
         Plan.from_yaml(p)

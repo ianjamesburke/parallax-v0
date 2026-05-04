@@ -177,6 +177,9 @@ class Plan(BaseModel):
     headline_bg: str | None = None
     headline_color: str | None = None
 
+    # Video generation resolution (plan-level default; per-scene overrides allowed)
+    animate_resolution: str | None = None
+
     # Character / avatar
     character_image: str | None = None
     avatar: Avatar | None = None
