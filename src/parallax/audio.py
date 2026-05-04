@@ -10,17 +10,11 @@ from pathlib import Path
 
 import yaml
 from .ffmpeg_utils import run_ffmpeg
+from . import whisper_backend
 
 _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 
 log = logging.getLogger("parallax.audio")
-
-try:
-    import whisperx as _whisperx
-    _HAS_WHISPERX = True
-except ImportError:
-    _whisperx = None  # type: ignore[assignment]
-    _HAS_WHISPERX = False
 
 
 def transcribe_words(input_path: str, out_path: str) -> list[dict]:
@@ -32,8 +26,6 @@ def transcribe_words(input_path: str, out_path: str) -> list[dict]:
     Prefers WhisperX (whisper + wav2vec2 forced alignment) when installed.
     Falls back to faster-whisper native word timestamps otherwise.
     """
-    import os
-
     tmp_audio: str | None = None
     try:
         tmp_audio = tempfile.mktemp(suffix=".wav")
@@ -43,18 +35,7 @@ def transcribe_words(input_path: str, out_path: str) -> list[dict]:
             capture_output=True,
         )
 
-        model_name = os.environ.get("PARALLAX_WHISPER_MODEL", "base.en")
-        device = os.environ.get("PARALLAX_WHISPER_DEVICE", "cpu")
-        compute_type = os.environ.get("PARALLAX_WHISPER_COMPUTE", "int8")
-
-        if _HAS_WHISPERX:
-            words = _transcribe_whisperx(tmp_audio, input_path, model_name, device, compute_type)
-        else:
-            log.warning(
-                "transcribe_words: whisperx not installed — using faster-whisper "
-                "(install whisperx for better word-boundary precision)"
-            )
-            words = _transcribe_faster_whisper(tmp_audio, input_path, model_name, device, compute_type)
+        words = whisper_backend.transcribe_wav(tmp_audio, label=Path(input_path).name)
 
         if not words:
             raise RuntimeError(f"transcribe_words: produced 0 words for {input_path}")
@@ -66,57 +47,6 @@ def transcribe_words(input_path: str, out_path: str) -> list[dict]:
     finally:
         if tmp_audio:
             Path(tmp_audio).unlink(missing_ok=True)
-
-
-def _transcribe_whisperx(
-    wav_path: str, label: str, model_name: str, device: str, compute_type: str
-) -> list[dict]:
-    log.info("transcribe_words: transcribing with whisperx (%s, %s, %s)", Path(label).name, model_name, device)
-    model = _whisperx.load_model(model_name, device=device, compute_type=compute_type)
-    audio = _whisperx.load_audio(wav_path)
-    result = model.transcribe(audio, batch_size=8)
-
-    language = result.get("language", "en")
-    log.info("transcribe_words: detected language=%s, %d segments", language, len(result.get("segments", [])))
-
-    align_model, metadata = _whisperx.load_align_model(language_code=language, device=device)
-    aligned = _whisperx.align(
-        result["segments"], align_model, metadata, audio, device=device, return_char_alignments=False,
-    )
-
-    words = []
-    for w in aligned.get("word_segments", []):
-        if w.get("start") is None or w.get("end") is None:
-            continue
-        words.append({
-            "word": str(w["word"]).strip(),
-            "start": round(float(w["start"]), 3),
-            "end": round(float(w["end"]), 3),
-        })
-    return words
-
-
-def _transcribe_faster_whisper(
-    wav_path: str, label: str, model_name: str, device: str, compute_type: str
-) -> list[dict]:
-    from faster_whisper import WhisperModel
-
-    log.info("transcribe_words: transcribing with faster-whisper (%s, %s, %s)", Path(label).name, model_name, device)
-    model = WhisperModel(model_name, device=device, compute_type=compute_type)
-    segments, info = model.transcribe(wav_path, word_timestamps=True)
-
-    log.info("transcribe_words: detected language=%s", info.language)
-    words = []
-    for segment in segments:
-        for w in (segment.words or []):
-            if w.start is None or w.end is None:
-                continue
-            words.append({
-                "word": w.word.strip(),
-                "start": round(w.start, 3),
-                "end": round(w.end, 3),
-            })
-    return words
 
 
 # ---------------------------------------------------------------------------
