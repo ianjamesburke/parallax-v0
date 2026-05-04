@@ -22,7 +22,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .plan import Plan
 
 from .ffmpeg_utils import parse_resolution
 
