@@ -38,5 +38,5 @@ bump-and-install:
     uv lock
     git add pyproject.toml uv.lock
     git commit -m "chore: bump version to $new"
-    uv tool install --reinstall .
+    uv tool install --python python3.11 --reinstall .
     echo "Bumped $current → $new and reinstalled parallax"
