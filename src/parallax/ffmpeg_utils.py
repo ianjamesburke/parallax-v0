@@ -1,13 +1,14 @@
 """ffmpeg/ffprobe utility helpers.
 
-Pure helpers: locating the ffmpeg binary, capability checks, and frame-rate
-probing.
+Pure helpers: locating the ffmpeg binary, capability checks, frame-rate
+probing, and shared rawvideo pipe lifecycle.
 """
 
 from __future__ import annotations
 
 import shutil
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
 
 # Known locations to search when looking for a drawtext-capable ffmpeg.
@@ -100,16 +101,92 @@ def _ffmpeg_has_drawtext() -> bool:
     return _supports_drawtext(_get_drawtext_ffmpeg())
 
 
+def probe_resolution(path: "Path | str") -> "tuple[int, int] | None":
+    """Return (width, height) via ffprobe, or None if unprobeable."""
+    try:
+        result = run_ffmpeg(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, check=True,
+        )
+        w_str, h_str = result.stdout.strip().split(",")
+        return int(w_str), int(h_str)
+    except Exception:
+        return None
+
+
+def probe_duration(path: "Path | str") -> "float | None":
+    """Return container duration in seconds via ffprobe, or None on failure."""
+    try:
+        result = run_ffmpeg(
+            ["ffprobe", "-v", "error",
+             "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, check=True,
+        )
+        raw = result.stdout.strip()
+        return float(raw) if raw else None
+    except Exception:
+        return None
+
+
+def probe_audio_duration(path: "Path | str") -> "float | None":
+    """Return audio stream duration in seconds via ffprobe, or None on failure."""
+    try:
+        result = run_ffmpeg(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=duration", "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, check=True,
+        )
+        out = result.stdout.strip()
+        return float(out) if out and out != "N/A" else None
+    except Exception:
+        return None
+
+
+def pipe_rawvideo_frames(
+    output_path: str,
+    *,
+    width: int,
+    height: int,
+    fps: int,
+    total_frames: int,
+    frames: Iterable[bytes],
+    source_label: str = "",
+) -> None:
+    """Encode a sequence of raw RGB24 frames to H.264 via stdin pipe."""
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "rawvideo", "-vcodec", "rawvideo",
+        "-s", f"{width}x{height}", "-pix_fmt", "rgb24", "-r", str(fps),
+        "-i", "pipe:0",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        "-vframes", str(total_frames),
+        output_path,
+    ]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    assert proc.stdin is not None
+    try:
+        for frame_bytes in frames:
+            proc.stdin.write(frame_bytes)
+    except Exception as e:
+        proc.kill()
+        label = source_label or output_path
+        raise RuntimeError(f"rawvideo pipe failed for {label}: {e}") from e
+    finally:
+        proc.stdin.close()
+        proc.wait()
+
+
 def _probe_fps(video_path: str) -> float:
     """Return video FPS; falls back to 30.0 on any error."""
-    result = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=r_frame_rate",
-         "-of", "default=noprint_wrappers=1:nokey=1", video_path],
-        capture_output=True, text=True,
-    )
-    raw = result.stdout.strip()
     try:
+        result = run_ffmpeg(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=r_frame_rate",
+             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            capture_output=True, text=True,
+        )
+        raw = result.stdout.strip()
         num, den = raw.split("/")
         return float(num) / float(den)
     except Exception:
