@@ -334,51 +334,30 @@ def run_case(case_dir: Path, paid: bool = False,
     cost_usd = 0.0
     out_dir: Path | None = None
     run_id: str | None = None
-    rc = 1
     try:
         with _isolated_case(case_dir) as (case_copy, plan_copy):
-            from . import runlog
             from .produce import run_plan
 
+            prod = None
             try:
-                rc = run_plan(folder=case_copy, plan_path=plan_copy)
+                prod = run_plan(folder=case_copy, plan_path=plan_copy)
             except Exception as e:  # noqa: BLE001 — collect the failure, don't re-raise
                 failures.append(f"produce raised {type(e).__name__}: {e}")
 
-            # Discover the run's output dir — produce snapshots plan.yaml into
-            # it, so we look for the highest-numbered v*/ that has a plan.yaml.
-            output_base = case_copy / "parallax" / "output"
-            if output_base.is_dir():
-                versions = sorted(
-                    [d for d in output_base.iterdir()
-                     if d.is_dir() and d.name.startswith("v") and (d / "plan.yaml").exists()],
-                    key=lambda d: int(d.name[1:]) if d.name[1:].isdigit() else 0,
-                )
-                if versions:
-                    out_dir = versions[-1]
+            if prod is not None:
+                out_dir = prod.output_dir
+                cost_usd = prod.cost_usd
+                run_id = prod.run_id
 
-            # `run_plan` calls runlog.end_run() before returning, which clears
-            # the contextvar — so we read run_id back from cost.json (written
-            # by stage_finalize) which is also where the cost guardrail lives.
-            cost_json = (out_dir / "cost.json") if out_dir else None
-            if cost_json and cost_json.exists():
-                try:
-                    cost_data = json.loads(cost_json.read_text())
-                    cost_usd = float(cost_data.get("cost_usd", 0.0))
-                    run_id = cost_data.get("run_id")
-                except (json.JSONDecodeError, ValueError, TypeError):
-                    pass
+                if prod.status != "ok" and not failures:
+                    failures.append(prod.error or "produce returned error status")
 
-            if rc != 0 and not failures:
-                failures.append(f"produce returned non-zero exit code: {rc}")
+                run_log_text = _read_run_log(run_id, out_dir) if run_id else ""
 
-            # Snapshot the run log BEFORE the temp dir is cleaned up.
-            run_log_text = _read_run_log(run_id, out_dir) if run_id else ""
-
-            if out_dir is not None:
-                _assert_all(expected, out_dir, run_log_text, cost_usd, failures)
-            elif rc == 0:
-                failures.append("could not locate run output directory under parallax/output/v*/")
+                if out_dir is not None:
+                    _assert_all(expected, out_dir, run_log_text, cost_usd, failures)
+                elif prod.status == "ok":
+                    failures.append("produce succeeded but output_dir is None")
 
     finally:
         if prev_test_mode is None:

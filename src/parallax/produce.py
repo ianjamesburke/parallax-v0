@@ -43,6 +43,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +60,18 @@ from .stages import STAGES, PipelineState, _wrap_stage, stage_scan, stage_stills
 log = get_logger("produce")
 
 
-def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = None) -> int:
+@dataclass
+class ProductionResult:
+    status: str  # "ok" | "error"
+    run_id: str | None
+    output_dir: Path | None
+    final_video: Path | None
+    stills_dir: Path | None
+    cost_usd: float
+    error: str | None
+
+
+def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = None) -> ProductionResult:
     """Run the full plan-driven production pipeline.
 
     `aspect`, when provided, overrides `plan.aspect` before settings are
@@ -69,17 +81,20 @@ def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = Non
     plan_path = Path(plan_path).expanduser().resolve()
 
     if not folder.is_dir():
-        print(f"Error: folder not found: {folder}", file=sys.stderr)
-        return 1
+        return ProductionResult(status="error", run_id=None, output_dir=None,
+                                final_video=None, stills_dir=None, cost_usd=0.0,
+                                error=f"folder not found: {folder}")
     if not plan_path.is_file():
-        print(f"Error: plan file not found: {plan_path}", file=sys.stderr)
-        return 1
+        return ProductionResult(status="error", run_id=None, output_dir=None,
+                                final_video=None, stills_dir=None, cost_usd=0.0,
+                                error=f"plan file not found: {plan_path}")
 
     try:
         plan: dict[str, Any] = Plan.from_yaml(plan_path).to_dict()
     except Exception as e:
-        print(f"Error: invalid plan {plan_path}:\n{e}", file=sys.stderr)
-        return 1
+        return ProductionResult(status="error", run_id=None, output_dir=None,
+                                final_video=None, stills_dir=None, cost_usd=0.0,
+                                error=f"invalid plan {plan_path}:\n{e}")
 
     if aspect is not None:
         plan["aspect"] = aspect
@@ -91,14 +106,16 @@ def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = Non
 
     scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
     if not scenes_raw:
-        print("Error: plan has no scenes", file=sys.stderr)
-        return 1
+        return ProductionResult(status="error", run_id=None, output_dir=None,
+                                final_video=None, stills_dir=None, cost_usd=0.0,
+                                error="plan has no scenes")
 
     try:
         settings = resolve_settings(plan, folder, plan_path)
     except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+        return ProductionResult(status="error", run_id=None, output_dir=None,
+                                final_video=None, stills_dir=None, cost_usd=0.0,
+                                error=str(e))
     settings.events("log", {"msg": f"project resolution: {settings.resolution}"})
 
     # Pre-flight: in real-mode, check OpenRouter credits before any work runs.
@@ -113,8 +130,9 @@ def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = Non
                        f"(${balance.total:.2f} total, ${balance.used:.2f} used)"
             })
         except openrouter.InsufficientCreditsError as e:
-            print(f"\nError: {e}\n", file=sys.stderr)
-            return 1
+            return ProductionResult(status="error", run_id=None, output_dir=None,
+                                    final_video=None, stills_dir=None, cost_usd=0.0,
+                                    error=str(e))
         except Exception as e:
             settings.events("log", {
                 "msg": f"WARNING: credits pre-flight check failed ({type(e).__name__}: {e}); "
@@ -155,17 +173,31 @@ def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = Non
             "version": state.version,
         }
         (Path(state.out_dir) / "cost.json").write_text(json.dumps(cost_data, indent=2) + "\n")
-        print(f"\n✓ stills → {state.stills_dir}", flush=True)
         runlog.end_run(status="ok", final_video=state.stills_dir)
-        return 0
+        return ProductionResult(
+            status="ok",
+            run_id=run_id,
+            output_dir=Path(state.out_dir),
+            final_video=None,
+            stills_dir=Path(state.stills_dir),
+            cost_usd=run_cost,
+            error=None,
+        )
 
     state = PipelineState()
     for stage in STAGES:
         plan = stage(plan, settings, state)
 
-    print(f"\n✓ {state.current_video}", flush=True)
     runlog.end_run(status="ok", final_video=str(state.current_video))
-    return 0
+    return ProductionResult(
+        status="ok",
+        run_id=run_id,
+        output_dir=Path(state.out_dir),
+        final_video=Path(state.current_video) if state.current_video else None,
+        stills_dir=None,
+        cost_usd=settings.usage.total_cost_usd,
+        error=None,
+    )
 
 
 def test_scene(folder: str | Path, plan_path: str | Path, scene_index: int, aspect: str | None = None) -> int:
