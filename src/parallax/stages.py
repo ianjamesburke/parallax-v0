@@ -107,6 +107,155 @@ def stage_scan(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     return plan
 
 
+# --------------------------------------------------------------------------
+# stage_stills helpers
+# --------------------------------------------------------------------------
+
+def _resolve_scene_reference_images(s: dict[str, Any], settings: Settings) -> list[str] | None:
+    """Return the reference image list for a scene that needs a new still.
+
+    Priority:
+    1. Explicit ``reference_images`` on the scene — resolved relative to project folder.
+    2. All original (non-derivative) images in ``media/`` — capped at 4.
+    3. ``character_image`` from settings when ``reference`` or ``stills_only`` flags are set.
+    4. ``None`` — no references attached.
+    """
+    if "reference_images" in s:
+        return [
+            str(Path(r) if Path(r).is_absolute() else settings.folder / r)
+            for r in s["reference_images"]
+        ]
+
+    # Default: pass EVERY image in media/ as a reference. The
+    # planner agent has historically been sloppy about picking
+    # the right `character_image` per scene (verified live: it
+    # picked the product photo as character for a stylized
+    # scene, then the broll scenes attached no reference at
+    # all and produced photoreal output). Until the agent's
+    # reasoning is reliable, force-attach all media/ files so
+    # Gemini always has the character + product visible.
+    # `reference_images` on the scene still wins as an explicit
+    # opt-in/opt-out.
+    media_dir = settings.folder / "media"
+    if media_dir.is_dir():
+        # Skip cropped/normalized derivatives — those have an
+        # `_a<W>x<H>` or `_n<W>x<H>` suffix added by stills
+        # post-processing. Only the original extracted images
+        # (image1.png, image2.png, etc.) are real references.
+        import re as _re
+        derivative_pat = _re.compile(r"_[an]\d+x\d+$")
+        candidates = sorted(
+            p for p in media_dir.iterdir()
+            if p.is_file()
+            and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
+            and not derivative_pat.search(p.stem)
+        )
+        # Cap at 4 — character + product + a couple alts is
+        # plenty; Gemini's max_refs is 8 but more refs degrade
+        # the per-image attention each one gets.
+        return [str(p) for p in candidates[:4]] or None
+
+    if s.get("reference") and settings.character_image:
+        return [settings.character_image]
+    if settings.stills_only and settings.character_image:
+        return [settings.character_image]
+    return None
+
+
+def _generate_and_normalize_still(
+    s: dict[str, Any],
+    settings: Settings,
+    stills_dir: str,
+    refs: list[str] | None,
+) -> tuple[str, str]:
+    """Generate a still image with up to 2 attempts and normalize its aspect.
+
+    Returns ``(still_path, raw_still_path)`` — ``still_path`` is the final
+    (possibly micro-trimmed) PNG; ``raw_still_path`` is the original output from
+    the model. They are equal when no trimming was needed.
+    Raises ``AspectMismatchError`` if both attempts produce the wrong shape.
+    """
+    from .openrouter import generate_image
+    from .stills import AspectMismatchError, check_aspect, normalize_aspect
+
+    idx = s["index"]
+    prompt = s.get("prompt", "")
+    scene_aspect: str = s["aspect"]  # already validated by caller
+    scene_image_model = s.get("image_model") or settings.image_model
+
+    # Two attempts max: if the model returns a wrong-aspect image on
+    # first try, regenerate once with a sterner textual prompt prefix.
+    # If it's still wrong, raise — silent center-crop is forbidden
+    # because it discards subject content for non-centered compositions.
+    attempts = 2
+    raw_still_path = None
+    last_err: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        stern_prefix = "" if attempt == 1 else _build_stern_prefix(scene_aspect)
+        raw_still_path = generate_image(
+            prompt=stern_prefix + prompt,
+            alias=scene_image_model,
+            reference_images=refs,
+            out_dir=Path(stills_dir),
+            aspect_ratio=scene_aspect,
+            size=settings.resolution,
+        )
+        check = check_aspect(raw_still_path, settings.resolution)
+        if check.within_tolerance:
+            break
+        _log(settings,
+             f"       ✗ attempt {attempt}/{attempts}: {Path(raw_still_path).name} "
+             f"is {check.src_w}x{check.src_h} "
+             f"({check.mismatch_pct*100:.1f}% off target {settings.resolution}). "
+             f"{'Retrying with sterner prompt.' if attempt < attempts else 'GIVING UP.'}")
+        last_err = AspectMismatchError(
+            f"scene {idx}: model {scene_image_model!r} returned wrong-aspect "
+            f"image {check.src_w}x{check.src_h} ({check.mismatch_pct*100:.1f}% off). "
+            f"Already retried {attempt - 1}x with sterner prompts. "
+            f"This run is aborting — switch to a different image model or "
+            f"rewrite the prompt to mention vertical/portrait framing explicitly."
+        )
+
+    if raw_still_path is None or last_err is not None and not check_aspect(raw_still_path, settings.resolution).within_tolerance:
+        raise last_err if last_err else RuntimeError("stage_stills: no still produced")
+
+    normalized = normalize_aspect(raw_still_path, settings.resolution)
+    return str(normalized), str(raw_still_path)
+
+
+def _build_scene_runtime_entry(s: dict[str, Any], still_path: str) -> dict[str, Any]:
+    """Construct the in-flight scene dict written to ``_runtime["scenes"]``.
+
+    Centralises every field copied from the raw plan scene so that the
+    set of carried-over fields is visible in one place.
+    """
+    entry: dict[str, Any] = {
+        "index": s["index"],
+        "shot_type": s.get("shot_type", "broll"),
+        "vo_text": s.get("vo_text", ""),
+        "prompt": s.get("prompt", ""),
+        "still_path": still_path,
+        "aspect": s["aspect"],  # already resolved by caller
+    }
+    if s.get("animate"):
+        entry["animate"] = True
+        if s.get("video_model"):
+            entry["video_model"] = s["video_model"]
+        if s.get("motion_prompt"):
+            entry["motion_prompt"] = s["motion_prompt"]
+        if s.get("animate_resolution"):
+            entry["animate_resolution"] = s["animate_resolution"]
+        if s.get("end_frame_path"):
+            entry["end_frame_path"] = s["end_frame_path"]  # already resolved by caller
+    if s.get("clip_path"):
+        entry["clip_path"] = s["clip_path"]  # already resolved by caller
+    if s.get("zoom_direction"):
+        entry["zoom_direction"] = s["zoom_direction"]
+    if s.get("zoom_amount") is not None:
+        entry["zoom_amount"] = float(s["zoom_amount"])
+    return entry
+
+
 def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     """Generate or reuse stills for every scene; lock new ones in the plan.
 
@@ -114,7 +263,6 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     `still_path` on its in-flight scene entry, or normalize_aspect is
     skipped on freshly-generated PNGs.
     """
-    from .openrouter import generate_image
     from .settings import VALID_ASPECTS
 
     rt = _runtime(plan)
@@ -125,7 +273,6 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     scenes: list[dict[str, Any]] = []
     for s in scenes_raw:
         idx = s["index"]
-        prompt = s.get("prompt", "")
         vo_text = s.get("vo_text", "")
 
         # Per-scene aspect override (validated against the same set as Settings).
@@ -135,134 +282,117 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
                 f"scene {idx}: aspect={scene_aspect!r} is not a supported aspect "
                 f"ratio. Choices: {sorted(VALID_ASPECTS)}"
             )
+        # Stamp the resolved aspect onto a working copy so helpers can read it.
+        s = {**s, "aspect": scene_aspect}
 
         if "still_path" in s:
             p = Path(s["still_path"])
             still_path = str(p if p.is_absolute() else (settings.folder / p))
             _log(settings, f"  [{idx:02d}] reusing {Path(still_path).name}")
         else:
-            if "reference_images" in s:
-                refs = [str(Path(r) if Path(r).is_absolute() else settings.folder / r) for r in s["reference_images"]]
-            else:
-                # Default: pass EVERY image in media/ as a reference. The
-                # planner agent has historically been sloppy about picking
-                # the right `character_image` per scene (verified live: it
-                # picked the product photo as character for a stylized
-                # scene, then the broll scenes attached no reference at
-                # all and produced photoreal output). Until the agent's
-                # reasoning is reliable, force-attach all media/ files so
-                # Gemini always has the character + product visible.
-                # `reference_images` on the scene still wins as an explicit
-                # opt-in/opt-out.
-                media_dir = settings.folder / "media"
-                if media_dir.is_dir():
-                    # Skip cropped/normalized derivatives — those have an
-                    # `_a<W>x<H>` or `_n<W>x<H>` suffix added by stills
-                    # post-processing. Only the original extracted images
-                    # (image1.png, image2.png, etc.) are real references.
-                    import re as _re
-                    derivative_pat = _re.compile(r"_[an]\d+x\d+$")
-                    candidates = sorted(
-                        p for p in media_dir.iterdir()
-                        if p.is_file()
-                        and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
-                        and not derivative_pat.search(p.stem)
-                    )
-                    # Cap at 4 — character + product + a couple alts is
-                    # plenty; Gemini's max_refs is 8 but more refs degrade
-                    # the per-image attention each one gets.
-                    refs = [str(p) for p in candidates[:4]] or None
-                elif s.get("reference") and settings.character_image:
-                    refs = [settings.character_image]
-                elif settings.stills_only and settings.character_image:
-                    refs = [settings.character_image]
-                else:
-                    refs = None
-
+            refs = _resolve_scene_reference_images(s, settings)
             _log(settings, f"  [{idx:02d}] {s.get('shot_type', 'broll')} — {vo_text[:55]}...")
-            from .stills import (
-                AspectMismatchError,
-                check_aspect,
-                normalize_aspect,
+            still_path, raw_still_path = _generate_and_normalize_still(
+                s, settings, rt["stills_dir"], refs
             )
-
-            # Two attempts max: if the model returns a wrong-aspect image on
-            # first try, regenerate once with a sterner textual prompt prefix.
-            # If it's still wrong, raise — silent center-crop is forbidden
-            # because it discards subject content for non-centered compositions.
-            # Per-scene image_model override wins over plan-level default.
-            scene_image_model = s.get("image_model") or settings.image_model
-
-            attempts = 2
-            raw_still_path = None
-            last_err: Exception | None = None
-            for attempt in range(1, attempts + 1):
-                stern_prefix = "" if attempt == 1 else _build_stern_prefix(scene_aspect)
-                raw_still_path = generate_image(
-                    prompt=stern_prefix + prompt,
-                    alias=scene_image_model,
-                    reference_images=refs,
-                    out_dir=Path(rt["stills_dir"]),
-                    aspect_ratio=scene_aspect,
-                    size=settings.resolution,
-                )
-                check = check_aspect(raw_still_path, settings.resolution)
-                if check.within_tolerance:
-                    break
-                _log(settings,
-                     f"       ✗ attempt {attempt}/{attempts}: {Path(raw_still_path).name} "
-                     f"is {check.src_w}x{check.src_h} "
-                     f"({check.mismatch_pct*100:.1f}% off target {settings.resolution}). "
-                     f"{'Retrying with sterner prompt.' if attempt < attempts else 'GIVING UP.'}")
-                last_err = AspectMismatchError(
-                    f"scene {idx}: model {scene_image_model!r} returned wrong-aspect "
-                    f"image {check.src_w}x{check.src_h} ({check.mismatch_pct*100:.1f}% off). "
-                    f"Already retried {attempt - 1}x with sterner prompts. "
-                    f"This run is aborting — switch to a different image model or "
-                    f"rewrite the prompt to mention vertical/portrait framing explicitly."
-                )
-
-            if raw_still_path is None or last_err is not None and not check_aspect(raw_still_path, settings.resolution).within_tolerance:
-                raise last_err if last_err else RuntimeError("stage_stills: no still produced")
-
-            normalized = normalize_aspect(raw_still_path, settings.resolution)
-            still_path = str(normalized)
-            if normalized != Path(raw_still_path):
+            if still_path != raw_still_path:
                 _log(settings, f"       → {Path(still_path).name}  (micro-trimmed from {Path(raw_still_path).name})")
             else:
                 _log(settings, f"       → {Path(still_path).name}")
             _lock_field_in_plan(settings.plan_path, plan, idx, "still_path", still_path, settings.folder)
 
-        scene_entry: dict[str, Any] = {
-            "index": idx,
-            "shot_type": s.get("shot_type", "broll"),
-            "vo_text": vo_text,
-            "prompt": prompt,
-            "still_path": still_path,
-            "aspect": scene_aspect,
-        }
-        if s.get("animate"):
-            scene_entry["animate"] = True
-            if s.get("video_model"):
-                scene_entry["video_model"] = s["video_model"]
-            if s.get("motion_prompt"):
-                scene_entry["motion_prompt"] = s["motion_prompt"]
-            if s.get("animate_resolution"):
-                scene_entry["animate_resolution"] = s["animate_resolution"]
-            if s.get("end_frame_path"):
-                ep = Path(s["end_frame_path"])
-                scene_entry["end_frame_path"] = str(ep if ep.is_absolute() else settings.folder / ep)
+        # Resolve optional path fields before building the runtime entry.
+        s_resolved = dict(s)
+        if s.get("end_frame_path"):
+            ep = Path(s["end_frame_path"])
+            s_resolved["end_frame_path"] = str(ep if ep.is_absolute() else settings.folder / ep)
         if s.get("clip_path"):
             cp = Path(s["clip_path"])
-            scene_entry["clip_path"] = str(cp if cp.is_absolute() else settings.folder / cp)
-        if s.get("zoom_direction"):
-            scene_entry["zoom_direction"] = s["zoom_direction"]
-        if s.get("zoom_amount") is not None:
-            scene_entry["zoom_amount"] = float(s["zoom_amount"])
-        scenes.append(scene_entry)
+            s_resolved["clip_path"] = str(cp if cp.is_absolute() else settings.folder / cp)
+
+        scenes.append(_build_scene_runtime_entry(s_resolved, still_path))
 
     rt["scenes"] = scenes
     return plan
+
+
+# --------------------------------------------------------------------------
+# stage_animate helpers
+# --------------------------------------------------------------------------
+
+def _resolve_animate_model(s: dict[str, Any], plan_video_model: str) -> str:
+    """Return the video model alias for this scene, with per-scene override support."""
+    return s.get("video_model") or plan_video_model
+
+
+def _resolve_animate_references(s: dict[str, Any], settings: Settings) -> list[Path] | None:
+    """Resolve ``video_references`` paths for text-to-video scenes.
+
+    Only effective when no ``still_path`` drives ``frame_images``; when an
+    image is present the model ignores ``input_references`` anyway.
+    """
+    video_refs_raw = s.get("video_references")
+    if not video_refs_raw:
+        return None
+    return [
+        (Path(r) if Path(r).is_absolute() else settings.folder / r)
+        for r in video_refs_raw
+    ]
+
+
+def _animate_one_scene(
+    s: dict[str, Any],
+    settings: Settings,
+    plan_video_model: str,
+    video_dir: str,
+    openrouter,
+) -> str:
+    """Run image-to-video for a single scene and return the clip path.
+
+    Validates the model alias, resolves end_frame and input_references, then
+    calls ``openrouter.generate_video``. Callers are responsible for the
+    guard checks (animate flag, existing clip, valid still).
+    """
+    from .models import VIDEO_MODELS
+
+    scene_model = _resolve_animate_model(s, plan_video_model)
+
+    if scene_model not in VIDEO_MODELS:
+        raise RuntimeError(
+            f"video_model={scene_model!r} is not a known video alias. "
+            f"Use one of: {', '.join(sorted(VIDEO_MODELS))}."
+        )
+
+    # Aspect comes from the scene entry (populated by stage_stills with
+    # the per-scene override already resolved); fall back to the
+    # settings aspect when the scene predates that field.
+    aspect_ratio: str = s.get("aspect", settings.aspect)
+    motion_prompt = s.get("motion_prompt") or s.get("prompt") or (
+        "Subtle cinematic motion, gentle camera drift. Keep the scene stable and beautiful."
+    )
+
+    end_frame = s.get("end_frame_path")
+    if end_frame and not Path(end_frame).exists():
+        end_frame = None  # caller already logged the warning
+
+    input_references = _resolve_animate_references(s, settings)
+
+    # Per-scene animate_resolution wins; fall back to settings default.
+    # This is the resolution sent to the video-gen model — cheaper than
+    # the output resolution and upscaled by ffmpeg during assembly.
+    scene_animate_res = s.get("animate_resolution") or settings.animate_resolution
+
+    clip_path = openrouter.generate_video(
+        prompt=motion_prompt,
+        alias=scene_model,
+        image_path=Path(s["still_path"]),
+        end_image_path=Path(end_frame) if end_frame else None,
+        input_references=input_references,
+        out_dir=Path(video_dir),
+        aspect_ratio=aspect_ratio,
+        size=scene_animate_res,
+    )
+    return str(clip_path)
 
 
 def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
@@ -282,7 +412,6 @@ def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     Breaks if: animated scenes are not augmented with `clip_path` after
     this stage, or pre-locked clips aren't reported as reused.
     """
-    from .models import VIDEO_MODELS
     from . import openrouter as _openrouter
 
     rt = _runtime(plan)
@@ -298,63 +427,30 @@ def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
             if not s.get("animate") or s.get("clip_path"):
                 continue
 
-            # Per-scene model override wins over plan-level default.
-            scene_model = s.get("video_model") or plan_video_model
             idx = s["index"]
             still = s.get("still_path")
             if not still or not Path(still).exists():
                 _log(settings, f"  [{idx:02d}] WARNING: no valid still, skipping animation")
                 continue
 
-            if scene_model not in VIDEO_MODELS:
-                raise RuntimeError(
-                    f"video_model={scene_model!r} is not a known video alias. "
-                    f"Use one of: {', '.join(sorted(VIDEO_MODELS))}."
-                )
+            scene_model = _resolve_animate_model(s, plan_video_model)
+            scene_animate_res = s.get("animate_resolution") or settings.animate_resolution
+            input_references = _resolve_animate_references(s, settings)
 
-            # Aspect comes from the scene entry (populated by stage_stills with
-            # the per-scene override already resolved); fall back to the
-            # settings aspect when the scene predates that field.
-            aspect_ratio: str = s.get("aspect", settings.aspect)
-            motion_prompt = s.get("motion_prompt") or s.get("prompt") or (
-                "Subtle cinematic motion, gentle camera drift. Keep the scene stable and beautiful."
-            )
             end_frame = s.get("end_frame_path")
             if end_frame and not Path(end_frame).exists():
                 _log(settings, f"  [{idx:02d}] WARNING: end_frame_path not found ({end_frame}), ignoring")
                 end_frame = None
-
-            # video_references: resolve paths relative to project folder.
-            # Only effective for text-to-video (no still); when image_path is
-            # set, frame_images takes precedence and input_references is ignored.
-            video_refs_raw = s.get("video_references")
-            input_references: list[Path] | None = None
-            if video_refs_raw:
-                input_references = [
-                    (Path(r) if Path(r).is_absolute() else settings.folder / r)
-                    for r in video_refs_raw
-                ]
-
-            # Per-scene animate_resolution wins; fall back to settings default.
-            # This is the resolution sent to the video-gen model — cheaper than
-            # the output resolution and upscaled by ffmpeg during assembly.
-            scene_animate_res = s.get("animate_resolution") or settings.animate_resolution
+                s: dict[str, Any] = {**s, "end_frame_path": None}
 
             _log(settings, f"  [{idx:02d}] openrouter {scene_model} "
                  f"gen={scene_animate_res} → output={settings.resolution}"
                  + (f" + end_frame" if end_frame else "")
                  + (f" + {len(input_references)} ref(s)" if input_references else ""))
-            clip_path = _openrouter.generate_video(
-                prompt=motion_prompt,
-                alias=scene_model,
-                image_path=Path(still),
-                end_image_path=Path(end_frame) if end_frame else None,
-                input_references=input_references,
-                out_dir=Path(rt["video_dir"]),
-                aspect_ratio=aspect_ratio,
-                size=scene_animate_res,
+
+            s["clip_path"] = _animate_one_scene(
+                s, settings, plan_video_model, rt["video_dir"], _openrouter
             )
-            s["clip_path"] = str(clip_path)
 
         for s in scenes:
             if s.get("clip_path"):
@@ -368,6 +464,101 @@ def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     return plan
 
 
+# --------------------------------------------------------------------------
+# stage_voiceover helpers
+# --------------------------------------------------------------------------
+
+def _reuse_voiceover(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
+    """Load a fully-locked voiceover (audio + words already on disk).
+
+    Returns a ``vo_result`` dict ready to assign to ``_runtime``.
+    """
+    audio_path = str(
+        (settings.folder / plan["audio_path"])
+        if not Path(plan["audio_path"]).is_absolute()
+        else Path(plan["audio_path"])
+    )
+    words_path = str(
+        (settings.folder / plan["words_path"])
+        if not Path(plan["words_path"]).is_absolute()
+        else Path(plan["words_path"])
+    )
+    words_data = json.loads(Path(words_path).read_text())
+    words_list = words_data if isinstance(words_data, list) else words_data.get("words", [])
+    if isinstance(words_data, dict) and words_data.get("total_duration_s") is not None:
+        total_dur = float(words_data["total_duration_s"])
+    else:
+        import wave as _wave
+        with _wave.open(audio_path, "rb") as _w:
+            total_dur = _w.getnframes() / float(_w.getframerate())
+    return {
+        "words": words_list,
+        "audio_path": audio_path,
+        "words_path": words_path,
+        "total_duration_s": total_dur,
+    }
+
+
+def _align_voiceover(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
+    """Force-align a locked audio file that has no words file yet.
+
+    Runs WhisperX via ``forced_align``, writes ``vo_words.json`` next to
+    the audio, and returns a ``vo_result`` dict.
+    """
+    from . import forced_align
+
+    audio_path = str(
+        (settings.folder / plan["audio_path"])
+        if not Path(plan["audio_path"]).is_absolute()
+        else Path(plan["audio_path"])
+    )
+    words_path = str(Path(audio_path).with_name("vo_words.json"))
+    words = forced_align.align_words(audio_path)
+    import wave as _wave
+    with _wave.open(audio_path, "rb") as _w:
+        total = _w.getnframes() / float(_w.getframerate())
+    Path(words_path).write_text(json.dumps(
+        {"words": words, "total_duration_s": round(total, 3)}, indent=2,
+    ))
+    return {
+        "words": words,
+        "audio_path": audio_path,
+        "words_path": words_path,
+        "total_duration_s": total,
+    }
+
+
+def _synthesize_voiceover(plan: dict[str, Any], settings: Settings, audio_dir: str) -> dict[str, Any]:
+    """Resolve voice model, build full script, and call TTS.
+
+    Returns the parsed ``vo_result`` dict from ``generate_voiceover``.
+    Raises if per-scene ``voice_model`` overrides disagree.
+    """
+    scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
+    full_script = " ".join(s.get("vo_text", "") for s in scenes_raw).strip()
+    if not full_script:
+        return {}  # empty — caller must check
+
+    # Per-scene voice_model override: if any scene declares one, all
+    # scenes must agree (no per-scene synthesis split yet — the script
+    # is TTS'd as one chunk to keep prosody coherent across scenes).
+    scene_voice_models = {s["voice_model"] for s in scenes_raw if s.get("voice_model")}
+    if len(scene_voice_models) > 1:
+        raise RuntimeError(
+            f"per-scene voice_model overrides disagree: {sorted(scene_voice_models)}. "
+            f"Mixed-model synthesis is not supported (one TTS call per run). "
+            f"Set the same `voice_model:` on every scene that overrides, or move "
+            f"the value to the plan-level `voice_model:`."
+        )
+    voice_model = scene_voice_models.pop() if scene_voice_models else settings.voice_model
+
+    return {
+        "_voice_model": voice_model,
+        "_full_script": full_script,
+        "_audio_dir": audio_dir,
+    }
+
+
 def stage_voiceover(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     """Synthesize or reuse the voiceover; produce per-word alignment.
 
@@ -378,54 +569,27 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     Path(rt["audio_dir"]).mkdir(exist_ok=True)
 
     if plan.get("audio_path") and plan.get("words_path"):
-        audio_path = str((settings.folder / plan["audio_path"]) if not Path(plan["audio_path"]).is_absolute() else Path(plan["audio_path"]))
-        words_path = str((settings.folder / plan["words_path"]) if not Path(plan["words_path"]).is_absolute() else Path(plan["words_path"]))
-        words_data = json.loads(Path(words_path).read_text())
-        words_list = words_data if isinstance(words_data, list) else words_data.get("words", [])
-        if isinstance(words_data, dict) and words_data.get("total_duration_s") is not None:
-            total_dur = float(words_data["total_duration_s"])
-        else:
-            import wave as _wave
-            with _wave.open(audio_path, "rb") as _w:
-                total_dur = _w.getnframes() / float(_w.getframerate())
-        vo_result = {"words": words_list, "audio_path": audio_path,
-                     "words_path": words_path, "total_duration_s": total_dur}
+        vo_result = _reuse_voiceover(plan, settings)
+        audio_path = vo_result["audio_path"]
+        words_path = vo_result["words_path"]
         _log(settings, f"reusing voiceover: {Path(audio_path).name}")
+
     elif plan.get("audio_path") and not plan.get("words_path"):
-        from . import forced_align
-        audio_path = str((settings.folder / plan["audio_path"]) if not Path(plan["audio_path"]).is_absolute() else Path(plan["audio_path"]))
-        words_path = str(Path(audio_path).with_name("vo_words.json"))
-        _log(settings, f"forced_align → {Path(audio_path).name} (whisperx)")
-        words = forced_align.align_words(audio_path)
-        import wave as _wave
-        with _wave.open(audio_path, "rb") as _w:
-            total = _w.getnframes() / float(_w.getframerate())
-        Path(words_path).write_text(json.dumps(
-            {"words": words, "total_duration_s": round(total, 3)}, indent=2,
-        ))
-        vo_result = {"words": words, "audio_path": audio_path, "words_path": words_path,
-                     "total_duration_s": total}
+        _log(settings, f"forced_align → {Path(plan['audio_path']).name} (whisperx)")
+        vo_result = _align_voiceover(plan, settings)
+        audio_path = vo_result["audio_path"]
+        words_path = vo_result["words_path"]
+        words = vo_result["words"]
         _log(settings, f"  aligned {len(words)} words ({words[0]['start']:.2f}s – {words[-1]['end']:.2f}s)")
+
     else:
-        scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
-        full_script = " ".join(s.get("vo_text", "") for s in scenes_raw).strip()
-        if not full_script:
+        synthesis_info = _synthesize_voiceover(plan, settings, rt["audio_dir"])
+        if not synthesis_info:
             _log(settings, "generate_voiceover — no vo_text on any scene, skipping")
             return plan
 
-        # Per-scene voice_model override: if any scene declares one, all
-        # scenes must agree (no per-scene synthesis split yet — the script
-        # is TTS'd as one chunk to keep prosody coherent across scenes).
-        scene_voice_models = {s["voice_model"] for s in scenes_raw if s.get("voice_model")}
-        if len(scene_voice_models) > 1:
-            raise RuntimeError(
-                f"per-scene voice_model overrides disagree: {sorted(scene_voice_models)}. "
-                f"Mixed-model synthesis is not supported (one TTS call per run). "
-                f"Set the same `voice_model:` on every scene that overrides, or move "
-                f"the value to the plan-level `voice_model:`."
-            )
-        voice_model = (scene_voice_models.pop() if scene_voice_models else settings.voice_model)
-
+        voice_model = synthesis_info["_voice_model"]
+        full_script = synthesis_info["_full_script"]
         _log(settings,
              f"generate_voiceover — voice={settings.voice} voice_model={voice_model} "
              f"style={settings.style or settings.style_hint or '<default>'}")
@@ -442,6 +606,50 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     rt["words_path"] = words_path
     rt["vo_result"] = vo_result
     return plan
+
+
+# --------------------------------------------------------------------------
+# stage_speed_adjust helpers
+# --------------------------------------------------------------------------
+
+def _resolve_voice_speed(plan: dict[str, Any]) -> float:
+    """Return the effective playback rate, checking for per-scene agreement.
+
+    Uses the plan-level ``voice_speed`` as the base, then allows a uniform
+    per-scene override. Raises if per-scene values disagree (voiceover is
+    synthesised as one chunk — a split would silently break prosody).
+    """
+    plan_speed = float(plan.get("voice_speed", 1.0))
+    scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
+    scene_speeds = {float(s["voice_speed"]) for s in scenes_raw if s.get("voice_speed") is not None}
+    if len(scene_speeds) > 1:
+        raise RuntimeError(
+            f"per-scene voice_speed overrides disagree: {sorted(scene_speeds)}. "
+            f"Mixed-speed adjustment is not supported (voiceover is one TTS call). "
+            f"Set the same `voice_speed:` on every scene that overrides, or move "
+            f"the value to the plan-level `voice_speed:`."
+        )
+    return scene_speeds.pop() if scene_speeds else plan_speed
+
+
+def _apply_word_timestamp_scaling(vo_result: dict[str, Any], scale: float) -> tuple[list[dict], float]:
+    """Scale word timestamps and total duration by *scale* (= 1 / rate).
+
+    Returns ``(sped_words, sped_dur)`` — the caller writes these back into
+    ``vo_result`` and the words JSON on disk.
+    """
+    sped_words = [
+        {
+            "word": w["word"],
+            "start": round(w["start"] * scale, 3),
+            "end": round(w["end"] * scale, 3),
+        }
+        for w in vo_result.get("words", [])
+    ]
+    sped_dur = sped_words[-1]["end"] if sped_words else round(
+        float(vo_result.get("total_duration_s", 0.0)) * scale, 3
+    )
+    return sped_words, sped_dur
 
 
 def stage_speed_adjust(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
@@ -479,18 +687,7 @@ def stage_speed_adjust(plan: dict[str, Any], settings: Settings) -> dict[str, An
     if plan.get("audio_path"):
         return plan
 
-    plan_speed = float(plan.get("voice_speed", 1.0))
-
-    scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
-    scene_speeds = {float(s["voice_speed"]) for s in scenes_raw if s.get("voice_speed") is not None}
-    if len(scene_speeds) > 1:
-        raise RuntimeError(
-            f"per-scene voice_speed overrides disagree: {sorted(scene_speeds)}. "
-            f"Mixed-speed adjustment is not supported (voiceover is one TTS call). "
-            f"Set the same `voice_speed:` on every scene that overrides, or move "
-            f"the value to the plan-level `voice_speed:`."
-        )
-    rate = scene_speeds.pop() if scene_speeds else plan_speed
+    rate = _resolve_voice_speed(plan)
 
     if abs(rate - 1.0) <= 1e-3:
         return plan
@@ -504,15 +701,7 @@ def stage_speed_adjust(plan: dict[str, Any], settings: Settings) -> dict[str, An
 
     scale = 1.0 / rate
     vo_result = rt["vo_result"]
-    sped_words = [
-        {"word": w["word"],
-         "start": round(w["start"] * scale, 3),
-         "end": round(w["end"] * scale, 3)}
-        for w in vo_result.get("words", [])
-    ]
-    sped_dur = sped_words[-1]["end"] if sped_words else round(
-        float(vo_result.get("total_duration_s", 0.0)) * scale, 3
-    )
+    sped_words, sped_dur = _apply_word_timestamp_scaling(vo_result, scale)
 
     words_path.write_text(json.dumps(
         {"words": sped_words, "total_duration_s": sped_dur}, indent=2,
