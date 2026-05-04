@@ -211,7 +211,10 @@ def test_produce_brief_short_circuits_on_missing_assets(
 
     def _fake_run_plan(**kwargs):
         sentinel["called"] = True
-        return 0
+        from parallax.produce import ProductionResult
+        return ProductionResult(status="ok", run_id="test", output_dir=tmp_path,
+                                final_video=tmp_path / "out.mp4", stills_dir=None,
+                                cost_usd=0.0, error=None)
 
     monkeypatch.setattr(produce_mod, "run_plan", _fake_run_plan)
 
@@ -240,7 +243,10 @@ def test_produce_brief_runs_pipeline_when_valid(
 
     def _fake_run_plan(**kwargs):
         captured.update(kwargs)
-        return 0
+        from parallax.produce import ProductionResult
+        return ProductionResult(status="ok", run_id="test", output_dir=tmp_path,
+                                final_video=tmp_path / "out.mp4", stills_dir=None,
+                                cost_usd=0.0, error=None)
 
     monkeypatch.setattr(produce_mod, "run_plan", _fake_run_plan)
 

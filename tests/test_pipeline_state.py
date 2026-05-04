@@ -143,8 +143,8 @@ def test_full_produce_in_test_mode_produces_video(monkeypatch, tmp_path):
     plan_path.write_text(yaml.safe_dump(plan))
 
     from parallax.produce import run_plan
-    rc = run_plan(folder=folder, plan_path=plan_path)
-    assert rc == 0
+    result = run_plan(folder=folder, plan_path=plan_path)
+    assert result.status == "ok", f"unexpected error: {result.error}"
 
     candidates = list(folder.rglob(f"{folder.name}-v*.mp4"))
     assert candidates, f"no produced mp4 found under {folder}"
@@ -178,8 +178,8 @@ def test_stills_only_run_writes_cost_json(monkeypatch, tmp_path):
     plan_path.write_text(yaml.safe_dump(plan))
 
     from parallax.produce import run_plan
-    rc = run_plan(folder=folder, plan_path=plan_path)
-    assert rc == 0
+    result = run_plan(folder=folder, plan_path=plan_path)
+    assert result.status == "ok", f"unexpected error: {result.error}"
 
     # cost.json must exist under the output dir
     cost_files = list(folder.rglob("cost.json"))

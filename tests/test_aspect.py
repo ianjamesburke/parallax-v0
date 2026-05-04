@@ -178,8 +178,8 @@ def test_produce_in_test_mode_outputs_correct_dimensions(monkeypatch, tmp_path, 
     plan_path.write_text(yaml.safe_dump(plan))
 
     from parallax.produce import run_plan
-    rc = run_plan(folder=folder, plan_path=plan_path, aspect=aspect)
-    assert rc == 0
+    result = run_plan(folder=folder, plan_path=plan_path, aspect=aspect)
+    assert result.status == "ok", f"unexpected error: {result.error}"
 
     # Locate the produced mp4 — convention is `<folder.name>-vN.mp4`.
     candidates = list(folder.rglob(f"{folder.name}-v*.mp4"))

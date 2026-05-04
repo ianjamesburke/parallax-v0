@@ -80,7 +80,6 @@ def run(args) -> int:
 
 def _run_produce(args) -> int:
     from pathlib import Path
-    from ..openrouter import InsufficientCreditsError
     from ..produce import run_plan, test_scene
 
     if args.brief is not None:
@@ -108,18 +107,22 @@ def _run_produce(args) -> int:
     else:
         plan_path = args.plan
 
-    try:
-        if args.scene is not None:
-            return test_scene(
-                folder=args.folder,
-                plan_path=plan_path,
-                scene_index=args.scene,
-                aspect=args.aspect,
-            )
-        return run_plan(folder=args.folder, plan_path=plan_path, aspect=args.aspect)
-    except InsufficientCreditsError as e:
-        print(f"\nError: {e}\n", file=sys.stderr)
+    if args.scene is not None:
+        return test_scene(
+            folder=args.folder,
+            plan_path=plan_path,
+            scene_index=args.scene,
+            aspect=args.aspect,
+        )
+    result = run_plan(folder=args.folder, plan_path=plan_path, aspect=args.aspect)
+    if result.status != "ok":
+        print(f"\nError: {result.error}\n", file=sys.stderr)
         return 1
+    if result.stills_dir:
+        print(f"\n✓ stills → {result.stills_dir}", flush=True)
+    else:
+        print(f"\n✓ {result.final_video}", flush=True)
+    return 0
 
 
 def _run_plan_command(args) -> int:
