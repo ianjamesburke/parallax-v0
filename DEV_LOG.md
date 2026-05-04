@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-03 — [CHANGED] Typed PipelineState for produce stages (PR #48 → alpha)
+Replace the untyped `plan["_runtime"]` blackboard with `PipelineState` and `SceneRuntime` dataclasses. Stage signatures change from `(plan, settings)` to `(plan, settings, state: PipelineState)`; `produce.run_plan` initialises state and threads it through the loop. Also fixes a latent bug: `video_references` on plan scenes was never copied into the runtime scene dict, so it was silently dropped by `stage_animate`. The `_scene_to_dict` helper filters `None` fields when serialising `SceneRuntime` to JSON so downstream consumers (align_scenes, ken_burns_assemble) see the same sparse dicts they always received.
+**Breaks if:** `plan["_runtime"]` appears anywhere outside tests after a produce run; a `video_references` field on a plan scene is ignored by `stage_animate`; or `stage_scan` / `stage_stills` / any other stage raises `AttributeError` on a valid state field.
+
 ## 2026-05-03 — [CHANGED] Scene-to-scene transitions via ffmpeg xfade (PR #37 → alpha)
 Adds `default_transition` / `default_transition_duration_s` at the plan level and per-scene `transition` / `transition_duration_s` overrides. When any transition is set, `ken_burns_assemble` replaces the `-f concat` pipe with a `filter_complex` xfade chain; offset math accounts for cumulative overlap so timing stays tight. Hard-cut default is unchanged — zero breaking change. Supported transitions: `fade`, `fadeblack`, `fadewhite`, `dissolve`, `pixelize`, `wipeleft`, `wiperight`, `wipeup`, `wipedown`, `hlslice`, `hrslice`, `vuslice`, `vdslice`. Unknown names raise at assembly time with a clear error listing valid options. xfade is video-only; audio path is untouched.
 **Breaks if:** a plan with `default_transition: dissolve` and 2+ scenes produces an mp4 with hard cuts (no visible dissolve), or fails with an ffmpeg `filter_complex` error, or `Plan.from_yaml()` raises "extra fields not permitted" on the new fields.
