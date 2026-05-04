@@ -22,16 +22,16 @@ from .shim import is_test_mode, output_dir
 log = get_logger(__name__)
 
 
-def align_scenes(scenes_json: str, words_json: str) -> str:
+def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> list[dict]:
     """Assign start_s/end_s/duration_s so scenes form a contiguous cover of the audio.
 
-    scenes_json: JSON list of {index, vo_text, ...}
-    words_json: JSON of either [{word, start, end}, ...] or
-                {"words": [...], "total_duration_s": float}.
-                When `total_duration_s` is supplied the final scene is
-                extended to that value so the assembled video matches the
-                audio length exactly — without it, trailing silence past
-                the last word is lost on mux (`-shortest` trims audio).
+    scenes: list of {index, vo_text, ...}
+    words_payload: either [{word, start, end}, ...] or
+                   {"words": [...], "total_duration_s": float}.
+                   When `total_duration_s` is supplied the final scene is
+                   extended to that value so the assembled video matches the
+                   audio length exactly — without it, trailing silence past
+                   the last word is lost on mux (`-shortest` trims audio).
 
     Invariants enforced on output:
       - scenes[0].start_s == 0          (covers any leading silence)
@@ -43,10 +43,9 @@ def align_scenes(scenes_json: str, words_json: str) -> str:
     scene cuts land on actual word boundaries and the final mux preserves
     the full voiceover end-to-end.
 
-    Returns updated scenes JSON list.
+    Returns updated scenes list (mutates in place, also returns for convenience).
     """
-    scenes: list[dict] = json.loads(scenes_json)
-    payload = json.loads(words_json)
+    payload = words_payload
     words: list[dict] = payload if isinstance(payload, list) else payload.get("words", [])
 
     cursor = 0
@@ -96,25 +95,38 @@ def align_scenes(scenes_json: str, words_json: str) -> str:
             end_s=s.get("end_s"),
             duration_s=s.get("duration_s"),
         )
-    return json.dumps(scenes)
+    return scenes
 
 
-def ken_burns_assemble(
-    scenes_json: str,
+def align_scenes(scenes_json: str, words_json: str) -> str:
+    """JSON-string wrapper around align_scenes_obj. Kept for CLI/external callers.
+
+    scenes_json: JSON list of {index, vo_text, ...}
+    words_json: JSON of either [{word, start, end}, ...] or
+                {"words": [...], "total_duration_s": float}.
+
+    Returns updated scenes as a JSON string.
+    """
+    scenes: list[dict] = json.loads(scenes_json)
+    payload = json.loads(words_json)
+    return json.dumps(align_scenes_obj(scenes, payload))
+
+
+def ken_burns_assemble_obj(
+    scenes: list[dict],
     audio_path: str | None,
     output_path: str | None = None,
     resolution: str = "1080x1920",
 ) -> str:
     """Assemble Ken Burns draft video from stills + aligned scene durations.
 
-    scenes_json: JSON list of {still_path, duration_s, index?}
+    scenes: list of {still_path, duration_s, index?}
     audio_path: path to voiceover.mp3
     output_path: where to write the final .mp4 (default: output/ken_burns_draft.mp4)
     resolution: WxH e.g. "1080x1920" (vertical) or "1920x1080" (landscape)
 
     Returns the output video path.
     """
-    scenes: list[dict] = json.loads(scenes_json)
     if not scenes:
         raise ValueError("No scenes provided")
 
@@ -208,6 +220,21 @@ def ken_burns_assemble(
 
     log.info("ken_burns_assemble: wrote %s", out)
     return str(out)
+
+
+def ken_burns_assemble(
+    scenes_json: str,
+    audio_path: str | None,
+    output_path: str | None = None,
+    resolution: str = "1080x1920",
+) -> str:
+    """JSON-string wrapper around ken_burns_assemble_obj. Kept for CLI/external callers.
+
+    scenes_json: JSON list of {still_path, duration_s, index?}
+    Returns the output video path.
+    """
+    scenes: list[dict] = json.loads(scenes_json)
+    return ken_burns_assemble_obj(scenes, audio_path, output_path, resolution)
 
 
 def _zoom_filter(
@@ -371,20 +398,19 @@ def _make_kb_clip(
         proc.wait()
 
 
-def assemble_clip_video(
-    scenes_json: str,
+def assemble_clip_video_obj(
+    scenes: list[dict],
     audio_path: str,
     output_path: str | None = None,
     resolution: str | None = None,
 ) -> str:
     """Assemble a video from pre-existing numbered clips + aligned scene durations.
 
-    Use this instead of ken_burns_assemble when scan_project_folder returns mode='video_clips'.
-    Each scene in scenes_json must have clip_paths (list of file paths) and duration_s.
+    Use this instead of ken_burns_assemble_obj when scan_project_folder returns mode='video_clips'.
+    Each scene must have clip_paths (list of file paths) and duration_s.
     Clips are looped or trimmed to fill each scene's target duration.
     Returns the assembled video path.
     """
-    scenes: list[dict] = json.loads(scenes_json)
     if not scenes:
         raise ValueError("No scenes provided")
 
@@ -450,6 +476,21 @@ def assemble_clip_video(
 
     log.info("assemble_clip_video: wrote %s (res=%s)", out, resolution)
     return str(out)
+
+
+def assemble_clip_video(
+    scenes_json: str,
+    audio_path: str,
+    output_path: str | None = None,
+    resolution: str | None = None,
+) -> str:
+    """JSON-string wrapper around assemble_clip_video_obj. Kept for CLI/external callers.
+
+    scenes_json: JSON list of {clip_paths, duration_s, ...}
+    Returns the assembled video path.
+    """
+    scenes: list[dict] = json.loads(scenes_json)
+    return assemble_clip_video_obj(scenes, audio_path, output_path, resolution)
 
 
 def _make_clip_segment(

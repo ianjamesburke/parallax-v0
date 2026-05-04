@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from parallax import voiceover
+from parallax.voiceover import generate_voiceover_dict
 
 
 def _make_silent_mp3(path: Path, duration_s: float) -> None:
@@ -179,3 +180,34 @@ def test_generate_voiceover_rejects_speed_kwarg(tmp_path, monkeypatch):
     monkeypatch.setenv("PARALLAX_OUTPUT_DIR", str(tmp_path))
     with pytest.raises(TypeError):
         voiceover.generate_voiceover("hi", out_dir=str(tmp_path), speed=1.5)
+
+
+# ─── generate_voiceover_dict: object-level API ───────────────────────────
+
+
+def test_generate_voiceover_dict_returns_dict_in_test_mode(tmp_path, monkeypatch):
+    """generate_voiceover_dict returns a Python dict, not a JSON string."""
+    monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
+    monkeypatch.setenv("PARALLAX_OUTPUT_DIR", str(tmp_path))
+    result = generate_voiceover_dict("hello world", out_dir=str(tmp_path))
+    assert isinstance(result, dict)
+    assert "audio_path" in result
+    assert "words" in result
+    assert "total_duration_s" in result
+    assert isinstance(result["words"], list)
+
+
+def test_generate_voiceover_dict_same_data_as_json_wrapper(tmp_path, monkeypatch):
+    """Object API and JSON-string API produce identical data."""
+    monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
+    monkeypatch.setenv("PARALLAX_OUTPUT_DIR", str(tmp_path))
+    # Run dict version
+    dict_result = generate_voiceover_dict("hello world", out_dir=str(tmp_path))
+    # Run JSON version on a fresh dir to avoid file collision
+    tmp2 = tmp_path / "json_run"
+    tmp2.mkdir()
+    json_result = json.loads(voiceover.generate_voiceover("hello world", out_dir=str(tmp2)))
+    # Keys match; paths differ (different out_dir) but structure is identical
+    assert set(dict_result.keys()) == set(json_result.keys())
+    assert dict_result["words"] == json_result["words"]
+    assert dict_result["total_duration_s"] == json_result["total_duration_s"]

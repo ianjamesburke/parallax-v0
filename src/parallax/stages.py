@@ -23,14 +23,14 @@ from pathlib import Path
 from typing import Any
 
 from . import runlog
-from .assembly import align_scenes, ken_burns_assemble
+from .assembly import align_scenes_obj, ken_burns_assemble_obj
 from .avatar import burn_avatar, key_avatar_track
 from .captions import burn_captions
 from .headline import burn_headline, burn_titles
-from .manifest import write_manifest
+from .manifest import write_manifest_data
 from .project import scan_project_folder
 from .settings import Settings
-from .voiceover import generate_voiceover
+from .voiceover import generate_voiceover_dict
 
 
 def _log(settings: Settings, msg: str) -> None:
@@ -593,11 +593,11 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
         _log(settings,
              f"generate_voiceover — voice={settings.voice} voice_model={voice_model} "
              f"style={settings.style or settings.style_hint or '<default>'}")
-        vo_result = json.loads(generate_voiceover(
+        vo_result = generate_voiceover_dict(
             text=full_script, voice=settings.voice,
             out_dir=rt["audio_dir"], style=settings.style, style_hint=settings.style_hint,
             voice_model=voice_model,
-        ))
+        )
         audio_path = vo_result["audio_path"]
         words_path = vo_result["words_path"]
         _log(settings, f"  audio: {Path(audio_path).name}  ({vo_result['total_duration_s']:.1f}s)")
@@ -744,7 +744,6 @@ def stage_align(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
         for s in aligned:
             _log(settings, f"  [{s['index']:02d}] {s.get('start_s', 0):.2f}s – {s.get('end_s', 0):.2f}s ({s.get('duration_s', 0):.2f}s)")
         rt["aligned"] = aligned
-        rt["aligned_json"] = json.dumps(aligned)
         return plan
 
     vo_result = rt["vo_result"]
@@ -753,16 +752,14 @@ def stage_align(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
         "total_duration_s": vo_result.get("total_duration_s",
                                           vo_result["words"][-1]["end"] if vo_result["words"] else 0.0),
     }
-    aligned_json = align_scenes(
-        scenes_json=json.dumps(scenes),
-        words_json=json.dumps(words_payload),
+    aligned = align_scenes_obj(
+        scenes=list(scenes),
+        words_payload=words_payload,
     )
-    aligned = json.loads(aligned_json)
     aligned = _apply_timing_overrides(aligned, plan.get("scenes", []))
     for s in aligned:
         _log(settings, f"  [{s['index']:02d}] {s.get('start_s', 0):.2f}s – {s.get('end_s', 0):.2f}s ({s.get('duration_s', 0):.2f}s)")
     rt["aligned"] = aligned
-    rt["aligned_json"] = json.dumps(aligned)
     return plan
 
 
@@ -775,8 +772,8 @@ def stage_manifest(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     rt = _runtime(plan)
     manifest_path = str(Path(rt["out_dir"]) / "manifest.yaml")
     _log(settings, f"write_manifest → {manifest_path}")
-    write_manifest(
-        manifest_json=json.dumps({
+    write_manifest_data(
+        data={
             "version": rt["version"],
             "image_model": settings.image_model,
             "video_model": settings.video_model,
@@ -787,7 +784,7 @@ def stage_manifest(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
             "audio_path": rt.get("audio_path"),
             "words_path": rt.get("words_path"),
             "scenes": rt["aligned"],
-        }),
+        },
         manifest_path=manifest_path,
     )
     rt["manifest_path"] = manifest_path
@@ -804,8 +801,8 @@ def stage_assemble(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     Path(rt["video_dir"]).mkdir(exist_ok=True)
     draft_path = str(Path(rt["video_dir"]) / f"{settings.concept_prefix}ken_burns_draft.mp4")
     _log(settings, f"ken_burns_assemble → {draft_path}")
-    ken_burns_assemble(
-        scenes_json=rt["aligned_json"],
+    ken_burns_assemble_obj(
+        scenes=rt["aligned"],
         audio_path=rt.get("audio_path"),
         output_path=draft_path,
         resolution=settings.resolution,

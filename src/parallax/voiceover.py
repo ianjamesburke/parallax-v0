@@ -23,14 +23,14 @@ from .shim import is_test_mode, output_dir
 log = get_logger(__name__)
 
 
-def generate_voiceover(
+def generate_voiceover_dict(
     text: str,
     voice: str = "nova",
     out_dir: str | None = None,
     style: str | None = None,
     style_hint: str | None = None,
     voice_model: str = "tts-mini",
-) -> str:
+) -> dict:
     """Generate voiceover and trim overlong inter-word silences.
 
     Calls `openrouter.generate_tts` (always Gemini TTS via OpenRouter),
@@ -43,13 +43,13 @@ def generate_voiceover(
     `style` accepts presets from `gemini_tts.STYLE_PRESETS`
     (`rapid_fire`, `fast`, `calm`, `natural`); `style_hint` is freeform.
 
-    Returns JSON: {audio_path, words_path, words, total_duration_s}.
+    Returns dict: {audio_path, words_path, words, total_duration_s}.
     """
     dest = Path(out_dir or str(output_dir()))
     dest.mkdir(parents=True, exist_ok=True)
 
     if is_test_mode():
-        return _mock_voiceover(text, dest)
+        return json.loads(_mock_voiceover(text, dest))
 
     from . import openrouter
 
@@ -83,12 +83,34 @@ def generate_voiceover(
     elapsed = int((time.monotonic() - t0) * 1000)
     log.info("voiceover: done duration=%.2fs elapsed=%dms", duration, elapsed)
 
-    return json.dumps({
+    return {
         "audio_path": str(audio_path),
         "words_path": str(words_path),
         "words": words_trimmed,
         "total_duration_s": duration,
-    })
+    }
+
+
+def generate_voiceover(
+    text: str,
+    voice: str = "nova",
+    out_dir: str | None = None,
+    style: str | None = None,
+    style_hint: str | None = None,
+    voice_model: str = "tts-mini",
+) -> str:
+    """JSON-string wrapper around generate_voiceover_dict. Kept for CLI/external callers.
+
+    Returns JSON: {audio_path, words_path, words, total_duration_s}.
+    """
+    return json.dumps(generate_voiceover_dict(
+        text=text,
+        voice=voice,
+        out_dir=out_dir,
+        style=style,
+        style_hint=style_hint,
+        voice_model=voice_model,
+    ))
 
 
 def _trim_long_pauses(
