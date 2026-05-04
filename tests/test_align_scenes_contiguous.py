@@ -97,6 +97,31 @@ def test_align_scenes_obj_returns_list_of_dicts():
     assert result[-1]["end_s"] == 1.5
 
 
+def test_tts_tags_stripped_before_word_count():
+    """[dramatic] style TTS tags must not be counted as transcript words."""
+    # Scene 0: "[dramatically] Hello world." — tag should be ignored, 2 words counted
+    # Scene 1: "[rapidly] Goodbye now." — tag ignored, 2 words counted
+    # Transcript has exactly 4 words total. Without the fix, the tag words cause
+    # cumulative overcounting: scene 0 consumes 3 transcript words (tag + 2), leaving
+    # only 1 word for scene 1, and the final scene ends early.
+    scenes = [
+        {"index": 0, "vo_text": "[dramatically] Hello world."},
+        {"index": 1, "vo_text": "[rapidly] Goodbye now."},
+    ]
+    words = [
+        _word("Hello", 0.0, 0.5), _word("world", 0.6, 1.0),
+        _word("Goodbye", 1.2, 1.6), _word("now", 1.7, 2.0),
+    ]
+    payload = {"words": words, "total_duration_s": 2.5}
+    out = json.loads(align_scenes(json.dumps(scenes), json.dumps(payload)))
+    # Scene 0 should span Hello→world, scene 1 should span Goodbye→now
+    assert out[0]["start_s"] == 0.0
+    assert out[0]["end_s"] == out[1]["start_s"], "scenes must be contiguous"
+    assert out[1]["end_s"] == 2.5, "last scene must reach total duration"
+    # Verify scene 1 actually covers both its words (not truncated due to overcounting)
+    assert out[1]["start_s"] <= 1.2
+
+
 def test_align_scenes_obj_same_result_as_json_wrapper():
     """Object API and JSON-string API produce identical data."""
     scenes_data = [
