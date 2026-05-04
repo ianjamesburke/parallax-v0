@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-04 — [DECISION] Synced main refactors into alpha directly (no PR)
+Five internal refactors (#40 OpenRouter split, #42 typed Plan models, #44 stage helpers, #45 JSON-string API removal, #46 whisper backend consolidation) were mistakenly merged to `main` instead of going through the alpha PR cycle. Merged into alpha directly via `git merge origin/main`. Conflicts in `stages.py` and `assembly.py` were resolved by keeping alpha's architecture (`PipelineState`/`SceneRuntime` dataclasses, 3-arg stages) since main had drifted to an incompatible calling convention. The `_obj` wrapper variants from #45 were added on top. 401 tests pass; verify suite smoke test passes. Bumped to v0.4.18.
+**Why:** Process error — parallel agent dispatch used `isolation: worktree` but PRs targeted `main` instead of `alpha`. Accepted rather than reverting because all changes are pure refactors with no CLI surface change.
+
 ## 2026-05-04 — [FIX] Plan asset locking is now explicit and non-silent (PR #50 → alpha)
 `_lock_field_in_plan` in `stages.py` no longer swallows exceptions with a bare `except Exception: pass`. YAML write failures now emit a `plan.lock.error` event to the runlog at ERROR level and raise `RuntimeError`, so a failed lock surfaces immediately instead of the run silently proceeding as if the still/clip path was persisted. Path normalization behavior is unchanged (in-folder → relative, outside → absolute). Five new tests in `tests/test_plan_locking.py` cover write failure with runlog event, both path cases, and the no-active-run edge case.
 **Breaks if:** a produce run whose `plan.yaml` write fails does not raise and does not emit a `plan.lock.error` runlog event; or `still_path` / `clip_path` fields are missing from `plan.yaml` after a successful run.
