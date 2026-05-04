@@ -105,18 +105,19 @@ def _lock_field_in_plan(plan_path: Path, plan: dict, scene_idx: int, field_name:
     """Write an asset path back into the plan YAML so the scene is locked on future runs."""
     import yaml
     try:
-        try:
-            locked_path = str(Path(value).relative_to(folder))
-        except ValueError:
-            locked_path = value
-        for scene in plan.get("scenes", []):
-            if scene.get("index") == scene_idx:
-                scene[field_name] = locked_path
-                break
+        locked_path = str(Path(value).relative_to(folder))
+    except ValueError:
+        locked_path = value
+    for scene in plan.get("scenes", []):
+        if scene.get("index") == scene_idx:
+            scene[field_name] = locked_path
+            break
+    try:
         with plan_path.open("w") as f:
             yaml.dump(plan, f, default_flow_style=False, allow_unicode=True, sort_keys=False, width=10000)
-    except Exception:
-        pass
+    except Exception as exc:
+        runlog.event("plan.lock.error", level="ERROR", scene=scene_idx, field=field_name, error=str(exc))
+        raise RuntimeError(f"plan lock failed: could not write {plan_path}: {exc}") from exc
 
 
 # --------------------------------------------------------------------------
