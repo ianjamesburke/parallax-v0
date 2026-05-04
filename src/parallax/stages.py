@@ -220,7 +220,7 @@ def _generate_and_normalize_still(
         raise last_err if last_err else RuntimeError("stage_stills: no still produced")
 
     normalized = normalize_aspect(raw_still_path, settings.resolution)
-    return str(normalized), raw_still_path
+    return str(normalized), str(raw_still_path)
 
 
 def _build_scene_runtime_entry(s: dict[str, Any], still_path: str) -> dict[str, Any]:
@@ -355,7 +355,6 @@ def _animate_one_scene(
     """
     from .models import VIDEO_MODELS
 
-    idx = s["index"]
     scene_model = _resolve_animate_model(s, plan_video_model)
 
     if scene_model not in VIDEO_MODELS:
@@ -436,14 +435,13 @@ def stage_animate(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
 
             scene_model = _resolve_animate_model(s, plan_video_model)
             scene_animate_res = s.get("animate_resolution") or settings.animate_resolution
-            aspect_ratio: str = s.get("aspect", settings.aspect)
             input_references = _resolve_animate_references(s, settings)
 
             end_frame = s.get("end_frame_path")
             if end_frame and not Path(end_frame).exists():
                 _log(settings, f"  [{idx:02d}] WARNING: end_frame_path not found ({end_frame}), ignoring")
                 end_frame = None
-                s = {**s, "end_frame_path": None}
+                s: dict[str, Any] = {**s, "end_frame_path": None}
 
             _log(settings, f"  [{idx:02d}] openrouter {scene_model} "
                  f"gen={scene_animate_res} → output={settings.resolution}"
