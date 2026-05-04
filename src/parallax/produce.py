@@ -41,7 +41,6 @@ Plan YAML schema:
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,7 +50,7 @@ import yaml
 
 from . import runlog
 from .context import current_session_id
-from .ffmpeg_utils import parse_resolution
+from .ffmpeg_utils import parse_resolution, probe_duration, run_ffmpeg
 from .log import get_logger
 from .plan import Plan
 from .settings import ProductionMode, _infer_project_resolution, resolve_settings
@@ -246,19 +245,14 @@ def test_scene(folder: str | Path, plan_path: str | Path, scene_index: int, aspe
         if not src.exists():
             print(f"Error: clip_path not found: {src}", file=sys.stderr)
             return 1
-        probe = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
-             "-show_entries", "stream=duration", "-of", "csv=p=0", str(src)],
-            capture_output=True, text=True,
-        )
-        duration = float(probe.stdout.strip() or "5.0")
+        duration = probe_duration(src) or 5.0
         w_i, h_i = parse_resolution(resolution)
         w, h = str(w_i), str(h_i)
         from .assembly import _zoom_filter
         from .ffmpeg_utils import _get_ffmpeg
         ffmpeg = _get_ffmpeg()
         vf = _zoom_filter(zoom_dir, zoom_amount, duration, w, h)
-        subprocess.run(
+        run_ffmpeg(
             [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
              "-i", str(src), "-t", str(duration),
              "-vf", vf,

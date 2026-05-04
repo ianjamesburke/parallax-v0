@@ -61,7 +61,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import tempfile
 import time
 from contextlib import contextmanager
@@ -71,6 +70,11 @@ from typing import Any, Iterator
 
 import yaml
 
+from .ffmpeg_utils import (
+    probe_resolution as _probe_resolution,
+    probe_duration as _probe_duration,
+    probe_audio_duration as _probe_audio_duration,
+)
 from .settings import ProductionMode
 
 
@@ -157,50 +161,6 @@ def load_expected(path: Path) -> dict[str, Any]:
             raise ValueError(f"{path}: unknown keys in 'run_log': {sorted(unknown_rl)}")
 
     return data
-
-
-# --------------------------------------------------------------------------
-# Probes
-# --------------------------------------------------------------------------
-
-def _probe_resolution(path: Path) -> tuple[int, int] | None:
-    """Return (width, height) via ffprobe, or None if unprobeable."""
-    try:
-        result = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=width,height", "-of", "csv=p=0", str(path)],
-            capture_output=True, text=True, check=True,
-        )
-        w_str, h_str = result.stdout.strip().split(",")
-        return int(w_str), int(h_str)
-    except (subprocess.CalledProcessError, ValueError, FileNotFoundError):
-        return None
-
-
-def _probe_duration(path: Path) -> float | None:
-    try:
-        result = subprocess.run(
-            ["ffprobe", "-v", "error",
-             "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
-            capture_output=True, text=True, check=True,
-        )
-        return float(result.stdout.strip())
-    except (subprocess.CalledProcessError, ValueError, FileNotFoundError):
-        return None
-
-
-def _probe_audio_duration(path: Path) -> float | None:
-    """Duration of the audio stream specifically (separate from container)."""
-    try:
-        result = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "a:0",
-             "-show_entries", "stream=duration", "-of", "csv=p=0", str(path)],
-            capture_output=True, text=True, check=True,
-        )
-        out = result.stdout.strip()
-        return float(out) if out and out != "N/A" else None
-    except (subprocess.CalledProcessError, ValueError, FileNotFoundError):
-        return None
 
 
 # --------------------------------------------------------------------------

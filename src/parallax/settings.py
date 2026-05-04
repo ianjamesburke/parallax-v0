@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .plan import Plan
 
-from .ffmpeg_utils import parse_resolution
+from .ffmpeg_utils import parse_resolution, probe_resolution
 
 # Aspect ratio is the user-facing knob. When `resolution:` is unset on the
 # plan and there are no clips to probe, the resolution is derived from this
@@ -197,8 +197,6 @@ def _infer_project_resolution(plan: dict, folder: Path, aspect: str = "9:16") ->
     probeable clips exist, falls back to the resolution paired with
     `aspect` in `_ASPECT_TO_RESOLUTION`.
     """
-    import subprocess
-
     best_w, best_h = 0, 0
     for scene in plan.get("scenes", []) or []:
         cp = scene.get("clip_path")
@@ -209,17 +207,10 @@ def _infer_project_resolution(plan: dict, folder: Path, aspect: str = "9:16") ->
             path = (folder / cp).resolve()
         if not path.exists():
             continue
-        try:
-            probe = subprocess.run(
-                ["ffprobe", "-v", "error", "-select_streams", "v:0",
-                 "-show_entries", "stream=width,height",
-                 "-of", "csv=p=0", str(path)],
-                capture_output=True, text=True, check=True,
-            )
-            w_str, h_str = probe.stdout.strip().split(",")
-            w, h = int(w_str), int(h_str)
-        except Exception:
+        dims = probe_resolution(path)
+        if dims is None:
             continue
+        w, h = dims
         if w * h > best_w * best_h:
             best_w, best_h = w, h
     if best_w and best_h:

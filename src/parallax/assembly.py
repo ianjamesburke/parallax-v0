@@ -12,11 +12,10 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import tempfile
 from pathlib import Path
 
-from .ffmpeg_utils import _get_ffmpeg, parse_resolution, run_ffmpeg
+from .ffmpeg_utils import _get_ffmpeg, parse_resolution, pipe_rawvideo_frames, run_ffmpeg
 from .log import get_logger
 from .shim import is_test_mode, output_dir
 
@@ -384,24 +383,13 @@ def _make_kb_clip(
         # cuts off text when a square image is scaled into a portrait frame.
         img = Image.open(image_path).convert("RGB")
         img = img.resize((out_w, out_h), Image.Resampling.LANCZOS)
-        cmd = [
-            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-            "-f", "rawvideo", "-vcodec", "rawvideo",
-            "-s", f"{out_w}x{out_h}", "-pix_fmt", "rgb24", "-r", str(fps),
-            "-i", "pipe:0",
-            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-            "-vframes", str(total_frames),
-            output_path,
-        ]
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-        assert proc.stdin is not None
         frame_bytes = img.tobytes()
-        try:
-            for _ in range(total_frames):
-                proc.stdin.write(frame_bytes)
-        finally:
-            proc.stdin.close()
-            proc.wait()
+        pipe_rawvideo_frames(
+            output_path,
+            width=out_w, height=out_h, fps=fps, total_frames=total_frames,
+            frames=(frame_bytes for _ in range(total_frames)),
+            source_label=image_path,
+        )
         return
 
     # Motion presets: (start_zoom, end_zoom, pan_x, pan_y)
@@ -434,18 +422,7 @@ def _make_kb_clip(
     img = scaled.crop((x0, y0, x0 + src_w, y0 + src_h))
     cx, cy = src_w / 2.0, src_h / 2.0
 
-    cmd = [
-        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-        "-f", "rawvideo", "-vcodec", "rawvideo",
-        "-s", f"{out_w}x{out_h}", "-pix_fmt", "rgb24", "-r", str(fps),
-        "-i", "pipe:0",
-        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-        "-vframes", str(total_frames),
-        output_path,
-    ]
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-    assert proc.stdin is not None
-    try:
+    def _frames():
         for n in range(total_frames):
             t = n / max(total_frames - 1, 1)
             zoom = start_zoom + (end_zoom - start_zoom) * t
@@ -461,13 +438,14 @@ def _make_kb_clip(
                 (left, top, left + crop_w, top + crop_h),
                 Image.Resampling.BICUBIC,
             )
-            proc.stdin.write(frame.tobytes())
-    except Exception as e:
-        proc.kill()
-        raise RuntimeError(f"Ken Burns frame write failed for {image_path}: {e}") from e
-    finally:
-        proc.stdin.close()
-        proc.wait()
+            yield frame.tobytes()
+
+    pipe_rawvideo_frames(
+        output_path,
+        width=out_w, height=out_h, fps=fps, total_frames=total_frames,
+        frames=_frames(),
+        source_label=image_path,
+    )
 
 
 def assemble_clip_video(

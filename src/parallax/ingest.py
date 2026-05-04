@@ -13,7 +13,6 @@ The visual hook (Gemini Vision frame tagging) is stubbed for Phase 1.6 — pass
 from __future__ import annotations
 
 import json
-import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -166,26 +165,18 @@ def _discover_clips(target: Path) -> tuple[list[Path], bool]:
     raise ValueError(f"ingest: target is neither file nor directory: {target}")
 
 
+from .ffmpeg_utils import probe_duration as _ffmpeg_probe_duration
+
+
 def _probe_duration(path: Path) -> float:
     """Return clip duration in seconds via ffprobe; 0.0 on failure (logged)."""
-    try:
-        result = subprocess.run(
-            [
-                "ffprobe", "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                str(path),
-            ],
-            capture_output=True, text=True, check=True,
-        )
-        raw = result.stdout.strip()
-        if not raw:
-            log.warning("ingest: ffprobe returned empty duration for %s", path)
-            return 0.0
-        return float(raw)
-    except (subprocess.CalledProcessError, ValueError) as e:
-        log.warning("ingest: failed to probe duration for %s: %s", path, e)
+    result = _ffmpeg_probe_duration(path)
+    if result is None:
+        log.warning("ingest: failed to probe duration for %s", path)
         return 0.0
+    if result == 0.0:
+        log.warning("ingest: ffprobe returned empty duration for %s", path)
+    return result
 
 
 def _transcribe_all(
