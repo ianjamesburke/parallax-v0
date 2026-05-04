@@ -121,7 +121,9 @@ class ProductionMode(Enum):
     TEST = "test"
 
 
-def _resolve_mode() -> ProductionMode:
+def _resolve_mode(mode_override: "ProductionMode | None" = None) -> ProductionMode:
+    if mode_override is not None:
+        return mode_override
     raw = os.environ.get("PARALLAX_TEST_MODE", "").lower()
     return ProductionMode.TEST if raw in ("1", "true", "yes") else ProductionMode.REAL
 
@@ -233,7 +235,12 @@ def with_run_id(settings: "Settings", run_id: str) -> "Settings":
     return replace(settings, run_id=run_id)
 
 
-def resolve_settings(plan: "Plan | dict[str, Any]", folder: Path, plan_path: Path) -> Settings:
+def resolve_settings(
+    plan: "Plan | dict[str, Any]",
+    folder: Path,
+    plan_path: Path,
+    mode: "ProductionMode | None" = None,
+) -> Settings:
     """Resolve a plan + folder into a frozen `Settings` snapshot.
 
     Accepts either a validated `Plan` Pydantic model or a raw dict (for
@@ -252,11 +259,17 @@ def resolve_settings(plan: "Plan | dict[str, Any]", folder: Path, plan_path: Pat
     concept_prefix = f"{id_match.group(1)}_" if id_match else ""
 
     if isinstance(plan, _Plan):
-        return _resolve_settings_from_plan(plan, folder, plan_path, concept_prefix)
-    return _resolve_settings_from_dict(plan, folder, plan_path, concept_prefix)
+        return _resolve_settings_from_plan(plan, folder, plan_path, concept_prefix, mode=mode)
+    return _resolve_settings_from_dict(plan, folder, plan_path, concept_prefix, mode=mode)
 
 
-def _resolve_settings_from_plan(plan: "Plan", folder: Path, plan_path: Path, concept_prefix: str) -> Settings:
+def _resolve_settings_from_plan(
+    plan: "Plan",
+    folder: Path,
+    plan_path: Path,
+    concept_prefix: str,
+    mode: "ProductionMode | None" = None,
+) -> Settings:
     """Read settings directly from a validated Plan model."""
     from .plan import Plan as _Plan  # keep import local
 
@@ -320,12 +333,18 @@ def _resolve_settings_from_plan(plan: "Plan", folder: Path, plan_path: Path, con
         character_image=character_image,
         avatar_cfg=avatar_cfg,
         stills_only=plan.stills_only,
-        mode=_resolve_mode(),
+        mode=_resolve_mode(mode),
         titles_cfg=titles_cfg,
     )
 
 
-def _resolve_settings_from_dict(plan: dict[str, Any], folder: Path, plan_path: Path, concept_prefix: str) -> Settings:
+def _resolve_settings_from_dict(
+    plan: dict[str, Any],
+    folder: Path,
+    plan_path: Path,
+    concept_prefix: str,
+    mode: "ProductionMode | None" = None,
+) -> Settings:
     """Legacy dict path — used by test_scene and any caller that hasn't migrated to Plan."""
     image_model = plan.get("image_model", "mid")
     video_model = plan.get("video_model", "mid")
@@ -421,6 +440,6 @@ def _resolve_settings_from_dict(plan: dict[str, Any], folder: Path, plan_path: P
         character_image=character_image,
         avatar_cfg=plan.get("avatar"),
         stills_only=bool(plan.get("stills_only", False)),
-        mode=_resolve_mode(),
+        mode=_resolve_mode(mode),
         titles_cfg=plan.get("titles", []) or [],
     )
