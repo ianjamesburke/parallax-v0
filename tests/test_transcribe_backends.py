@@ -1,4 +1,6 @@
-"""Tests for the whisperx-or-faster-whisper backend selection in forced_align and audio."""
+"""Tests for the whisperx-or-faster-whisper backend selection in whisper_backend,
+forced_align, and audio.
+"""
 from __future__ import annotations
 
 import json
@@ -9,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import parallax.whisper_backend as wb_mod
 import parallax.forced_align as fa_mod
 import parallax.audio as audio_mod
 
@@ -37,10 +40,10 @@ def _stub_word_list() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# forced_align — backend selection
+# whisper_backend — backend selection (shared path)
 # ---------------------------------------------------------------------------
 
-class TestForcedAlignBackendSelection:
+class TestWhisperBackendSelection:
     def test_uses_whisperx_when_available(self, tmp_path: Path) -> None:
         wav = _make_wav(tmp_path)
         mock_wx = MagicMock()
@@ -56,9 +59,9 @@ class TestForcedAlignBackendSelection:
             ]
         }
 
-        with patch.object(fa_mod, "_HAS_WHISPERX", True), \
-             patch.object(fa_mod, "_whisperx", mock_wx):
-            words = fa_mod.align_words(wav)
+        with patch.object(wb_mod, "_HAS_WHISPERX", True), \
+             patch.object(wb_mod, "_whisperx", mock_wx):
+            words = wb_mod.transcribe_wav(str(wav))
 
         mock_wx.load_model.assert_called_once()
         assert words == _stub_word_list()
@@ -75,10 +78,9 @@ class TestForcedAlignBackendSelection:
         mock_fw_model.transcribe.return_value = ([mock_segment], mock_info)
         MockWhisperModel = MagicMock(return_value=mock_fw_model)
 
-        with patch.object(fa_mod, "_HAS_WHISPERX", False), \
-             patch("parallax.forced_align.WhisperModel", MockWhisperModel, create=True), \
+        with patch.object(wb_mod, "_HAS_WHISPERX", False), \
              patch("faster_whisper.WhisperModel", MockWhisperModel):
-            words = fa_mod.align_words(wav)
+            words = wb_mod.transcribe_wav(str(wav))
 
         assert words == _stub_word_list()
 
@@ -92,10 +94,10 @@ class TestForcedAlignBackendSelection:
         mock_fw_model.transcribe.return_value = ([mock_segment], mock_info)
         MockWhisperModel = MagicMock(return_value=mock_fw_model)
 
-        with patch.object(fa_mod.log, "warning") as mock_warn, \
-             patch.object(fa_mod, "_HAS_WHISPERX", False), \
+        with patch.object(wb_mod.log, "warning") as mock_warn, \
+             patch.object(wb_mod, "_HAS_WHISPERX", False), \
              patch("faster_whisper.WhisperModel", MockWhisperModel):
-            fa_mod.align_words(wav)
+            wb_mod.transcribe_wav(str(wav))
 
         mock_warn.assert_called_once()
         assert "faster-whisper" in mock_warn.call_args[0][0]
@@ -113,9 +115,9 @@ class TestForcedAlignBackendSelection:
             "word_segments": [{"word": "  test  ", "start": 0.0, "end": 1.0}]
         }
 
-        with patch.object(fa_mod, "_HAS_WHISPERX", True), \
-             patch.object(fa_mod, "_whisperx", mock_wx):
-            words = fa_mod.align_words(wav)
+        with patch.object(wb_mod, "_HAS_WHISPERX", True), \
+             patch.object(wb_mod, "_whisperx", mock_wx):
+            words = wb_mod.transcribe_wav(str(wav))
 
         assert isinstance(words, list)
         assert all(isinstance(w["word"], str) for w in words)
@@ -138,12 +140,76 @@ class TestForcedAlignBackendSelection:
             ]
         }
 
-        with patch.object(fa_mod, "_HAS_WHISPERX", True), \
-             patch.object(fa_mod, "_whisperx", mock_wx):
-            words = fa_mod.align_words(wav)
+        with patch.object(wb_mod, "_HAS_WHISPERX", True), \
+             patch.object(wb_mod, "_whisperx", mock_wx):
+            words = wb_mod.transcribe_wav(str(wav))
 
         assert len(words) == 1
         assert words[0]["word"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# forced_align — delegates to whisper_backend
+# ---------------------------------------------------------------------------
+
+class TestForcedAlignDelegation:
+    def test_align_words_uses_whisperx_via_backend(self, tmp_path: Path) -> None:
+        wav = _make_wav(tmp_path)
+        mock_wx = MagicMock()
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = {"segments": [], "language": "en"}
+        mock_wx.load_model.return_value = mock_model
+        mock_wx.load_audio.return_value = MagicMock()
+        mock_wx.load_align_model.return_value = (MagicMock(), MagicMock())
+        mock_wx.align.return_value = {
+            "word_segments": [
+                {"word": "hello", "start": 0.1, "end": 0.4},
+                {"word": "world", "start": 0.5, "end": 0.9},
+            ]
+        }
+
+        with patch.object(wb_mod, "_HAS_WHISPERX", True), \
+             patch.object(wb_mod, "_whisperx", mock_wx):
+            words = fa_mod.align_words(wav)
+
+        mock_wx.load_model.assert_called_once()
+        assert words == _stub_word_list()
+
+    def test_align_words_falls_back_to_faster_whisper(self, tmp_path: Path) -> None:
+        wav = _make_wav(tmp_path)
+
+        mock_word = SimpleNamespace(word=" hello ", start=0.1, end=0.4)
+        mock_word2 = SimpleNamespace(word=" world ", start=0.5, end=0.9)
+        mock_segment = SimpleNamespace(words=[mock_word, mock_word2])
+        mock_info = SimpleNamespace(language="en")
+
+        mock_fw_model = MagicMock()
+        mock_fw_model.transcribe.return_value = ([mock_segment], mock_info)
+        MockWhisperModel = MagicMock(return_value=mock_fw_model)
+
+        with patch.object(wb_mod, "_HAS_WHISPERX", False), \
+             patch("faster_whisper.WhisperModel", MockWhisperModel):
+            words = fa_mod.align_words(wav)
+
+        assert words == _stub_word_list()
+
+    def test_fallback_logs_warning_via_backend(self, tmp_path: Path) -> None:
+        wav = _make_wav(tmp_path)
+
+        mock_word = SimpleNamespace(word=" hi ", start=0.1, end=0.3)
+        mock_segment = SimpleNamespace(words=[mock_word])
+        mock_info = SimpleNamespace(language="en")
+        mock_fw_model = MagicMock()
+        mock_fw_model.transcribe.return_value = ([mock_segment], mock_info)
+        MockWhisperModel = MagicMock(return_value=mock_fw_model)
+
+        with patch.object(wb_mod.log, "warning") as mock_warn, \
+             patch.object(wb_mod, "_HAS_WHISPERX", False), \
+             patch("faster_whisper.WhisperModel", MockWhisperModel):
+            fa_mod.align_words(wav)
+
+        mock_warn.assert_called_once()
+        assert "faster-whisper" in mock_warn.call_args[0][0]
 
 
 # ---------------------------------------------------------------------------
@@ -165,8 +231,8 @@ class TestTranscribeWordsBackendSelection:
             "word_segments": [{"word": "hello", "start": 0.1, "end": 0.4}]
         }
 
-        with patch.object(audio_mod, "_HAS_WHISPERX", True), \
-             patch.object(audio_mod, "_whisperx", mock_wx):
+        with patch.object(wb_mod, "_HAS_WHISPERX", True), \
+             patch.object(wb_mod, "_whisperx", mock_wx):
             words = audio_mod.transcribe_words(str(wav), str(out))
 
         mock_wx.load_model.assert_called_once()
@@ -187,7 +253,7 @@ class TestTranscribeWordsBackendSelection:
         mock_fw_model.transcribe.return_value = ([mock_segment], mock_info)
         MockWhisperModel = MagicMock(return_value=mock_fw_model)
 
-        with patch.object(audio_mod, "_HAS_WHISPERX", False), \
+        with patch.object(wb_mod, "_HAS_WHISPERX", False), \
              patch("faster_whisper.WhisperModel", MockWhisperModel):
             words = audio_mod.transcribe_words(str(wav), str(out))
 
@@ -212,8 +278,8 @@ class TestTranscribeWordsBackendSelection:
             ]
         }
 
-        with patch.object(audio_mod, "_HAS_WHISPERX", True), \
-             patch.object(audio_mod, "_whisperx", mock_wx):
+        with patch.object(wb_mod, "_HAS_WHISPERX", True), \
+             patch.object(wb_mod, "_whisperx", mock_wx):
             audio_mod.transcribe_words(str(wav), str(out))
 
         data = json.loads(out.read_text())
