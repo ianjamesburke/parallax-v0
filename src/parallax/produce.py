@@ -90,11 +90,15 @@ def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = Non
                                 error=f"plan file not found: {plan_path}")
 
     try:
-        plan: dict[str, Any] = Plan.from_yaml(plan_path).to_dict()
+        typed_plan: Plan = Plan.from_yaml(plan_path)
     except Exception as e:
         return ProductionResult(status="error", run_id=None, output_dir=None,
                                 final_video=None, stills_dir=None, cost_usd=0.0,
                                 error=f"invalid plan {plan_path}:\n{e}")
+
+    # The mutable stage blackboard stays dict-shaped so stages can write
+    # _runtime without touching the frozen Pydantic model.
+    plan: dict[str, Any] = typed_plan.to_dict()
 
     if aspect is not None:
         plan["aspect"] = aspect
@@ -110,8 +114,12 @@ def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = Non
                                 final_video=None, stills_dir=None, cost_usd=0.0,
                                 error="plan has no scenes")
 
+    # Pass the typed Plan to resolve_settings so it reads validated fields
+    # directly. When an aspect CLI override is present, fall back to the dict
+    # path (aspect has been mutated and resolution dropped on the dict above).
+    settings_input: Plan | dict[str, Any] = plan if aspect is not None else typed_plan
     try:
-        settings = resolve_settings(plan, folder, plan_path)
+        settings = resolve_settings(settings_input, folder, plan_path)
     except FileNotFoundError as e:
         return ProductionResult(status="error", run_id=None, output_dir=None,
                                 final_video=None, stills_dir=None, cost_usd=0.0,

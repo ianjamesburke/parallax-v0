@@ -614,3 +614,59 @@ def _make_clip_segment(
          "-an", output_path],
         check=True,
     )
+
+
+# --------------------------------------------------------------------------
+# Object-oriented wrappers (avoid JSON-string roundtrips for internal callers)
+# --------------------------------------------------------------------------
+
+def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> list[dict]:
+    """Align scenes using native Python objects instead of JSON strings.
+
+    scenes: list of {index, vo_text, ...}
+    words_payload: either [{word, start, end}, ...] or {"words": [...], "total_duration_s": float}.
+    Returns the updated scenes list.
+    """
+    payload_str = json.dumps(words_payload)
+    scenes_str = json.dumps(scenes)
+    return json.loads(align_scenes(scenes_str, payload_str))
+
+
+def ken_burns_assemble_obj(
+    scenes: list[dict],
+    audio_path: str | None,
+    output_path: str | None = None,
+    resolution: str = "1080x1920",
+    transitions: list[str | None] | None = None,
+    transition_duration_s: list[float] | None = None,
+) -> str:
+    """Object-level entry point for ken_burns_assemble (avoids JSON string serialization).
+
+    Delegates to ken_burns_assemble with pre-serialized scenes.
+    """
+    return ken_burns_assemble(
+        scenes_json=json.dumps(scenes),
+        audio_path=audio_path,
+        output_path=output_path,
+        resolution=resolution,
+        transitions=transitions,
+        transition_duration_s=transition_duration_s,
+    )
+
+
+def assemble_clip_video_obj(
+    scenes: list[dict],
+    audio_path: str,
+    output_path: str | None = None,
+    resolution: str | None = None,
+) -> str:
+    """Object-level entry point for assemble_clip_video (avoids JSON string serialization).
+
+    Delegates to assemble_clip_video with pre-serialized scenes.
+    """
+    return assemble_clip_video(
+        scenes_json=json.dumps(scenes),
+        audio_path=audio_path,
+        output_path=output_path,
+        resolution=resolution,
+    )

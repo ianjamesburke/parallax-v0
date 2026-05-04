@@ -3,7 +3,7 @@ test:
 
 # Install CLI from current directory (works from any worktree)
 install:
-    uv tool install --python 3.11 --reinstall .
+    uv tool install --reinstall .
 
 # Install PR as isolated CLI: parallax-pr<N> (run from feature worktree)
 pr-install pr:
@@ -38,5 +38,5 @@ bump-and-install:
     uv lock
     git add pyproject.toml uv.lock
     git commit -m "chore: bump version to $new"
-    uv tool install --python 3.11 --reinstall .
+    uv tool install --python python3.11 --reinstall .
     echo "Bumped $current → $new and reinstalled parallax"
