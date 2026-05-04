@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-04 — [FIX] Strip TTS [tag] tokens before word count in align_scenes (PR #60 → alpha)
+`align_scenes` called `len(vo_text.split())` on raw VO text, counting inline tags like `[dramatically]` as transcript words. With a locked `audio_path`, each tagged scene consumed one extra word, causing cumulative overcounting — a 15-scene ad with 14 tags would overcount by 14 words and leave the final scene with zero duration. Fixed with `re.sub(r'\[[\w\s]+\]', '', vo_text)` before the count.
+**Breaks if:** a plan with `[tag]`-prefixed `vo_text` and a locked `audio_path` produces a "Scene N needs M words but only N remain" warning, or any scene shows 0.00s duration.
+
 ## 2026-05-04 — [DECISION] Synced main refactors into alpha directly (no PR)
 Five internal refactors (#40 OpenRouter split, #42 typed Plan models, #44 stage helpers, #45 JSON-string API removal, #46 whisper backend consolidation) were mistakenly merged to `main` instead of going through the alpha PR cycle. Merged into alpha directly via `git merge origin/main`. Conflicts in `stages.py` and `assembly.py` were resolved by keeping alpha's architecture (`PipelineState`/`SceneRuntime` dataclasses, 3-arg stages) since main had drifted to an incompatible calling convention. The `_obj` wrapper variants from #45 were added on top. 401 tests pass; verify suite smoke test passes. Bumped to v0.4.18.
 **Why:** Process error — parallel agent dispatch used `isolation: worktree` but PRs targeted `main` instead of `alpha`. Accepted rather than reverting because all changes are pure refactors with no CLI surface change.
