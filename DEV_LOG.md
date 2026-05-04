@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-04 — [FIX] Plan asset locking is now explicit and non-silent (PR #50 → alpha)
+`_lock_field_in_plan` in `stages.py` no longer swallows exceptions with a bare `except Exception: pass`. YAML write failures now emit a `plan.lock.error` event to the runlog at ERROR level and raise `RuntimeError`, so a failed lock surfaces immediately instead of the run silently proceeding as if the still/clip path was persisted. Path normalization behavior is unchanged (in-folder → relative, outside → absolute). Five new tests in `tests/test_plan_locking.py` cover write failure with runlog event, both path cases, and the no-active-run edge case.
+**Breaks if:** a produce run whose `plan.yaml` write fails does not raise and does not emit a `plan.lock.error` runlog event; or `still_path` / `clip_path` fields are missing from `plan.yaml` after a successful run.
+
 ## 2026-05-04 — [CHANGED] run_plan returns structured ProductionResult (PR #49 → alpha)
 `run_plan` in `produce.py` now returns a `ProductionResult` dataclass (`status`, `run_id`, `output_dir`, `final_video`, `stills_dir`, `cost_usd`, `error`) instead of a raw `int`. CLI layer in `cli/_produce.py` owns printing and exit-code conversion. `verify_suite.run_case` now reads `output_dir`, `cost_usd`, and `run_id` directly from the result — eliminating the brittle `parallax/output/v*/` filesystem scan and `cost.json` parse that previously coupled the test runner to storage layout.
 **Breaks if:** `verify suite` fails to locate `out_dir` for a test case (would surface as "produce succeeded but output_dir is None"); or `parallax produce` no longer prints "✓ <path>" on success.
