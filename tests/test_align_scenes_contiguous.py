@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 
-from parallax.assembly import align_scenes
+from parallax.assembly import align_scenes, align_scenes_obj
 
 
 def _word(w: str, start: float, end: float) -> dict:
@@ -80,3 +80,40 @@ def test_falls_back_to_last_word_end_when_total_missing():
     scenes = [{"index": 0, "vo_text": "Hi there."}]
     out = json.loads(align_scenes(json.dumps(scenes), json.dumps(words)))
     assert out[-1]["end_s"] == 0.9
+
+
+# ─── align_scenes_obj: object-level API ──────────────────────────────────
+
+
+def test_align_scenes_obj_returns_list_of_dicts():
+    """align_scenes_obj returns a Python list, not a JSON string."""
+    scenes = [{"index": 0, "vo_text": "Hello world."}]
+    words = [_word("Hello", 0.0, 0.5), _word("world", 0.6, 1.0)]
+    payload = {"words": words, "total_duration_s": 1.5}
+    result = align_scenes_obj(scenes, payload)
+    assert isinstance(result, list)
+    assert isinstance(result[0], dict)
+    assert result[0]["start_s"] == 0.0
+    assert result[-1]["end_s"] == 1.5
+
+
+def test_align_scenes_obj_same_result_as_json_wrapper():
+    """Object API and JSON-string API produce identical data."""
+    scenes_data = [
+        {"index": 0, "vo_text": "First scene."},
+        {"index": 1, "vo_text": "Second scene."},
+    ]
+    words = [
+        _word("First", 0.1, 0.4), _word("scene", 0.5, 0.8),
+        _word("Second", 1.0, 1.3), _word("scene", 1.4, 1.7),
+    ]
+    payload = {"words": words, "total_duration_s": 2.0}
+
+    obj_result = align_scenes_obj(
+        [dict(s) for s in scenes_data],
+        dict(payload, words=list(words)),
+    )
+    json_result = json.loads(
+        align_scenes(json.dumps(scenes_data), json.dumps(payload))
+    )
+    assert obj_result == json_result
