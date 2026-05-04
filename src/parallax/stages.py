@@ -120,7 +120,6 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
     rt = _runtime(plan)
     scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
     _log(settings, f"generating {len(scenes_raw)} stills — image_model={settings.image_model} aspect={settings.aspect}")
-    _warn_unknown_scene_fields(scenes_raw)
     Path(rt["stills_dir"]).mkdir(exist_ok=True)
 
     scenes: list[dict[str, Any]] = []
@@ -838,30 +837,6 @@ def stage_finalize(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
 # Helpers used by stage_stills + stage_align (lifted from produce.py)
 # --------------------------------------------------------------------------
 
-_KNOWN_SCENE_FIELDS = {
-    "index", "shot_type", "vo_text", "prompt",
-    "still_path", "reference", "reference_images",
-    "animate", "motion_prompt", "clip_path", "animate_resolution",
-    "end_frame_path",
-    # Per-scene model overrides (image_model / video_model / voice_model
-    # win over plan-level defaults).
-    "image_model", "video_model", "voice_model",
-    # Per-scene speed override — applied uniformly across the run. See
-    # stage_speed_adjust for how mixed values are rejected.
-    "voice_speed",
-    # video_references: character/style reference images passed to OpenRouter as
-    # input_references for text-to-video consistency. Only effective when there is
-    # no still_path driving frame_images (i.e. pure text-to-video scenes). Distinct
-    # from reference_images, which is the image-gen still-frame reference field.
-    "video_references",
-    "zoom_direction", "zoom_amount",
-    # Per-scene aspect override — defaults to plan.aspect when absent.
-    "aspect",
-    # Timing overrides — null/absent = derive from VO. Future graphical editor writes here.
-    "duration_s", "start_offset_s", "fade_in_s", "fade_out_s",
-}
-
-
 # Human-readable orientation descriptor by aspect — feeds the stern retry
 # prefix when an image model returns the wrong aspect on the first try.
 _ASPECT_STERN_DESCRIPTOR: dict[str, str] = {
@@ -886,17 +861,6 @@ def _build_stern_prefix(aspect: str) -> str:
         f"returned the wrong aspect and was REJECTED. Frame the subject for "
         f"{aspect}. "
     )
-
-
-def _warn_unknown_scene_fields(scenes_raw: list[dict[str, Any]]) -> None:
-    for s in scenes_raw:
-        unknown = set(s.keys()) - _KNOWN_SCENE_FIELDS
-        if unknown:
-            print(
-                f"  [WARNING] scene {s.get('index', '?')}: unrecognized fields "
-                f"(will be silently ignored): {', '.join(sorted(unknown))}",
-                flush=True,
-            )
 
 
 def _apply_timing_overrides(aligned: list[dict[str, Any]], scenes_raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
