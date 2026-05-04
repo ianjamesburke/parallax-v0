@@ -220,3 +220,16 @@ def test_cost_guardrail_zero_passes_in_test_mode(tmp_path):
     result = run_case(suite / "basic", mode=ProductionMode.TEST)
     assert result.passed is True, result.failures
     assert result.cost_usd == 0.0
+
+
+# --------------------------------------------------------------------------
+# Mode injection — no env mutation
+# --------------------------------------------------------------------------
+
+def test_run_case_test_mode_without_env_var(monkeypatch):
+    """run_case drives test mode via run_plan(mode=) — not via os.environ."""
+    monkeypatch.delenv("PARALLAX_TEST_MODE", raising=False)
+    result = run_case(SMOKE_BASIC, mode=ProductionMode.TEST)
+    assert result.passed is True, f"unexpected failures: {result.failures}"
+    # If mode was injected correctly, env was never set — still absent.
+    assert os.environ.get("PARALLAX_TEST_MODE") is None

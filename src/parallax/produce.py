@@ -53,7 +53,7 @@ from .context import current_session_id
 from .ffmpeg_utils import parse_resolution, probe_duration, run_ffmpeg
 from .log import get_logger
 from .plan import Plan
-from .settings import ProductionMode, _infer_project_resolution, resolve_settings
+from .settings import ProductionMode, _infer_project_resolution, resolve_settings, with_run_id
 from .stages import STAGES, PipelineState, _wrap_stage, stage_scan, stage_stills
 
 log = get_logger("produce")
@@ -70,7 +70,12 @@ class ProductionResult:
     error: str | None
 
 
-def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = None) -> ProductionResult:
+def run_plan(
+    folder: str | Path,
+    plan_path: str | Path,
+    aspect: str | None = None,
+    mode: "ProductionMode | None" = None,
+) -> ProductionResult:
     """Run the full plan-driven production pipeline.
 
     `aspect`, when provided, overrides `plan.aspect` before settings are
@@ -118,93 +123,98 @@ def run_plan(folder: str | Path, plan_path: str | Path, aspect: str | None = Non
     # path (aspect has been mutated and resolution dropped on the dict above).
     settings_input: Plan | dict[str, Any] = plan if aspect is not None else typed_plan
     try:
-        settings = resolve_settings(settings_input, folder, plan_path)
+        settings = resolve_settings(settings_input, folder, plan_path, mode=mode)
     except FileNotFoundError as e:
         return ProductionResult(status="error", run_id=None, output_dir=None,
                                 final_video=None, stills_dir=None, cost_usd=0.0,
                                 error=str(e))
     settings.events("log", {"msg": f"project resolution: {settings.resolution}"})
 
-    # Pre-flight: in real-mode, check OpenRouter credits before any work runs.
-    # 402 mid-pipeline is brutal (partial spend on stills, then dies on i2v);
-    # checking once at the top fails loud, fails early.
-    if settings.mode == ProductionMode.REAL:
-        try:
-            from . import openrouter
-            balance = openrouter.check_credits(min_balance_usd=0.50)
-            settings.events("log", {
-                "msg": f"openrouter credits: ${balance.remaining:.2f} remaining "
-                       f"(${balance.total:.2f} total, ${balance.used:.2f} used)"
-            })
-        except openrouter.InsufficientCreditsError as e:
-            return ProductionResult(status="error", run_id=None, output_dir=None,
-                                    final_video=None, stills_dir=None, cost_usd=0.0,
-                                    error=str(e))
-        except Exception as e:
-            settings.events("log", {
-                "msg": f"WARNING: credits pre-flight check failed ({type(e).__name__}: {e}); "
-                       f"continuing — first OpenRouter call will surface the real error"
-            })
+    from .shim import _test_mode_override as _tmo
+    _tmo_token = _tmo.set(settings.mode == ProductionMode.TEST)
 
-    import uuid as _uuid
-    current_session_id.set(f"produce-{_uuid.uuid4().hex[:8]}")
-    run_id = runlog.start_run()
-    settings.usage.bind(run_id)
-    # Settings is frozen — swap the whole struct so stages see the run_id.
-    from .settings import with_run_id
-    settings = with_run_id(settings, run_id)
-    runlog.record_run_meta(plan_path=str(settings.plan_path), scene_count=len(scenes_raw))
-    runlog.event(
-        "plan.loaded",
-        folder=str(settings.folder), plan_path=str(settings.plan_path),
-        scene_count=len(scenes_raw),
-        image_model=settings.image_model, video_model=settings.video_model,
-        voice=settings.voice, voice_model=settings.voice_model,
-        resolution=settings.resolution,
-        test_mode=settings.mode == ProductionMode.TEST,
-    )
-    settings.events("log", {"msg": f"run_id: {run_id}  →  parallax log {run_id}"})
+    try:
+        # Pre-flight: in real-mode, check OpenRouter credits before any work runs.
+        # 402 mid-pipeline is brutal (partial spend on stills, then dies on i2v);
+        # checking once at the top fails loud, fails early.
+        if settings.mode == ProductionMode.REAL:
+            try:
+                from . import openrouter
+                balance = openrouter.check_credits(min_balance_usd=0.50)
+                settings.events("log", {
+                    "msg": f"openrouter credits: ${balance.remaining:.2f} remaining "
+                           f"(${balance.total:.2f} total, ${balance.used:.2f} used)"
+                })
+            except openrouter.InsufficientCreditsError as e:
+                return ProductionResult(status="error", run_id=None, output_dir=None,
+                                        final_video=None, stills_dir=None, cost_usd=0.0,
+                                        error=str(e))
+            except Exception as e:
+                settings.events("log", {
+                    "msg": f"WARNING: credits pre-flight check failed ({type(e).__name__}: {e}); "
+                           f"continuing — first OpenRouter call will surface the real error"
+                })
 
-    # `stills_only` short-circuits after stage_stills with its own end-of-run
-    # path — no audio/video stages, no convention rename, no full mp4.
-    if settings.stills_only:
+        import uuid as _uuid
+        current_session_id.set(f"produce-{_uuid.uuid4().hex[:8]}")
+        run_id = runlog.start_run()
+        settings.usage.bind(run_id)
+        # Settings is frozen — swap the whole struct so stages see the run_id.
+        settings = with_run_id(settings, run_id)
+        runlog.record_run_meta(plan_path=str(settings.plan_path), scene_count=len(scenes_raw))
+        runlog.event(
+            "plan.loaded",
+            folder=str(settings.folder), plan_path=str(settings.plan_path),
+            scene_count=len(scenes_raw),
+            image_model=settings.image_model, video_model=settings.video_model,
+            voice=settings.voice, voice_model=settings.voice_model,
+            resolution=settings.resolution,
+            test_mode=settings.mode == ProductionMode.TEST,
+        )
+        settings.events("log", {"msg": f"run_id: {run_id}  →  parallax log {run_id}"})
+
+        # `stills_only` short-circuits after stage_stills with its own end-of-run
+        # path — no audio/video stages, no convention rename, no full mp4.
+        if settings.stills_only:
+            state = PipelineState()
+            plan = _wrap_stage(stage_scan)(plan, settings, state)
+            plan = _wrap_stage(stage_stills)(plan, settings, state)
+            settings.events("log", {"msg": "stills_only — skipping audio, video, and assembly stages"})
+            run_cost = settings.usage.total_cost_usd
+            cost_data = {
+                "run_id": run_id,
+                "session_id": current_session_id.get(),
+                "cost_usd": run_cost,
+                "version": state.version,
+            }
+            (Path(state.out_dir) / "cost.json").write_text(json.dumps(cost_data, indent=2) + "\n")
+            runlog.end_run(status="ok", final_video=state.stills_dir)
+            return ProductionResult(
+                status="ok",
+                run_id=run_id,
+                output_dir=Path(state.out_dir),
+                final_video=None,
+                stills_dir=Path(state.stills_dir),
+                cost_usd=run_cost,
+                error=None,
+            )
+
         state = PipelineState()
-        plan = _wrap_stage(stage_scan)(plan, settings, state)
-        plan = _wrap_stage(stage_stills)(plan, settings, state)
-        settings.events("log", {"msg": "stills_only — skipping audio, video, and assembly stages"})
-        run_cost = settings.usage.total_cost_usd
-        cost_data = {
-            "run_id": run_id,
-            "session_id": current_session_id.get(),
-            "cost_usd": run_cost,
-            "version": state.version,
-        }
-        (Path(state.out_dir) / "cost.json").write_text(json.dumps(cost_data, indent=2) + "\n")
-        runlog.end_run(status="ok", final_video=state.stills_dir)
+        for stage in STAGES:
+            plan = stage(plan, settings, state)
+
+        runlog.end_run(status="ok", final_video=str(state.current_video))
         return ProductionResult(
             status="ok",
             run_id=run_id,
             output_dir=Path(state.out_dir),
-            final_video=None,
-            stills_dir=Path(state.stills_dir),
-            cost_usd=run_cost,
+            final_video=Path(state.current_video) if state.current_video else None,
+            stills_dir=None,
+            cost_usd=settings.usage.total_cost_usd,
             error=None,
         )
-
-    state = PipelineState()
-    for stage in STAGES:
-        plan = stage(plan, settings, state)
-
-    runlog.end_run(status="ok", final_video=str(state.current_video))
-    return ProductionResult(
-        status="ok",
-        run_id=run_id,
-        output_dir=Path(state.out_dir),
-        final_video=Path(state.current_video) if state.current_video else None,
-        stills_dir=None,
-        cost_usd=settings.usage.total_cost_usd,
-        error=None,
-    )
+    finally:
+        _tmo.reset(_tmo_token)
 
 
 def test_scene(folder: str | Path, plan_path: str | Path, scene_index: int, aspect: str | None = None) -> int:

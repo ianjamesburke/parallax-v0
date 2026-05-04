@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import os
 import subprocess
@@ -10,8 +11,15 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
+_test_mode_override: contextvars.ContextVar[bool | None] = contextvars.ContextVar(
+    "_test_mode_override", default=None
+)
+
 
 def is_test_mode() -> bool:
+    override = _test_mode_override.get()
+    if override is not None:
+        return override
     return os.environ.get("PARALLAX_TEST_MODE", "").lower() in ("1", "true", "yes")
 
 

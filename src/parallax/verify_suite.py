@@ -59,7 +59,6 @@ operator sees every failure in one pass.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import tempfile
 import time
@@ -282,48 +281,33 @@ def run_case(case_dir: Path, paid: bool = False,
     name = expected.get("name", case_name)
     failures: list[str] = []
 
-    # Mode is plumbed via PARALLAX_TEST_MODE because Settings reads env at
-    # resolve_settings() time. We restore the original value after the run.
-    prev_test_mode = os.environ.get("PARALLAX_TEST_MODE")
-    if mode == ProductionMode.TEST:
-        os.environ["PARALLAX_TEST_MODE"] = "1"
-    elif "PARALLAX_TEST_MODE" in os.environ:
-        del os.environ["PARALLAX_TEST_MODE"]
-
     t0 = time.monotonic()
     cost_usd = 0.0
     out_dir: Path | None = None
     run_id: str | None = None
-    try:
-        with _isolated_case(case_dir) as (case_copy, plan_copy):
-            from .produce import run_plan
+    with _isolated_case(case_dir) as (case_copy, plan_copy):
+        from .produce import run_plan
 
-            prod = None
-            try:
-                prod = run_plan(folder=case_copy, plan_path=plan_copy)
-            except Exception as e:  # noqa: BLE001 — collect the failure, don't re-raise
-                failures.append(f"produce raised {type(e).__name__}: {e}")
+        prod = None
+        try:
+            prod = run_plan(folder=case_copy, plan_path=plan_copy, mode=mode)
+        except Exception as e:  # noqa: BLE001 — collect the failure, don't re-raise
+            failures.append(f"produce raised {type(e).__name__}: {e}")
 
-            if prod is not None:
-                out_dir = prod.output_dir
-                cost_usd = prod.cost_usd
-                run_id = prod.run_id
+        if prod is not None:
+            out_dir = prod.output_dir
+            cost_usd = prod.cost_usd
+            run_id = prod.run_id
 
-                if prod.status != "ok" and not failures:
-                    failures.append(prod.error or "produce returned error status")
+            if prod.status != "ok" and not failures:
+                failures.append(prod.error or "produce returned error status")
 
-                run_log_text = _read_run_log(run_id, out_dir) if run_id else ""
+            run_log_text = _read_run_log(run_id, out_dir) if run_id else ""
 
-                if out_dir is not None:
-                    _assert_all(expected, out_dir, run_log_text, cost_usd, failures)
-                elif prod.status == "ok":
-                    failures.append("produce succeeded but output_dir is None")
-
-    finally:
-        if prev_test_mode is None:
-            os.environ.pop("PARALLAX_TEST_MODE", None)
-        else:
-            os.environ["PARALLAX_TEST_MODE"] = prev_test_mode
+            if out_dir is not None:
+                _assert_all(expected, out_dir, run_log_text, cost_usd, failures)
+            elif prod.status == "ok":
+                failures.append("produce succeeded but output_dir is None")
 
     duration_s = time.monotonic() - t0
     return CaseResult(
