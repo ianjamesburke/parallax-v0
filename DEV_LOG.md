@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-04 — [CHANGED] run_plan returns structured ProductionResult (PR #49 → alpha)
+`run_plan` in `produce.py` now returns a `ProductionResult` dataclass (`status`, `run_id`, `output_dir`, `final_video`, `stills_dir`, `cost_usd`, `error`) instead of a raw `int`. CLI layer in `cli/_produce.py` owns printing and exit-code conversion. `verify_suite.run_case` now reads `output_dir`, `cost_usd`, and `run_id` directly from the result — eliminating the brittle `parallax/output/v*/` filesystem scan and `cost.json` parse that previously coupled the test runner to storage layout.
+**Breaks if:** `verify suite` fails to locate `out_dir` for a test case (would surface as "produce succeeded but output_dir is None"); or `parallax produce` no longer prints "✓ <path>" on success.
+
 ## 2026-05-03 — [CHANGED] Typed PipelineState for produce stages (PR #48 → alpha)
 Replace the untyped `plan["_runtime"]` blackboard with `PipelineState` and `SceneRuntime` dataclasses. Stage signatures change from `(plan, settings)` to `(plan, settings, state: PipelineState)`; `produce.run_plan` initialises state and threads it through the loop. Also fixes a latent bug: `video_references` on plan scenes was never copied into the runtime scene dict, so it was silently dropped by `stage_animate`. The `_scene_to_dict` helper filters `None` fields when serialising `SceneRuntime` to JSON so downstream consumers (align_scenes, ken_burns_assemble) see the same sparse dicts they always received.
 **Breaks if:** `plan["_runtime"]` appears anywhere outside tests after a produce run; a `video_references` field on a plan scene is ignored by `stage_animate`; or `stage_scan` / `stage_stills` / any other stage raises `AttributeError` on a valid state field.
