@@ -1,0 +1,162 @@
+"""Tests for parallax validate — brief and plan dry-run validation."""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+
+def _write_yaml(path: Path, data: dict) -> None:
+    path.write_text(yaml.dump(data))
+
+
+# ──────────────────────── Brief validation ────────────────────────
+
+
+def test_validate_brief_valid(tmp_path):
+    brief = tmp_path / "brief.yaml"
+    _write_yaml(brief, {
+        "goal": "Test",
+        "script": {"scenes": [{"index": 0, "vo_text": "hi", "prompt": "a scene"}]},
+    })
+    from parallax.validate import validate_brief
+    result = validate_brief(brief, tmp_path)
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_validate_brief_missing_provided_asset(tmp_path):
+    brief = tmp_path / "brief.yaml"
+    _write_yaml(brief, {
+        "goal": "Test",
+        "assets": {"provided": [{"path": "missing.png", "kind": "style_ref"}]},
+        "script": {"scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene"}]},
+    })
+    from parallax.validate import validate_brief
+    result = validate_brief(brief, tmp_path)
+    assert result["valid"] is False
+    assert any("missing.png" in e["message"] for e in result["errors"])
+
+
+def test_validate_brief_product_ref_warns(tmp_path):
+    logo = tmp_path / "logo.png"
+    logo.write_bytes(b"fake")
+    brief = tmp_path / "brief.yaml"
+    _write_yaml(brief, {
+        "goal": "Test",
+        "assets": {"provided": [{"path": "logo.png", "kind": "product_ref"}]},
+        "script": {"scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene"}]},
+    })
+    from parallax.validate import validate_brief
+    result = validate_brief(brief, tmp_path)
+    assert result["valid"] is True
+    assert any("#83" in w["message"] for w in result["warnings"])
+
+
+def test_validate_brief_bad_schema(tmp_path):
+    brief = tmp_path / "brief.yaml"
+    _write_yaml(brief, {"goal": "Test", "aspect": "bad", "script": {"scenes": []}})
+    from parallax.validate import validate_brief
+    result = validate_brief(brief, tmp_path)
+    assert result["valid"] is False
+    assert any("schema error" in e["message"] for e in result["errors"])
+
+
+def test_validate_brief_missing_image_ref(tmp_path):
+    brief = tmp_path / "brief.yaml"
+    _write_yaml(brief, {
+        "goal": "Test",
+        "script": {"scenes": [
+            {"index": 0, "vo_text": "hi", "prompt": "scene", "image_ref": "ref.png"},
+        ]},
+    })
+    from parallax.validate import validate_brief
+    result = validate_brief(brief, tmp_path)
+    assert result["valid"] is False
+    assert any("image_ref" in e["field"] for e in result["errors"])
+
+
+def test_validate_brief_file_not_found(tmp_path):
+    from parallax.validate import validate_brief
+    result = validate_brief(tmp_path / "no.yaml", tmp_path)
+    assert result["valid"] is False
+    assert any("brief" in e["field"] for e in result["errors"])
+
+
+# ──────────────────────── Plan validation ────────────────────────
+
+
+def test_validate_plan_valid(tmp_path):
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene"}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_validate_plan_missing_still_path(tmp_path):
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene", "still_path": "no.png"}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is False
+    assert any("still_path" in e["field"] for e in result["errors"])
+
+
+def test_validate_plan_locked_audio_exists(tmp_path):
+    audio = tmp_path / "vo.mp3"
+    audio.write_bytes(b"fake")
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "audio_path": "vo.mp3",
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene"}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is True
+
+
+def test_validate_plan_locked_audio_missing(tmp_path):
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "audio_path": "missing_vo.mp3",
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene"}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is False
+    assert any("audio_path" in e["field"] for e in result["errors"])
+
+
+def test_validate_plan_bad_schema(tmp_path):
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {"aspect": "bad", "scenes": []})
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is False
+    assert any("schema error" in e["message"] for e in result["errors"])
+
+
+def test_validate_plan_file_not_found(tmp_path):
+    from parallax.validate import validate_plan
+    result = validate_plan(tmp_path / "no.yaml", tmp_path)
+    assert result["valid"] is False
+    assert any("plan" in e["field"] for e in result["errors"])
+
+
+def test_validate_plan_reference_images_missing(tmp_path):
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene",
+                    "reference_images": ["ref1.png", "ref2.png"]}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is False
+    assert len([e for e in result["errors"] if "reference_images" in e["field"]]) == 2

@@ -6,7 +6,7 @@ import sys
 
 from .. import __version__
 from ..log import configure as configure_logging
-from . import _audio, _image, _log, _meta, _models, _produce, _schema, _video
+from . import _audio, _image, _log, _meta, _models, _produce, _schema, _validate, _video
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,6 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     _log.register_parser(sub)
     _meta.register_parser(sub)
     _schema.register_parser(sub)
+    _validate.register_parser(sub)
 
     _enable_help_on_empty(parser)
 
@@ -63,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         "completions": _meta.run,
         "verify": _meta.run,
         "schema": _schema.run,
+        "validate": _validate.run,
     }
     handler = _dispatch.get(args.command)
     if handler:
