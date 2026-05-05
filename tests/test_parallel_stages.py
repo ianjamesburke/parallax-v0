@@ -83,11 +83,14 @@ def _make_settings(tmp_path: Path, log_lines: list[str] | None = None) -> Settin
 def _make_state(tmp_path: Path) -> PipelineState:
     out = tmp_path / "output"
     out.mkdir(exist_ok=True)
+    assets = tmp_path / "assets"
+    assets.mkdir(exist_ok=True)
     (out / "stills").mkdir(exist_ok=True)
     (out / "video").mkdir(exist_ok=True)
     (out / "audio").mkdir(exist_ok=True)
     return PipelineState(
         out_dir=str(out),
+        assets_dir=str(assets),
         stills_dir=str(out / "stills"),
         video_dir=str(out / "video"),
         audio_dir=str(out / "audio"),
