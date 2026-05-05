@@ -57,6 +57,8 @@ class SceneRuntime:
     animate_resolution: str | None = None
     end_frame_path: str | None = None
     clip_path: str | None = None
+    clip_trim_start_s: float | str | None = None  # str to carry "auto" until assembly resolves it
+    clip_trim_end_s: float | None = None
     zoom_direction: str | None = None
     zoom_amount: float | None = None
     video_references: list[str] | None = None
@@ -369,6 +371,10 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
         if s.get("clip_path"):
             cp = Path(s["clip_path"])
             scene_rt.clip_path = str(cp if cp.is_absolute() else settings.folder / cp)
+        if s.get("clip_trim_start_s") is not None:
+            scene_rt.clip_trim_start_s = s["clip_trim_start_s"]  # may be "auto" or float
+        if s.get("clip_trim_end_s") is not None:
+            scene_rt.clip_trim_end_s = float(s["clip_trim_end_s"])
         if s.get("zoom_direction"):
             scene_rt.zoom_direction = s["zoom_direction"]
         if s.get("zoom_amount") is not None:
@@ -1017,6 +1023,8 @@ _KNOWN_SCENE_FIELDS = {
     "transition", "transition_duration_s",
     # Timing overrides — null/absent = derive from VO. Future graphical editor writes here.
     "duration_s", "start_offset_s", "fade_in_s", "fade_out_s",
+    # Clip trim — seek into and/or limit the source clip window.
+    "clip_trim_start_s", "clip_trim_end_s",
 }
 
 

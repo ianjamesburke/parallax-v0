@@ -154,6 +154,36 @@ def _xfade_filter_complex(
     return ";".join(parts)
 
 
+def _resolve_auto_trim(scenes: list[dict]) -> list[dict]:
+    """Resolve clip_trim_start_s="auto" to a concrete float.
+
+    For each scene with "auto", the trim start = previous scene's
+    clip_trim_start_s + previous scene's duration_s. Both scenes must
+    share the same clip_path; raises RuntimeError otherwise.
+    """
+    result: list[dict] = []
+    for i, scene in enumerate(scenes):
+        scene = dict(scene)
+        if scene.get("clip_trim_start_s") == "auto":
+            if i == 0:
+                raise RuntimeError(
+                    f"Scene {scene.get('index', i)}: clip_trim_start_s='auto' "
+                    "cannot be used on the first scene"
+                )
+            prev = result[i - 1]
+            if prev.get("clip_path") != scene.get("clip_path"):
+                raise RuntimeError(
+                    f"Scene {scene.get('index', i)}: clip_trim_start_s='auto' "
+                    f"requires same clip_path as previous scene "
+                    f"(prev={prev.get('clip_path')!r}, this={scene.get('clip_path')!r})"
+                )
+            prev_start = float(prev.get("clip_trim_start_s") or 0.0)
+            prev_dur = float(prev.get("duration_s") or 0.0)
+            scene["clip_trim_start_s"] = round(prev_start + prev_dur, 6)
+        result.append(scene)
+    return result
+
+
 def ken_burns_assemble(
     scenes_json: str,
     audio_path: str | None,
@@ -174,6 +204,7 @@ def ken_burns_assemble(
     scenes: list[dict] = json.loads(scenes_json)
     if not scenes:
         raise ValueError("No scenes provided")
+    scenes = _resolve_auto_trim(scenes)
 
     out = Path(output_path or str(output_dir() / "ken_burns_draft.mp4"))
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -193,6 +224,17 @@ def ken_burns_assemble(
 
             pre_animated = scene.get("clip_path")
             if pre_animated and Path(pre_animated).exists():
+                trim_start = float(scene.get("clip_trim_start_s") or 0.0)
+                trim_end = scene.get("clip_trim_end_s")
+                if trim_start > 0.0 or trim_end is not None:
+                    trimmed_path = str(Path(tmp_dir) / f"trimmed_{i:04d}.mp4")
+                    trim_cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                                "-ss", str(trim_start), "-i", pre_animated]
+                    if trim_end is not None:
+                        trim_cmd += ["-t", str(float(trim_end) - trim_start)]
+                    trim_cmd += ["-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p", "-an", trimmed_path]
+                    run_ffmpeg(trim_cmd, check=True)
+                    pre_animated = trimmed_path
                 vf = _zoom_filter(zoom_dir, zoom_amount, dur, w, h)
                 probe = run_ffmpeg(
                     ["ffprobe", "-v", "error", "-show_entries", "format=duration",
