@@ -213,6 +213,9 @@ def plan_from_brief(
     character_image = _first_character_ref(brief, folder)
     if character_image is not None:
         plan["character_image"] = character_image
+        for scene in plan["scenes"]:
+            if scene.get("shot_type") == "character" and "still_path" not in scene:
+                scene["reference"] = True
 
     plan = _ordered_plan(plan)
 
