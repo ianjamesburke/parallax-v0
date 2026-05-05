@@ -150,6 +150,7 @@ class Brief(BaseModel):
     # Lower is cheaper. Seedance 2.0 Fast: 480p=$0.054/s, 720p=$0.121/s, 1080p=$0.272/s.
     # Defaults are aspect-aware (9:16→480x854, 16:9→854x480, 1:1→480x480).
     animate_resolution: str | None = None  # None = use aspect-derived default
+    pronunciations: dict[str, str] = Field(default_factory=dict)
     success_criteria: list[str] = Field(default_factory=list)
     assets: Assets = Field(default_factory=Assets)
     script: Script
@@ -206,6 +207,7 @@ class Brief(BaseModel):
             "aspect": self.aspect,
             "voice": self.voice,
             "voice_speed": self.voice_speed,
+            **({"pronunciations": self.pronunciations} if self.pronunciations else {}),
             "scenes": [
                 {
                     "index": s.index,
