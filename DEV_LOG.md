@@ -2,10 +2,13 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-05 — [CHANGED] Add parallax validate subcommand (PR #90 → alpha)
+`parallax validate --brief <path> --folder <dir>` (and `--plan`) runs schema parse, provided-asset existence, `image_refs` resolution, and locked-path checks without generating any assets or spending any credits. Exits 0 if valid, 1 if any errors. JSON emitted to stdout with `valid`, `errors`, and `warnings` keys. `product_ref` assets emit a warning (no wiring yet — see #83). 13 new unit tests.
+**Breaks if:** `parallax validate --brief <valid-brief.yaml> --folder <folder>` exits non-zero or does not print JSON with a `valid` key; or a brief with a missing `provided` asset path exits 0 instead of 1.
+
 ## 2026-05-05 — [CHANGED] parallax schema brief/plan now emits JSON Schema by default (PR #91 → alpha)
 `parallax schema brief` and `parallax schema plan` now print raw JSON Schema (Pydantic v2 `model_json_schema()`) to stdout by default, making the output directly usable by validators and LLMs. Added `--output FILE` flag to write to a file instead of stdout. Removed `--json` flag (JSON is now the default for targeted commands). Bare `parallax schema` (no target) retains the human-readable field overview.
 **Breaks if:** `parallax schema brief` prints human-readable text instead of JSON; `parallax schema brief --output /tmp/f.json` fails to create the file or writes to stdout; bare `parallax schema` outputs JSON instead of the human-readable field reference.
-
 ## 2026-05-05 — [CHANGED] image_refs list + additive character_image merge (PR #92 → alpha)
 `BriefScene.image_ref: str | None` replaced by `image_refs: list[str] = []` so a scene can express multiple reference images in the brief. Deprecated `image_ref` (singular) is migrated via a `model_validator` with a DeprecationWarning. `to_plan_skeleton()` writes the full list as `reference_images` in the plan scene. In `stages.py`, the if/elif ref-resolving block refactored into `_resolve_still_refs()`: scene `reference_images` and `character_image` (when `reference: true` or `stills_only`) now merge additively instead of competing — setting `reference_images` on a scene no longer silently drops the character image.
 **Breaks if:** A brief scene with `image_refs: [a.png, b.png]` and `reference: true` produces a still that was only given one reference image, or a scene with `image_ref: x.png` (deprecated) raises a ValidationError instead of migrating.
