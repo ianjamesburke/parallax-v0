@@ -193,3 +193,45 @@ def test_plan_preserves_motion_prompt_and_animate(tmp_path):
     assert scene_one["index"] == 1
     assert scene_one["animate"] is True
     assert scene_one["motion_prompt"] == "Slow zoom in"
+
+
+def test_character_scenes_get_reference_true_when_character_image_set(tmp_path):
+    brief_path = _write_brief(tmp_path, _payload())
+    _materialize_assets(tmp_path)
+
+    result = plan_from_brief(brief_path, folder=tmp_path)
+    plan = yaml.safe_load(result.plan_path.read_text())
+
+    character_scene = plan["scenes"][0]
+    assert character_scene["shot_type"] == "character"
+    assert character_scene.get("reference") is True
+
+
+def test_broll_scenes_do_not_get_reference(tmp_path):
+    brief_path = _write_brief(tmp_path, _payload())
+    _materialize_assets(tmp_path)
+
+    result = plan_from_brief(brief_path, folder=tmp_path)
+    plan = yaml.safe_load(result.plan_path.read_text())
+
+    broll_scene = plan["scenes"][1]
+    assert broll_scene["shot_type"] == "broll"
+    assert "reference" not in broll_scene
+
+
+def test_character_scenes_no_reference_when_no_character_ref(tmp_path):
+    payload = _payload()
+    payload["assets"]["provided"] = [
+        {"path": "brand/logo.png", "kind": "product_ref", "description": "Lion can"},
+    ]
+    brief_path = _write_brief(tmp_path, payload)
+    (tmp_path / "brand").mkdir()
+    (tmp_path / "brand" / "logo.png").write_bytes(b"\x89PNG")
+
+    result = plan_from_brief(brief_path, folder=tmp_path)
+    plan = yaml.safe_load(result.plan_path.read_text())
+
+    character_scene = plan["scenes"][0]
+    assert character_scene["shot_type"] == "character"
+    assert "reference" not in character_scene
+
