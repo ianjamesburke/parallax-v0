@@ -29,7 +29,8 @@ from .captions import burn_captions
 from .headline import burn_headline, burn_titles
 from .manifest import write_manifest
 from .project import scan_project_folder
-from .settings import Settings
+from .settings import ProductionMode, Settings
+from .shim import is_mock_asset
 from .voiceover import generate_voiceover
 
 
@@ -218,11 +219,16 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
                 f"ratio. Choices: {sorted(VALID_ASPECTS)}"
             )
 
-        if "still_path" in s:
-            p = Path(s["still_path"])
+        _locked_still: str | None = s.get("still_path")
+        if _locked_still is not None and not (
+            settings.mode == ProductionMode.REAL and is_mock_asset(_locked_still)
+        ):
+            p = Path(_locked_still)
             still_path = str(p if p.is_absolute() else (settings.folder / p))
             _log(settings, f"  [{idx:02d}] reusing {Path(still_path).name}")
         else:
+            if _locked_still:
+                _log(settings, f"  [{idx:02d}] dry-run mock detected — regenerating")
             if "reference_images" in s:
                 refs = [str(Path(r) if Path(r).is_absolute() else settings.folder / r) for r in s["reference_images"]]
             else:
@@ -372,14 +378,21 @@ def stage_animate(plan: dict[str, Any], settings: Settings, state: PipelineState
     scenes = state.scenes
     plan_video_model = plan.get("video_model", "mid")
 
-    animated_count = sum(1 for s in scenes if s.animate and not s.clip_path)
+    def _clip_reusable(clip: str | None) -> bool:
+        return clip is not None and not (
+            settings.mode == ProductionMode.REAL and is_mock_asset(clip)
+        )
+
+    animated_count = sum(1 for s in scenes if s.animate and not _clip_reusable(s.clip_path))
     if animated_count:
         Path(state.video_dir).mkdir(exist_ok=True)
         _log(settings, f"animate_scenes — {animated_count} scene(s) to animate")
 
         for s in scenes:
-            if not s.animate or s.clip_path:
+            if not s.animate or _clip_reusable(s.clip_path):
                 continue
+            if s.clip_path:
+                _log(settings, f"  [{s.index:02d}] dry-run mock detected — re-animating")
 
             # Per-scene model override wins over plan-level default.
             scene_model = s.video_model or plan_video_model
