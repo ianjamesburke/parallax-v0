@@ -121,6 +121,10 @@ class PlanScene(BaseModel):
     fade_in_s: float | None = None
     fade_out_s: float | None = None
 
+    # Clip trim — seek into and/or limit the source clip window
+    clip_trim_start_s: float | Literal["auto"] | None = None
+    clip_trim_end_s: float | None = None
+
     # Ken Burns / zoom
     zoom_direction: str | None = None
     zoom_amount: float | None = None
