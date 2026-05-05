@@ -37,6 +37,7 @@ _TOP_LEVEL_ORDER = (
     "aspect",
     "voice",
     "voice_speed",
+    "trim_pauses",
     "voice_model",
     "image_model",
     "video_model",

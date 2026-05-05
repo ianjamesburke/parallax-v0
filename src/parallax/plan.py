@@ -196,6 +196,7 @@ class Plan(BaseModel):
 
     # Pipeline behavior
     stills_only: bool = False
+    trim_pauses: bool | float = True
     titles: list[dict[str, Any]] | None = None
 
     # Transitions

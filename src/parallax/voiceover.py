@@ -58,6 +58,7 @@ def generate_voiceover_dict(
     style_hint: str | None = None,
     voice_model: str = "tts-mini",
     pronunciations: dict[str, str] | None = None,
+    trim_pauses: bool | float = True,
 ) -> dict:
     """Generate voiceover and trim overlong inter-word silences.
 
@@ -102,11 +103,22 @@ def generate_voiceover_dict(
         style_hint=style_hint,
     )
 
+    import shutil as _shutil
     raw_suffix = Path(raw_path).suffix or ".mp3"
     audio_path = dest / f"voiceover{raw_suffix}"
-    words_trimmed, duration = _trim_long_pauses(
-        Path(raw_path), list(words_with_ends), audio_path,
-    )
+    if trim_pauses is False:
+        log.info("voiceover: trim_pauses=false — skipping silence removal")
+        _shutil.copy2(raw_path, audio_path)
+        words_trimmed = list(words_with_ends)
+        duration = words_trimmed[-1]["end"] if words_trimmed else 0.0
+    elif isinstance(trim_pauses, float) and not isinstance(trim_pauses, bool):
+        words_trimmed, duration = _trim_long_pauses(
+            Path(raw_path), list(words_with_ends), audio_path, max_gap_s=trim_pauses,
+        )
+    else:
+        words_trimmed, duration = _trim_long_pauses(
+            Path(raw_path), list(words_with_ends), audio_path,
+        )
     words_trimmed = _restore_pronunciations(words_trimmed, pronunciations)
 
     words_path = dest / "vo_words.json"
@@ -134,6 +146,7 @@ def generate_voiceover(
     style_hint: str | None = None,
     voice_model: str = "tts-mini",
     pronunciations: dict[str, str] | None = None,
+    trim_pauses: bool | float = True,
 ) -> str:
     """JSON-string wrapper around generate_voiceover_dict. Kept for CLI/external callers.
 
@@ -147,6 +160,7 @@ def generate_voiceover(
         style_hint=style_hint,
         voice_model=voice_model,
         pronunciations=pronunciations,
+        trim_pauses=trim_pauses,
     ))
 
 

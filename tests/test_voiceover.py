@@ -211,3 +211,67 @@ def test_generate_voiceover_dict_same_data_as_json_wrapper(tmp_path, monkeypatch
     assert set(dict_result.keys()) == set(json_result.keys())
     assert dict_result["words"] == json_result["words"]
     assert dict_result["total_duration_s"] == json_result["total_duration_s"]
+
+
+# ─── trim_pauses config ──────────────────────────────────────────────────
+
+
+def test_generate_voiceover_dict_trim_pauses_false_skips_trim(tmp_path, monkeypatch):
+    """trim_pauses=False must not call _trim_long_pauses."""
+    monkeypatch.delenv("PARALLAX_TEST_MODE", raising=False)
+    trim_called = []
+
+    def fake_tts(*, text, alias, voice, out_dir, style, style_hint):
+        raw = Path(out_dir) / "raw_tts.mp3"
+        import subprocess
+        subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "lavfi", "-i", "anullsrc=cl=mono:r=44100",
+             "-t", "2.0", "-c:a", "libmp3lame", "-b:a", "64k", str(raw)],
+            check=True, capture_output=True,
+        )
+        return str(raw), [{"word": "hi", "start": 0.0, "end": 1.0}, {"word": "there", "start": 1.5, "end": 2.0}], 2.0
+
+    def fake_trim(audio_path, words, out_path, max_gap_s=0.4, keep_gap_s=0.1):
+        trim_called.append(True)
+        import shutil
+        shutil.copy2(audio_path, out_path)
+        return list(words), words[-1]["end"] if words else 0.0
+
+    from parallax import openrouter
+    monkeypatch.setattr(openrouter, "generate_tts", fake_tts)
+    monkeypatch.setattr(voiceover, "_trim_long_pauses", fake_trim)
+
+    result = generate_voiceover_dict("hi there", out_dir=str(tmp_path), trim_pauses=False)
+    assert trim_called == [], "_trim_long_pauses must not be called when trim_pauses=False"
+    assert result["total_duration_s"] == 2.0
+
+
+def test_generate_voiceover_dict_trim_pauses_float_uses_custom_max_gap(tmp_path, monkeypatch):
+    """trim_pauses=0.8 must call _trim_long_pauses with max_gap_s=0.8."""
+    monkeypatch.delenv("PARALLAX_TEST_MODE", raising=False)
+    captured_max_gap = []
+
+    def fake_tts(*, text, alias, voice, out_dir, style, style_hint):
+        raw = Path(out_dir) / "raw_tts.mp3"
+        import subprocess
+        subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "lavfi", "-i", "anullsrc=cl=mono:r=44100",
+             "-t", "1.0", "-c:a", "libmp3lame", "-b:a", "64k", str(raw)],
+            check=True, capture_output=True,
+        )
+        return str(raw), [{"word": "x", "start": 0.0, "end": 1.0}], 1.0
+
+    def fake_trim(audio_path, words, out_path, max_gap_s=0.4, keep_gap_s=0.1):
+        captured_max_gap.append(max_gap_s)
+        import shutil
+        shutil.copy2(audio_path, out_path)
+        return list(words), words[-1]["end"] if words else 0.0
+
+    from parallax import openrouter
+    monkeypatch.setattr(openrouter, "generate_tts", fake_tts)
+    monkeypatch.setattr(voiceover, "_trim_long_pauses", fake_trim)
+
+    generate_voiceover_dict("x", out_dir=str(tmp_path), trim_pauses=0.8)
+    assert captured_max_gap == [0.8], f"expected max_gap_s=0.8, got {captured_max_gap}"
