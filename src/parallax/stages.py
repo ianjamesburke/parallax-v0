@@ -15,6 +15,7 @@ activity for assertions.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import textwrap
 import threading
@@ -313,7 +314,8 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
             for s in to_generate:
                 idx = s["index"]
                 vo_text = s.get("vo_text", "")
-                _log(settings, f"  [{idx:02d}] {s.get('shot_type', 'broll')} — {vo_text[:55]}... submitting")
+                display_text = re.sub(r'\[[^\]]*\]', '', vo_text).strip()
+                _log(settings, f"  [{idx:02d}] {s.get('shot_type', 'broll')} — {display_text[:55]}... submitting")
                 fut = pool.submit(_generate_one_still, s, settings, state, plan)
                 futures[fut] = idx
             for fut in as_completed(futures):

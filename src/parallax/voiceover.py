@@ -13,6 +13,7 @@ PARALLAX_TEST_MODE.
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -207,7 +208,7 @@ def _trim_long_pauses(
 
 
 def _mock_voiceover(text: str, dest: Path) -> str:
-    words_text = text.split()
+    words_text = re.sub(r'\[[^\]]*\]', '', text).split()
     t = 0.0
     words = []
     for w in words_text:
