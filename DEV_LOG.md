@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-05 — [CHANGED] Pre-produce cost estimate with confirmation prompt (PR #93 → alpha)
+`parallax produce` now prints a per-scene cost table before any generation: stills, clips (with duration), and voiceover, each showing locked vs. will-regenerate status and estimated spend. Interactive runs pause with `proceed? [y/N]`; `--yes`/`-y` and non-TTY stdout auto-proceed. Emits `run.preflight` event to `run.log` after confirmation. Cancelling (answering N) exits 0 without starting a run or writing a run_id.
+**Breaks if:** `parallax produce` starts generating images without printing the cost table first; `--yes` still shows a prompt; `run.log` has no `run.preflight` event after a completed run; cancelling the prompt returns a non-zero exit code.
+
 ## 2026-05-05 — [CHANGED] Bridge WARNING+ log records to structured run.log events (PR #89 → alpha)
 `_RunlogHandler` added to `log.py`, installed by `configure()` at WARNING level alongside the stderr handler. Any `parallax.*` `logger.warning()` or `logger.error()` call now also writes `{"level": "WARNING", "event": "<module>.warn", "msg": "..."}` to `run.log` when a run is active. Silent no-op when no run is active. Covers the two confirmed emitters (`whisper_backend.py`, `assembly.py`) and any future `log.warning()` calls automatically.
 **Breaks if:** `grep '"level": "WARNING"' <output_dir>/run.log` returns nothing after a run where the faster-whisper fallback fires; or `logging.getLogger("parallax").handlers` does not include a `_RunlogHandler` instance after `log.configure()` is called.
