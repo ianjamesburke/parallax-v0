@@ -2,10 +2,13 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-05 — [FIX] Extract video frame before using character_image as image-gen reference (PR #71 → alpha)
+`character_image` is typically an `.mp4` clip. Passing a video path directly to `generate_image` silently fails — providers ignore or reject it. Added `_extract_character_image_frame()`: detects video suffixes (`.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`), runs `ffmpeg -ss 1 -i <video> -frames:v 1 <cache.png>`, caches at `<folder>/__parallax_cache__/character_frame.png`, and returns the PNG path. Image files pass through unchanged. Cache hit skips ffmpeg on repeat calls. Called from both `reference: true` and `stills_only` paths in `stage_stills`.
+**Breaks if:** a plan with `reference: true` and a `.mp4` character_image produces stills with no reference attached, or `__parallax_cache__/character_frame.png` is not created after the first `stage_stills` run with a video character_image.
+
 ## 2026-05-05 — [FIX] Planner sets `reference: true` on character scenes (PR #70 → alpha)
 Root cause: `plan_from_brief` set `character_image` at the top level but never marked individual scenes, so `_resolve_scene_reference_images` in `stages.py` fell through to `refs = None` for character scenes when no `media/` directory existed. Fix: after writing `character_image`, iterate scenes and set `reference: true` on every `shot_type: character` scene. Three new planner tests.
 **Breaks if:** `parallax plan` on a brief with `character_ref` produces a plan where a `shot_type: character` scene lacks `reference: true`.
-
 ## 2026-05-04 — [CHANGED] Centralize FFmpeg/FFprobe operations (PR #63 → alpha)
 Added `probe_resolution`, `probe_duration`, `probe_audio_duration`, and `pipe_rawvideo_frames` to `ffmpeg_utils.py`. Replaced scattered inline `subprocess.run(["ffprobe", ...])` calls in `verify_suite.py`, `ingest.py`, `produce.py`, and `settings.py`. Refactored `_make_kb_clip` in `assembly.py` — both test-mode and real-mode rawvideo pipe branches now share `pipe_rawvideo_frames`, eliminating duplicated Popen lifecycle. All probe helpers route through `run_ffmpeg` so every ffprobe call emits a `ffmpeg.invoke` runlog event.
 **Breaks if:** `PARALLAX_TEST_MODE=1 parallax verify suite tests/fixtures/verify_suite_smoke/` does not print `[PASS] basic`; or any ffprobe call stops appearing as `ffmpeg.invoke` in the runlog during a produce run.
