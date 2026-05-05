@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-05 — [CHANGED] Parallelize stage_stills and stage_animate with ThreadPoolExecutor (PR #77 → alpha)
+`stage_stills` and `stage_animate` now fire all generation calls concurrently — N scenes take ~1× wall time instead of N× on the dominant network I/O bottleneck. Generation logic extracted into `_generate_one_still` and `_animate_one_scene` thread-safe helpers. `_plan_lock` (module-level `threading.Lock`) guards all YAML writes in `_lock_field_in_plan` to prevent concurrent corruption. Orchestrator emits per-scene submission + completion log lines, plus a wall-clock summary (`generated N stills in X.Xs (N concurrent)`). Confirmed out-of-order completions in testing.
+**Breaks if:** stage_stills generates scenes sequentially (each "→" immediately follows its "submitting" with no interleaving); `generated N stills in ... (N concurrent)` summary line is absent from output; plan.yaml has missing or duplicate `still_path` / `clip_path` values after a multi-scene run.
+
 ## 2026-05-05 — [FIX] character_ref scenes now use character_image for still references (PR #76 → alpha)
 `stage_stills` had `reference: true` in an `elif` branch after `media_dir.is_dir()`, so the flag was silently ignored whenever a `media/` directory existed. Character scenes with `reference: true` (set by the planner for any character scene without a provided clip) were getting random `media/` images as their still-gen reference instead of the character asset. Moved the `reference: true` + `character_image` check before the media/ fallback so explicit planner intent always wins.
 **Breaks if:** A character scene with `reference: true` in plan.yaml gets still-gen reference images from `media/` instead of `character_image`; or a broll scene (no `reference` flag) stops receiving media/ images.
