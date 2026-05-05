@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-05 — [CHANGED] Add parallax schema subcommand (PR #75 → alpha)
+`parallax schema [brief|plan] [--json]` flattens Pydantic v2 `model_json_schema()` into a human + agent-readable field list with dot notation for nested models. Bare `parallax schema` prints a brief/plan split header then both. `--json` emits raw JSON Schema (requires a target — errors bare). Motivation: skill docs drift; this makes the CLI self-documenting so an agent can write a valid brief.yaml from CLI output alone.
+**Breaks if:** `parallax schema brief` exits non-zero or omits any top-level Brief field; `parallax schema brief --json` fails JSON parsing or lacks a `properties` key; `parallax schema --json` exits 0 instead of erroring.
+
 ## 2026-05-05 — [FIX] Extract video frame before using character_image as image-gen reference (PR #71 → alpha)
 `character_image` is typically an `.mp4` clip. Passing a video path directly to `generate_image` silently fails — providers ignore or reject it. Added `_extract_character_image_frame()`: detects video suffixes (`.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`), runs `ffmpeg -ss 1 -i <video> -frames:v 1 <cache.png>`, caches at `<folder>/__parallax_cache__/character_frame.png`, and returns the PNG path. Image files pass through unchanged. Cache hit skips ffmpeg on repeat calls. Called from both `reference: true` and `stills_only` paths in `stage_stills`.
 **Breaks if:** a plan with `reference: true` and a `.mp4` character_image produces stills with no reference attached, or `__parallax_cache__/character_frame.png` is not created after the first `stage_stills` run with a video character_image.
