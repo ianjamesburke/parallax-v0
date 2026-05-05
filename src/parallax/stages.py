@@ -231,6 +231,14 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
                 _log(settings, f"  [{idx:02d}] dry-run mock detected — regenerating")
             if "reference_images" in s:
                 refs = [str(Path(r) if Path(r).is_absolute() else settings.folder / r) for r in s["reference_images"]]
+            elif s.get("reference") and settings.character_image:
+                # Planner-set flag: character scene without a clip — use the
+                # character_ref asset as the reference image. Takes priority
+                # over the media/ heuristic so the character is always used
+                # for consistency, not whatever images happen to be in media/.
+                refs = [_extract_character_image_frame(settings.character_image, settings.folder)]
+            elif settings.stills_only and settings.character_image:
+                refs = [_extract_character_image_frame(settings.character_image, settings.folder)]
             else:
                 # Default: pass EVERY image in media/ as a reference. The
                 # planner agent has historically been sloppy about picking
@@ -260,10 +268,6 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
                     # plenty; Gemini's max_refs is 8 but more refs degrade
                     # the per-image attention each one gets.
                     refs = [str(p) for p in candidates[:4]] or None
-                elif s.get("reference") and settings.character_image:
-                    refs = [_extract_character_image_frame(settings.character_image, settings.folder)]
-                elif settings.stills_only and settings.character_image:
-                    refs = [_extract_character_image_frame(settings.character_image, settings.folder)]
                 else:
                     refs = None
 

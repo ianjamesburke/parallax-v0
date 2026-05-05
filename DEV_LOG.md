@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-05 — [FIX] character_ref scenes now use character_image for still references (PR #76 → alpha)
+`stage_stills` had `reference: true` in an `elif` branch after `media_dir.is_dir()`, so the flag was silently ignored whenever a `media/` directory existed. Character scenes with `reference: true` (set by the planner for any character scene without a provided clip) were getting random `media/` images as their still-gen reference instead of the character asset. Moved the `reference: true` + `character_image` check before the media/ fallback so explicit planner intent always wins.
+**Breaks if:** A character scene with `reference: true` in plan.yaml gets still-gen reference images from `media/` instead of `character_image`; or a broll scene (no `reference` flag) stops receiving media/ images.
+
 ## 2026-05-05 — [CHANGED] Add image_ref to brief.yaml scene spec (PR #74 → alpha)
 `image_ref: path/to/ref.png` added to `BriefScene`. `to_plan_skeleton()` maps it to `reference_images: [path]` — wires into the existing priority-1 path in `_resolve_scene_reference_images` with no changes to `stages.py` or `plan.py`. Path is relative to `--folder`, matching the `reference_images` convention already in `PlanScene`.
 **Breaks if:** a brief with `image_ref` on a scene fails validation, or the emitted plan.yaml has no `reference_images` block for that scene.
