@@ -17,6 +17,9 @@ from __future__ import annotations
 import json
 import shutil
 import textwrap
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -103,6 +106,9 @@ def _log(settings: Settings, msg: str) -> None:
     runlog.event("stage.log", msg=msg)
 
 
+_plan_lock = threading.Lock()
+
+
 def _lock_field_in_plan(plan_path: Path, plan: dict, scene_idx: int, field_name: str, value: str, folder: Path) -> None:
     """Write an asset path back into the plan YAML so the scene is locked on future runs."""
     import yaml
@@ -110,16 +116,17 @@ def _lock_field_in_plan(plan_path: Path, plan: dict, scene_idx: int, field_name:
         locked_path = str(Path(value).relative_to(folder))
     except ValueError:
         locked_path = value
-    for scene in plan.get("scenes", []):
-        if scene.get("index") == scene_idx:
-            scene[field_name] = locked_path
-            break
-    try:
-        with plan_path.open("w") as f:
-            yaml.dump(plan, f, default_flow_style=False, allow_unicode=True, sort_keys=False, width=10000)
-    except Exception as exc:
-        runlog.event("plan.lock.error", level="ERROR", scene=scene_idx, field=field_name, error=str(exc))
-        raise RuntimeError(f"plan lock failed: could not write {plan_path}: {exc}") from exc
+    with _plan_lock:
+        for scene in plan.get("scenes", []):
+            if scene.get("index") == scene_idx:
+                scene[field_name] = locked_path
+                break
+        try:
+            with plan_path.open("w") as f:
+                yaml.dump(plan, f, default_flow_style=False, allow_unicode=True, sort_keys=False, width=10000)
+        except Exception as exc:
+            runlog.event("plan.lock.error", level="ERROR", scene=scene_idx, field=field_name, error=str(exc))
+            raise RuntimeError(f"plan lock failed: could not write {plan_path}: {exc}") from exc
 
 
 # --------------------------------------------------------------------------
@@ -190,6 +197,70 @@ def _extract_character_image_frame(char_image: str, folder: Path) -> str:
     return str(cache_png)
 
 
+def _generate_one_still(s: dict[str, Any], settings: Settings, state: PipelineState, plan: dict[str, Any]) -> str:
+    """Generate (with retry) one still for scene `s`. Thread-safe. Returns normalized still path."""
+    import re as _re
+    from .openrouter import generate_image
+    from .stills import AspectMismatchError, check_aspect, normalize_aspect
+
+    idx = s["index"]
+    prompt = s.get("prompt", "")
+    scene_aspect = s.get("aspect", settings.aspect)
+    scene_image_model = s.get("image_model") or settings.image_model
+
+    if "reference_images" in s:
+        refs = [str(Path(r) if Path(r).is_absolute() else settings.folder / r) for r in s["reference_images"]]
+    elif s.get("reference") and settings.character_image:
+        refs = [_extract_character_image_frame(settings.character_image, settings.folder)]
+    elif settings.stills_only and settings.character_image:
+        refs = [_extract_character_image_frame(settings.character_image, settings.folder)]
+    else:
+        media_dir = settings.folder / "media"
+        if media_dir.is_dir():
+            derivative_pat = _re.compile(r"_[an]\d+x\d+$")
+            candidates = sorted(
+                p for p in media_dir.iterdir()
+                if p.is_file()
+                and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
+                and not derivative_pat.search(p.stem)
+            )
+            refs = [str(p) for p in candidates[:4]] or None
+        else:
+            refs = None
+
+    attempts = 2
+    raw_still_path = None
+    last_err: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        stern_prefix = "" if attempt == 1 else _build_stern_prefix(scene_aspect)
+        raw_still_path = generate_image(
+            prompt=stern_prefix + prompt,
+            alias=scene_image_model,
+            reference_images=refs,
+            out_dir=Path(state.stills_dir),
+            aspect_ratio=scene_aspect,
+            size=settings.resolution,
+        )
+        check = check_aspect(raw_still_path, settings.resolution)
+        if check.within_tolerance:
+            break
+        last_err = AspectMismatchError(
+            f"scene {idx}: model {scene_image_model!r} returned wrong-aspect "
+            f"image {check.src_w}x{check.src_h} ({check.mismatch_pct*100:.1f}% off). "
+            f"Already retried {attempt - 1}x with sterner prompts. "
+            f"This run is aborting — switch to a different image model or "
+            f"rewrite the prompt to mention vertical/portrait framing explicitly."
+        )
+
+    if raw_still_path is None or (last_err is not None and not check_aspect(raw_still_path, settings.resolution).within_tolerance):
+        raise last_err if last_err else RuntimeError("stage_stills: no still produced")
+
+    normalized = normalize_aspect(raw_still_path, settings.resolution)
+    still_path = str(normalized)
+    _lock_field_in_plan(settings.plan_path, plan, idx, "still_path", still_path, settings.folder)
+    return still_path
+
+
 def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState) -> dict[str, Any]:
     """Generate or reuse stills for every scene; lock new ones in the plan.
 
@@ -197,7 +268,6 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
     `still_path` on its in-flight SceneRuntime, or normalize_aspect is
     skipped on freshly-generated PNGs.
     """
-    from .openrouter import generate_image
     from .settings import VALID_ASPECTS
 
     scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
@@ -205,133 +275,60 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
     _warn_unknown_scene_fields(scenes_raw)
     Path(state.stills_dir).mkdir(exist_ok=True)
 
-    scenes: list[SceneRuntime] = []
+    # Phase 1: categorize — reuse vs. generate
+    still_paths: dict[int, str] = {}
+    to_generate: list[dict[str, Any]] = []
     for s in scenes_raw:
         idx = s["index"]
-        prompt = s.get("prompt", "")
-        vo_text = s.get("vo_text", "")
-
-        # Per-scene aspect override (validated against the same set as Settings).
         scene_aspect = s.get("aspect", settings.aspect)
         if scene_aspect not in VALID_ASPECTS:
             raise ValueError(
                 f"scene {idx}: aspect={scene_aspect!r} is not a supported aspect "
                 f"ratio. Choices: {sorted(VALID_ASPECTS)}"
             )
-
         _locked_still: str | None = s.get("still_path")
         if _locked_still is not None and not (
             settings.mode == ProductionMode.REAL and is_mock_asset(_locked_still)
         ):
             p = Path(_locked_still)
-            still_path = str(p if p.is_absolute() else (settings.folder / p))
-            _log(settings, f"  [{idx:02d}] reusing {Path(still_path).name}")
+            still_paths[idx] = str(p if p.is_absolute() else (settings.folder / p))
+            _log(settings, f"  [{idx:02d}] reusing {Path(still_paths[idx]).name}")
         else:
             if _locked_still:
                 _log(settings, f"  [{idx:02d}] dry-run mock detected — regenerating")
-            if "reference_images" in s:
-                refs = [str(Path(r) if Path(r).is_absolute() else settings.folder / r) for r in s["reference_images"]]
-            elif s.get("reference") and settings.character_image:
-                # Planner-set flag: character scene without a clip — use the
-                # character_ref asset as the reference image. Takes priority
-                # over the media/ heuristic so the character is always used
-                # for consistency, not whatever images happen to be in media/.
-                refs = [_extract_character_image_frame(settings.character_image, settings.folder)]
-            elif settings.stills_only and settings.character_image:
-                refs = [_extract_character_image_frame(settings.character_image, settings.folder)]
-            else:
-                # Default: pass EVERY image in media/ as a reference. The
-                # planner agent has historically been sloppy about picking
-                # the right `character_image` per scene (verified live: it
-                # picked the product photo as character for a stylized
-                # scene, then the broll scenes attached no reference at
-                # all and produced photoreal output). Until the agent's
-                # reasoning is reliable, force-attach all media/ files so
-                # Gemini always has the character + product visible.
-                # `reference_images` on the scene still wins as an explicit
-                # opt-in/opt-out.
-                media_dir = settings.folder / "media"
-                if media_dir.is_dir():
-                    # Skip cropped/normalized derivatives — those have an
-                    # `_a<W>x<H>` or `_n<W>x<H>` suffix added by stills
-                    # post-processing. Only the original extracted images
-                    # (image1.png, image2.png, etc.) are real references.
-                    import re as _re
-                    derivative_pat = _re.compile(r"_[an]\d+x\d+$")
-                    candidates = sorted(
-                        p for p in media_dir.iterdir()
-                        if p.is_file()
-                        and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
-                        and not derivative_pat.search(p.stem)
-                    )
-                    # Cap at 4 — character + product + a couple alts is
-                    # plenty; Gemini's max_refs is 8 but more refs degrade
-                    # the per-image attention each one gets.
-                    refs = [str(p) for p in candidates[:4]] or None
-                else:
-                    refs = None
+            to_generate.append(s)
 
-            _log(settings, f"  [{idx:02d}] {s.get('shot_type', 'broll')} — {vo_text[:55]}...")
-            from .stills import (
-                AspectMismatchError,
-                check_aspect,
-                normalize_aspect,
-            )
+    # Phase 2: fire all generations concurrently
+    n_gen = len(to_generate)
+    if n_gen:
+        t0 = time.monotonic()
+        with ThreadPoolExecutor(max_workers=n_gen) as pool:
+            futures: dict = {}
+            for s in to_generate:
+                idx = s["index"]
+                vo_text = s.get("vo_text", "")
+                _log(settings, f"  [{idx:02d}] {s.get('shot_type', 'broll')} — {vo_text[:55]}... submitting")
+                fut = pool.submit(_generate_one_still, s, settings, state, plan)
+                futures[fut] = idx
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                still_path = fut.result()  # propagates any generation error
+                still_paths[idx] = still_path
+                _log(settings, f"  [{idx:02d}] → {Path(still_path).name}")
+        elapsed = time.monotonic() - t0
+        _log(settings, f"generated {n_gen} stills in {elapsed:.1f}s ({n_gen} concurrent)")
 
-            # Two attempts max: if the model returns a wrong-aspect image on
-            # first try, regenerate once with a sterner textual prompt prefix.
-            # If it's still wrong, raise — silent center-crop is forbidden
-            # because it discards subject content for non-centered compositions.
-            # Per-scene image_model override wins over plan-level default.
-            scene_image_model = s.get("image_model") or settings.image_model
-
-            attempts = 2
-            raw_still_path = None
-            last_err: Exception | None = None
-            for attempt in range(1, attempts + 1):
-                stern_prefix = "" if attempt == 1 else _build_stern_prefix(scene_aspect)
-                raw_still_path = generate_image(
-                    prompt=stern_prefix + prompt,
-                    alias=scene_image_model,
-                    reference_images=refs,
-                    out_dir=Path(state.stills_dir),
-                    aspect_ratio=scene_aspect,
-                    size=settings.resolution,
-                )
-                check = check_aspect(raw_still_path, settings.resolution)
-                if check.within_tolerance:
-                    break
-                _log(settings,
-                     f"       ✗ attempt {attempt}/{attempts}: {Path(raw_still_path).name} "
-                     f"is {check.src_w}x{check.src_h} "
-                     f"({check.mismatch_pct*100:.1f}% off target {settings.resolution}). "
-                     f"{'Retrying with sterner prompt.' if attempt < attempts else 'GIVING UP.'}")
-                last_err = AspectMismatchError(
-                    f"scene {idx}: model {scene_image_model!r} returned wrong-aspect "
-                    f"image {check.src_w}x{check.src_h} ({check.mismatch_pct*100:.1f}% off). "
-                    f"Already retried {attempt - 1}x with sterner prompts. "
-                    f"This run is aborting — switch to a different image model or "
-                    f"rewrite the prompt to mention vertical/portrait framing explicitly."
-                )
-
-            if raw_still_path is None or last_err is not None and not check_aspect(raw_still_path, settings.resolution).within_tolerance:
-                raise last_err if last_err else RuntimeError("stage_stills: no still produced")
-
-            normalized = normalize_aspect(raw_still_path, settings.resolution)
-            still_path = str(normalized)
-            if normalized != Path(raw_still_path):
-                _log(settings, f"       → {Path(still_path).name}  (micro-trimmed from {Path(raw_still_path).name})")
-            else:
-                _log(settings, f"       → {Path(still_path).name}")
-            _lock_field_in_plan(settings.plan_path, plan, idx, "still_path", still_path, settings.folder)
-
+    # Phase 3: build SceneRuntime in original order
+    scenes: list[SceneRuntime] = []
+    for s in scenes_raw:
+        idx = s["index"]
         scene_rt = SceneRuntime(
             index=idx,
             shot_type=s.get("shot_type", "broll"),
-            vo_text=vo_text,
-            prompt=prompt,
-            still_path=still_path,
-            aspect=scene_aspect,
+            vo_text=s.get("vo_text", ""),
+            prompt=s.get("prompt", ""),
+            still_path=still_paths[idx],
+            aspect=s.get("aspect", settings.aspect),
         )
         if s.get("animate"):
             scene_rt.animate = True
@@ -359,6 +356,56 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
     return plan
 
 
+def _animate_one_scene(
+    s: SceneRuntime,
+    settings: Settings,
+    state: PipelineState,
+    plan_video_model: str,
+) -> str:
+    """Animate one scene. Thread-safe. Returns clip_path string."""
+    from .models import VIDEO_MODELS
+    from . import openrouter as _openrouter
+
+    scene_model = s.video_model or plan_video_model
+    if scene_model not in VIDEO_MODELS:
+        raise RuntimeError(
+            f"video_model={scene_model!r} is not a known video alias. "
+            f"Use one of: {', '.join(sorted(VIDEO_MODELS))}."
+        )
+
+    still = s.still_path
+    if not still or not Path(still).exists():
+        raise RuntimeError(f"scene {s.index}: no valid still for animation")
+
+    motion_prompt = s.motion_prompt or s.prompt or (
+        "Subtle cinematic motion, gentle camera drift. Keep the scene stable and beautiful."
+    )
+    end_frame = s.end_frame_path
+    if end_frame and not Path(end_frame).exists():
+        end_frame = None
+
+    input_references: list[Path] | None = None
+    if s.video_references:
+        input_references = [
+            (Path(r) if Path(r).is_absolute() else settings.folder / r)
+            for r in s.video_references
+        ]
+
+    scene_animate_res = s.animate_resolution or settings.animate_resolution
+
+    clip_path = _openrouter.generate_video(
+        prompt=motion_prompt,
+        alias=scene_model,
+        image_path=Path(still),
+        end_image_path=Path(end_frame) if end_frame else None,
+        input_references=input_references,
+        out_dir=Path(state.video_dir),
+        aspect_ratio=s.aspect,
+        size=scene_animate_res,
+    )
+    return str(clip_path)
+
+
 def stage_animate(plan: dict[str, Any], settings: Settings, state: PipelineState) -> dict[str, Any]:
     """Run image-to-video for any scene flagged `animate: true` without a clip.
 
@@ -376,9 +423,6 @@ def stage_animate(plan: dict[str, Any], settings: Settings, state: PipelineState
     Breaks if: animated scenes are not augmented with `clip_path` after
     this stage, or pre-locked clips aren't reported as reused.
     """
-    from .models import VIDEO_MODELS
-    from . import openrouter as _openrouter
-
     scenes = state.scenes
     plan_video_model = plan.get("video_model", "mid")
 
@@ -387,77 +431,34 @@ def stage_animate(plan: dict[str, Any], settings: Settings, state: PipelineState
             settings.mode == ProductionMode.REAL and is_mock_asset(clip)
         )
 
-    animated_count = sum(1 for s in scenes if s.animate and not _clip_reusable(s.clip_path))
-    if animated_count:
+    to_animate = [s for s in scenes if s.animate and not _clip_reusable(s.clip_path)]
+
+    if to_animate:
         Path(state.video_dir).mkdir(exist_ok=True)
-        _log(settings, f"animate_scenes — {animated_count} scene(s) to animate")
+        _log(settings, f"animate_scenes — {len(to_animate)} scene(s) to animate")
 
-        for s in scenes:
-            if not s.animate or _clip_reusable(s.clip_path):
-                continue
-            if s.clip_path:
-                _log(settings, f"  [{s.index:02d}] dry-run mock detected — re-animating")
-
-            # Per-scene model override wins over plan-level default.
-            scene_model = s.video_model or plan_video_model
-            idx = s.index
-            still = s.still_path
-            if not still or not Path(still).exists():
-                _log(settings, f"  [{idx:02d}] WARNING: no valid still, skipping animation")
-                continue
-
-            if scene_model not in VIDEO_MODELS:
-                raise RuntimeError(
-                    f"video_model={scene_model!r} is not a known video alias. "
-                    f"Use one of: {', '.join(sorted(VIDEO_MODELS))}."
-                )
-
-            # Aspect comes from the scene entry (populated by stage_stills with
-            # the per-scene override already resolved).
-            aspect_ratio: str = s.aspect
-            motion_prompt = s.motion_prompt or s.prompt or (
-                "Subtle cinematic motion, gentle camera drift. Keep the scene stable and beautiful."
-            )
-            end_frame = s.end_frame_path
-            if end_frame and not Path(end_frame).exists():
-                _log(settings, f"  [{idx:02d}] WARNING: end_frame_path not found ({end_frame}), ignoring")
-                end_frame = None
-
-            # video_references: resolve paths relative to project folder.
-            # Only effective for text-to-video (no still); when image_path is
-            # set, frame_images takes precedence and input_references is ignored.
-            input_references: list[Path] | None = None
-            if s.video_references:
-                input_references = [
-                    (Path(r) if Path(r).is_absolute() else settings.folder / r)
-                    for r in s.video_references
-                ]
-
-            # Per-scene animate_resolution wins; fall back to settings default.
-            # This is the resolution sent to the video-gen model — cheaper than
-            # the output resolution and upscaled by ffmpeg during assembly.
-            scene_animate_res = s.animate_resolution or settings.animate_resolution
-
-            _log(settings, f"  [{idx:02d}] openrouter {scene_model} "
-                 f"gen={scene_animate_res} → output={settings.resolution}"
-                 + (f" + end_frame" if end_frame else "")
-                 + (f" + {len(input_references)} ref(s)" if input_references else ""))
-            clip_path = _openrouter.generate_video(
-                prompt=motion_prompt,
-                alias=scene_model,
-                image_path=Path(still),
-                end_image_path=Path(end_frame) if end_frame else None,
-                input_references=input_references,
-                out_dir=Path(state.video_dir),
-                aspect_ratio=aspect_ratio,
-                size=scene_animate_res,
-            )
-            s.clip_path = str(clip_path)
-
-        for s in scenes:
-            if s.clip_path:
-                _log(settings, f"  [{s.index:02d}] → {Path(s.clip_path).name}")
-                _lock_field_in_plan(settings.plan_path, plan, s.index, "clip_path", s.clip_path, settings.folder)
+        t0 = time.monotonic()
+        with ThreadPoolExecutor(max_workers=len(to_animate)) as pool:
+            futures: dict = {}
+            for s in to_animate:
+                if s.clip_path:
+                    _log(settings, f"  [{s.index:02d}] dry-run mock detected — re-animating")
+                scene_model = s.video_model or plan_video_model
+                scene_animate_res = s.animate_resolution or settings.animate_resolution
+                _log(settings, f"  [{s.index:02d}] submitting {scene_model} gen"
+                     f" gen={scene_animate_res} → output={settings.resolution}"
+                     + (f" + end_frame" if s.end_frame_path and Path(s.end_frame_path).exists() else "")
+                     + (f" + {len(s.video_references)} ref(s)" if s.video_references else ""))
+                fut = pool.submit(_animate_one_scene, s, settings, state, plan_video_model)
+                futures[fut] = s
+            for fut in as_completed(futures):
+                s = futures[fut]
+                clip_path = fut.result()  # propagates any animation error
+                s.clip_path = clip_path
+                _log(settings, f"  [{s.index:02d}] → {Path(clip_path).name}")
+                _lock_field_in_plan(settings.plan_path, plan, s.index, "clip_path", clip_path, settings.folder)
+        elapsed = time.monotonic() - t0
+        _log(settings, f"generated {len(to_animate)} clips in {elapsed:.1f}s ({len(to_animate)} concurrent)")
     else:
         locked = sum(1 for s in scenes if s.clip_path)
         if locked:
