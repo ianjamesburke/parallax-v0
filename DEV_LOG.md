@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-05 — [CHANGED] Add clip_trim_start_s / clip_trim_end_s scene fields (PR #104 → alpha)
+Added `clip_trim_start_s` (float or `"auto"`) and `clip_trim_end_s` (float) as per-scene plan fields. `clip_trim_start_s: auto` resolves to `prev_trim_start + prev_duration_s` when the previous scene shares the same `clip_path`, enabling seamless continuation across scenes from the same footage. Trim is extracted to a temp file via ffmpeg `-ss` before the existing ping-pong/loop logic so both operations compose correctly. `_resolve_auto_trim` runs inside `ken_burns_assemble` before the scene loop.
+**Breaks if:** `parallax validate plan` with `clip_trim_start_s: 2.0` or `clip_trim_start_s: auto` returns a schema error; or a scene with `clip_trim_start_s` set silently ignores the seek (output clip starts from beginning of source).
+
 ## 2026-05-05 — [CHANGED] Add character_reference brief field and document reference fields (PR #103 → alpha)
 Added `character_reference: bool = False` to `Brief`. When true, `to_plan_skeleton()` sets `reference: true` on every `shot_type: character` scene, causing `stage_stills` to use `plan.character_image` as the still-generation reference — no manual plan edits needed. `image_refs` (per-scene list → `reference_images` in plan) was already wired on alpha; this PR adds the brief-level flag, 3 tests, and skill docs for all three reference mechanisms (`image_refs`, `character_reference`, `reference: true` / `reference_images` in plan).
 **Breaks if:** `parallax plan` on a brief with `character_reference: true` produces a plan where character scenes lack `reference: true`; or a brief without `character_reference` fails to parse.
