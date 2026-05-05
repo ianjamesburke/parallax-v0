@@ -13,7 +13,7 @@ full run_id back to the on-disk row so callers can locate `<output_dir>/run.log`
 Schema (every line in run.log):
   ts: ISO-8601 UTC
   run_id: str
-  level: "DEBUG" | "INFO" | "WARN" | "ERROR"
+  level: "DEBUG" | "INFO" | "WARNING" | "ERROR"
   event: short event name, e.g. "stage.start", "openrouter.call", "openrouter.response"
   ...arbitrary structured fields per event
 
