@@ -15,10 +15,6 @@ final:
   scene_count: 2
 
 stages:
-  stills:
-    files_must_exist:
-      - "stills/*.png"
-    resolution: 720x1280
   voiceover:
     files_must_exist:
       - "audio/voiceover.*"

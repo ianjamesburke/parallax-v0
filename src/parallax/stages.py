@@ -71,6 +71,7 @@ class PipelineState:
     at the point of the mistake rather than KeyError at a later stage.
     """
     out_dir: str = ""
+    assets_dir: str = ""
     version: int = 0
     short_id: str = ""
     convention_name: str = ""
@@ -142,6 +143,7 @@ def stage_scan(plan: dict[str, Any], settings: Settings, state: PipelineState) -
     _log(settings, "scan_project_folder")
     scan = json.loads(scan_project_folder(str(settings.folder)))
     state.out_dir = scan["output_dir"]
+    state.assets_dir = scan["assets_dir"]
     state.version = scan["version"]
     # Append the last-6-hex of run_id so the artifact mp4 is traceable back
     # to the run from filename alone. run_id is required at this point —
@@ -256,7 +258,11 @@ def _generate_one_still(s: dict[str, Any], settings: Settings, state: PipelineSt
         raise last_err if last_err else RuntimeError("stage_stills: no still produced")
 
     normalized = normalize_aspect(raw_still_path, settings.resolution)
-    still_path = str(normalized)
+    canonical = Path(state.assets_dir) / f"scene_{idx:02d}_still.png"
+    Path(normalized).rename(canonical)
+    if str(normalized) != str(raw_still_path):
+        Path(raw_still_path).unlink(missing_ok=True)
+    still_path = str(canonical)
     _lock_field_in_plan(settings.plan_path, plan, idx, "still_path", still_path, settings.folder)
     return still_path
 
@@ -393,17 +399,25 @@ def _animate_one_scene(
 
     scene_animate_res = s.animate_resolution or settings.animate_resolution
 
-    clip_path = _openrouter.generate_video(
+    # Per-scene temp dir isolates hash-named downloads so concurrent scenes
+    # with identical prompts don't race on the same filename.
+    import shutil as _shutil
+    scene_tmp = Path(state.assets_dir) / f"_anim_{s.index:02d}"
+    scene_tmp.mkdir(exist_ok=True)
+    raw_clip = _openrouter.generate_video(
         prompt=motion_prompt,
         alias=scene_model,
         image_path=Path(still),
         end_image_path=Path(end_frame) if end_frame else None,
         input_references=input_references,
-        out_dir=Path(state.video_dir),
+        out_dir=scene_tmp,
         aspect_ratio=s.aspect,
         size=scene_animate_res,
     )
-    return str(clip_path)
+    canonical = Path(state.assets_dir) / f"scene_{s.index:02d}_animated.mp4"
+    Path(raw_clip).rename(canonical)
+    _shutil.rmtree(scene_tmp, ignore_errors=True)
+    return str(canonical)
 
 
 def stage_animate(plan: dict[str, Any], settings: Settings, state: PipelineState) -> dict[str, Any]:

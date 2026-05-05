@@ -11,6 +11,7 @@ Locks in:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from parallax.project import scan_project_folder
 
@@ -92,3 +93,20 @@ def test_scan_not_a_directory_raises(tmp_path):
     import pytest
     with pytest.raises(ValueError, match="Not a directory"):
         scan_project_folder(str(tmp_path / "does-not-exist"))
+
+
+def test_scan_creates_assets_dir(tmp_path):
+    (tmp_path / "script.txt").write_text("hi")
+    out = json.loads(scan_project_folder(str(tmp_path)))
+    assert "assets_dir" in out
+    assert out["assets_dir"].endswith("/assets")
+    assert Path(out["assets_dir"]).is_dir()
+
+
+def test_scan_assets_dir_stable_across_versions(tmp_path):
+    """assets_dir must not increment with version — it's shared across runs."""
+    (tmp_path / "script.txt").write_text("hi")
+    out1 = json.loads(scan_project_folder(str(tmp_path)))
+    out2 = json.loads(scan_project_folder(str(tmp_path)))
+    assert out1["assets_dir"] == out2["assets_dir"]
+    assert out1["version"] != out2["version"]

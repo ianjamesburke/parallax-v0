@@ -108,6 +108,8 @@ def test_stage_scan_populates_state_not_plan(monkeypatch, tmp_path):
     runlog.end_run()
 
     assert state.out_dir != "", "state.out_dir must be populated by stage_scan"
+    assert state.assets_dir != "", "state.assets_dir must be populated by stage_scan"
+    assert state.assets_dir.endswith("/assets")
     assert state.version >= 1, "state.version must be >= 1"
     assert state.stills_dir.endswith("/stills")
     assert state.audio_dir.endswith("/audio")

@@ -105,11 +105,17 @@ def scan_project_folder(folder_path: str) -> str:
     versioned_output = output_base / f"v{version}"
     versioned_output.mkdir(parents=True, exist_ok=True)
 
+    # Centralized assets dir: generated stills and clips land here using
+    # deterministic scene-based names so they are not scattered across vN dirs.
+    assets_dir = parallax_dir / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
     result: dict[str, Any] = {
         "folder": str(folder),
         "mode": mode,
         "version": version,
         "output_dir": str(versioned_output),
+        "assets_dir": str(assets_dir),
         "script_path": str(script_path) if script_path else None,
         "script_text": script_path.read_text().strip() if script_path else None,
         "character_image_path": str(char_path) if char_path else None,
