@@ -27,8 +27,8 @@ pr-clean pr:
     rm -f "$HOME/.local/bin/parallax-pr{{pr}}"
     echo "Cleaned up parallax-pr{{pr}}"
 
-# Bump patch version and reinstall main parallax CLI (run from worktrees/alpha/)
-bump-and-install:
+# Bump patch version in pyproject.toml, update uv.lock, and commit (run from worktrees/alpha/)
+bump:
     #!/usr/bin/env bash
     set -euo pipefail
     current=$(grep '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
@@ -38,5 +38,4 @@ bump-and-install:
     uv lock
     git add pyproject.toml uv.lock
     git commit -m "chore: bump version to $new"
-    uv tool install --python python3.11 --reinstall .
-    echo "Bumped $current → $new and reinstalled parallax"
+    echo "Bumped $current → $new"

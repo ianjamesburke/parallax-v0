@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-05 — [CHANGED] justfile: replace bump-and-install with standalone bump recipe (PR #95 → alpha)
+Removed `bump-and-install`. `just bump` now handles version increment + uv.lock + commit. `just install` remains separate. The ship skill already documented `just bump && just install` — the justfile now matches.
+**Breaks if:** `just bump-and-install` is referenced anywhere and expected to work; `just bump` fails to increment the patch version and commit.
+
 ## 2026-05-05 — [CHANGED] Add parallax validate subcommand (PR #90 → alpha)
 `parallax validate --brief <path> --folder <dir>` (and `--plan`) runs schema parse, provided-asset existence, `image_refs` resolution, and locked-path checks without generating any assets or spending any credits. Exits 0 if valid, 1 if any errors. JSON emitted to stdout with `valid`, `errors`, and `warnings` keys. `product_ref` assets emit a warning (no wiring yet — see #83). 13 new unit tests.
 **Breaks if:** `parallax validate --brief <valid-brief.yaml> --folder <folder>` exits non-zero or does not print JSON with a `valid` key; or a brief with a missing `provided` asset path exits 0 instead of 1.
