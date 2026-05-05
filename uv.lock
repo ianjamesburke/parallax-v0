@@ -486,7 +486,7 @@ wheels = [
 
 [[package]]
 name = "parallax"
-version = "0.4.28"
+version = "0.4.29"
 source = { editable = "." }
 dependencies = [
     { name = "argcomplete" },
