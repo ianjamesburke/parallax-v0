@@ -100,6 +100,7 @@ class BriefScene(BaseModel):
     animate: bool = False
     motion_prompt: str | None = None
     aspect: str | None = None  # per-scene override; defaults to brief.aspect
+    image_ref: str | None = None  # single reference image, relative to --folder
 
     @field_validator("aspect")
     @classmethod
@@ -196,6 +197,7 @@ class Brief(BaseModel):
                     **({"animate": True} if s.animate else {}),
                     **({"motion_prompt": s.motion_prompt} if s.motion_prompt else {}),
                     **({"aspect": s.aspect} if s.aspect else {}),
+                    **({"reference_images": [s.image_ref]} if s.image_ref else {}),
                 }
                 for s in self.script.scenes
             ],

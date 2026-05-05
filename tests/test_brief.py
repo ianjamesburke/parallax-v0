@@ -142,6 +142,31 @@ def test_to_plan_skeleton_carries_aspect_voice_and_scenes(tmp_path):
     assert plan["scenes"][1]["motion_prompt"] == "slow zoom"
 
 
+def test_image_ref_round_trips_through_model(tmp_path):
+    payload = _minimal_payload()
+    payload["script"]["scenes"][0]["image_ref"] = "assets/bottle.png"
+    p = _write_brief(tmp_path, payload)
+    brief = Brief.from_yaml(p)
+    assert brief.script.scenes[0].image_ref == "assets/bottle.png"
+
+
+def test_image_ref_flows_into_plan_skeleton_as_reference_images(tmp_path):
+    payload = _minimal_payload()
+    payload["script"]["scenes"][0]["image_ref"] = "assets/bottle.png"
+    p = _write_brief(tmp_path, payload)
+    brief = Brief.from_yaml(p)
+    plan = brief.to_plan_skeleton()
+    assert plan["scenes"][0]["reference_images"] == ["assets/bottle.png"]
+
+
+def test_scene_without_image_ref_has_no_reference_images_in_skeleton(tmp_path):
+    payload = _minimal_payload()
+    p = _write_brief(tmp_path, payload)
+    brief = Brief.from_yaml(p)
+    plan = brief.to_plan_skeleton()
+    assert "reference_images" not in plan["scenes"][0]
+
+
 def test_per_scene_aspect_override_validated(tmp_path):
     payload = _minimal_payload()
     payload["script"]["scenes"][0]["aspect"] = "16:9"
