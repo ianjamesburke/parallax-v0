@@ -75,6 +75,7 @@ def run_plan(
     plan_path: str | Path,
     aspect: str | None = None,
     mode: "ProductionMode | None" = None,
+    yes: bool = False,
 ) -> ProductionResult:
     """Run the full plan-driven production pipeline.
 
@@ -137,10 +138,12 @@ def run_plan(
         # Pre-flight: in real-mode, check OpenRouter credits before any work runs.
         # 402 mid-pipeline is brutal (partial spend on stills, then dies on i2v);
         # checking once at the top fails loud, fails early.
+        _credits_balance: float | None = None
         if settings.mode == ProductionMode.REAL:
+            from . import openrouter
             try:
-                from . import openrouter
                 balance = openrouter.check_credits(min_balance_usd=0.50)
+                _credits_balance = balance.remaining
                 settings.events("log", {
                     "msg": f"openrouter credits: ${balance.remaining:.2f} remaining "
                            f"(${balance.total:.2f} total, ${balance.used:.2f} used)"
@@ -154,6 +157,14 @@ def run_plan(
                     "msg": f"WARNING: credits pre-flight check failed ({type(e).__name__}: {e}); "
                            f"continuing — first OpenRouter call will surface the real error"
                 })
+
+        from .preflight import compute_preflight, prompt_proceed as _prompt_proceed
+        _pf_result = compute_preflight(plan, balance_usd=_credits_balance)
+        if not _prompt_proceed(_pf_result, yes=yes):
+            return ProductionResult(
+                status="cancelled", run_id=None, output_dir=None,
+                final_video=None, stills_dir=None, cost_usd=0.0, error=None,
+            )
 
         import uuid as _uuid
         current_session_id.set(f"produce-{_uuid.uuid4().hex[:8]}")
@@ -170,6 +181,24 @@ def run_plan(
             voice=settings.voice, voice_model=settings.voice_model,
             resolution=settings.resolution,
             test_mode=settings.mode == ProductionMode.TEST,
+        )
+        runlog.event(
+            "run.preflight",
+            scenes=[
+                {
+                    "index": s.index,
+                    "kind": s.kind,
+                    "model": s.model_alias,
+                    "locked": s.locked,
+                    "cost_usd": s.cost_usd,
+                    **({"duration_s": s.duration_s} if s.kind == "clip" else {}),
+                }
+                for s in _pf_result.scenes
+            ],
+            voiceover_model=_pf_result.voiceover_model,
+            voiceover_locked=_pf_result.voiceover_locked,
+            estimated_cost_usd=_pf_result.estimated_total_usd,
+            balance_usd=_pf_result.balance_usd,
         )
         settings.events("log", {"msg": f"run_id: {run_id}  →  parallax log {run_id}"})
 

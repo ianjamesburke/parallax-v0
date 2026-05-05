@@ -34,6 +34,10 @@ def register_parser(sub: argparse._SubParsersAction) -> None:
         help="If set, render only this scene index (no full pipeline). "
              "Scene must have clip_path or still_path in the plan.",
     )
+    produce_p.add_argument(
+        "--yes", "-y", action="store_true",
+        help="Skip the pre-flight confirmation prompt (non-interactive mode).",
+    )
 
     plan_p = sub.add_parser("plan", help="Translate a brief.yaml into a plan.yaml.")
     plan_p.add_argument("--folder", required=True, help="Project root.")
@@ -114,7 +118,13 @@ def _run_produce(args) -> int:
             scene_index=args.scene,
             aspect=args.aspect,
         )
-    result = run_plan(folder=args.folder, plan_path=plan_path, aspect=args.aspect)
+    result = run_plan(
+        folder=args.folder, plan_path=plan_path,
+        aspect=args.aspect, yes=getattr(args, "yes", False),
+    )
+    if result.status == "cancelled":
+        print("produce cancelled.", flush=True)
+        return 0
     if result.status != "ok":
         print(f"\nError: {result.error}\n", file=sys.stderr)
         return 1
