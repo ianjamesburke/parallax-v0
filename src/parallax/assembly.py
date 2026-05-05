@@ -11,6 +11,7 @@ projects whose scenes already have video clips. `_zoom_filter` and
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -53,7 +54,7 @@ def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> li
         vo_text = scene.get("vo_text", "").strip()
         if not vo_text:
             continue
-        count = len(vo_text.split())
+        count = len(re.sub(r'\[[^\]]*\]', '', vo_text).split())
         if cursor + count > len(words):
             log.warning("Scene %s needs %d words but only %d remain; extending to end",
                         scene.get("index", "?"), count, len(words) - cursor)

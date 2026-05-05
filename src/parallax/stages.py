@@ -17,6 +17,7 @@ activity for assertions.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import textwrap
 from pathlib import Path
@@ -291,7 +292,8 @@ def stage_stills(plan: dict[str, Any], settings: Settings) -> dict[str, Any]:
             _log(settings, f"  [{idx:02d}] reusing {Path(still_path).name}")
         else:
             refs = _resolve_scene_reference_images(s, settings)
-            _log(settings, f"  [{idx:02d}] {s.get('shot_type', 'broll')} — {vo_text[:55]}...")
+            display_text = re.sub(r'\[[^\]]*\]', '', vo_text).strip()
+            _log(settings, f"  [{idx:02d}] {s.get('shot_type', 'broll')} — {display_text[:55]}...")
             still_path, raw_still_path = _generate_and_normalize_still(
                 s, settings, rt["stills_dir"], refs
             )
