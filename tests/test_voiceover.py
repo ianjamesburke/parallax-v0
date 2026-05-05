@@ -216,6 +216,42 @@ def test_generate_voiceover_dict_same_data_as_json_wrapper(tmp_path, monkeypatch
 # ─── trim_pauses config ──────────────────────────────────────────────────
 
 
+def test_trim_long_pauses_no_gaps_uses_probed_duration(tmp_path):
+    """When there are no gaps, total_duration_s must be the probed audio length, not the last word end."""
+    audio = tmp_path / "in.mp3"
+    _make_silent_mp3(audio, 1.5)
+    words = [
+        {"word": "a", "start": 0.0, "end": 0.3},
+        {"word": "b", "start": 0.4, "end": 1.2},  # last word ends at 1.2 but audio runs to 1.5
+    ]
+    out_path = tmp_path / "out.mp3"
+    adjusted, dur = voiceover._trim_long_pauses(audio, words, out_path)
+    assert adjusted == words
+    assert dur >= 1.4, f"expected dur >= 1.4 (probed), got {dur}"
+
+
+def test_generate_voiceover_dict_trim_pauses_false_uses_audio_duration(tmp_path, monkeypatch):
+    """trim_pauses=False: total_duration_s must be max(last_word_end, raw_audio_duration)."""
+    monkeypatch.delenv("PARALLAX_TEST_MODE", raising=False)
+
+    def fake_tts(*, text, alias, voice, out_dir, style, style_hint):
+        raw = Path(out_dir) / "raw_tts.mp3"
+        _make_silent_mp3(raw, 2.0)
+        # Word timestamps underestimate: last word ends at 1.8, audio is 2.0
+        return str(raw), [
+            {"word": "hi", "start": 0.0, "end": 0.9},
+            {"word": "there", "start": 1.0, "end": 1.8},
+        ], 2.0
+
+    from parallax import openrouter
+    monkeypatch.setattr(openrouter, "generate_tts", fake_tts)
+
+    result = generate_voiceover_dict("hi there", out_dir=str(tmp_path), trim_pauses=False)
+    assert result["total_duration_s"] == 2.0, (
+        f"expected 2.0 (probed audio), got {result['total_duration_s']}"
+    )
+
+
 def test_generate_voiceover_dict_trim_pauses_false_skips_trim(tmp_path, monkeypatch):
     """trim_pauses=False must not call _trim_long_pauses."""
     monkeypatch.delenv("PARALLAX_TEST_MODE", raising=False)

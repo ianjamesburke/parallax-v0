@@ -94,7 +94,7 @@ def generate_voiceover_dict(
     if pronunciations and tts_text != text:
         log.info("voiceover: applying %d pronunciation substitution(s)", len(pronunciations))
 
-    raw_path, words_with_ends, _raw_duration = openrouter.generate_tts(
+    raw_path, words_with_ends, raw_audio_duration = openrouter.generate_tts(
         text=tts_text,
         alias=voice_model,
         voice=voice,
@@ -110,7 +110,7 @@ def generate_voiceover_dict(
         log.info("voiceover: trim_pauses=false — skipping silence removal")
         _shutil.copy2(raw_path, audio_path)
         words_trimmed = list(words_with_ends)
-        duration = words_trimmed[-1]["end"] if words_trimmed else 0.0
+        duration = max(words_trimmed[-1]["end"], raw_audio_duration) if words_trimmed else raw_audio_duration
     elif isinstance(trim_pauses, float) and not isinstance(trim_pauses, bool):
         words_trimmed, duration = _trim_long_pauses(
             Path(raw_path), list(words_with_ends), audio_path, max_gap_s=trim_pauses,
@@ -185,16 +185,16 @@ def _trim_long_pauses(
         if gap > max_gap_s:
             gaps.append((words[i]["end"] + keep_gap_s, words[i + 1]["start"]))
 
-    if not gaps:
-        shutil.copy2(audio_path, out_path)
-        return list(words), words[-1]["end"] if words else 0.0
-
     probe = run_ffmpeg(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)],
         capture_output=True, text=True,
     )
     total_dur = float(probe.stdout.strip()) if probe.stdout.strip() else (words[-1]["end"] if words else 0.0)
+
+    if not gaps:
+        shutil.copy2(audio_path, out_path)
+        return list(words), max(words[-1]["end"], total_dur) if words else 0.0
 
     # Build the audio segments to keep
     keep: list[tuple[float, float]] = []
@@ -241,8 +241,8 @@ def _trim_long_pauses(
          "end": round(w["end"] - shifts[j], 3)}
         for j, w in enumerate(words)
     ]
-    new_dur = adjusted[-1]["end"] if adjusted else 0.0
     total_removed = sum(e - s for s, e in gaps)
+    new_dur = max(adjusted[-1]["end"], total_dur - total_removed) if adjusted else 0.0
     log.info("_trim_long_pauses: %d gaps removed (%.2fs total), duration %.2fs→%.2fs",
              len(gaps), total_removed, total_dur, new_dur)
     from . import runlog
