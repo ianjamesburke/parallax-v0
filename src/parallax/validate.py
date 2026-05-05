@@ -56,14 +56,14 @@ def validate_brief(brief_path: str | Path, folder: str | Path) -> dict:
                 ),
             })
 
-    # Per-scene image_ref existence
+    # Per-scene image_refs existence
     for scene in brief.script.scenes:
-        if scene.image_ref is not None:
-            ref_path = folder / scene.image_ref
+        for j, image_ref in enumerate(scene.image_refs):
+            ref_path = folder / image_ref
             if not ref_path.is_file():
-                log.warning("validate: missing image_ref %s on scene %d", ref_path, scene.index)
+                log.warning("validate: missing image_refs[%d] %s on scene %d", j, ref_path, scene.index)
                 errors.append({
-                    "field": f"script.scenes[{scene.index}].image_ref",
+                    "field": f"script.scenes[{scene.index}].image_refs[{j}]",
                     "message": f"file not found: {ref_path}",
                 })
 

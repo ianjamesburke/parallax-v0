@@ -63,18 +63,18 @@ def test_validate_brief_bad_schema(tmp_path):
     assert any("schema error" in e["message"] for e in result["errors"])
 
 
-def test_validate_brief_missing_image_ref(tmp_path):
+def test_validate_brief_missing_image_refs(tmp_path):
     brief = tmp_path / "brief.yaml"
     _write_yaml(brief, {
         "goal": "Test",
         "script": {"scenes": [
-            {"index": 0, "vo_text": "hi", "prompt": "scene", "image_ref": "ref.png"},
+            {"index": 0, "vo_text": "hi", "prompt": "scene", "image_refs": ["ref.png"]},
         ]},
     })
     from parallax.validate import validate_brief
     result = validate_brief(brief, tmp_path)
     assert result["valid"] is False
-    assert any("image_ref" in e["field"] for e in result["errors"])
+    assert any("image_refs" in e["field"] for e in result["errors"])
 
 
 def test_validate_brief_file_not_found(tmp_path):
