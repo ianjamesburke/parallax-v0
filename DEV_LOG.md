@@ -2,10 +2,13 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-05 — [CHANGED] Add character_reference brief field and document reference fields (PR #103 → alpha)
+Added `character_reference: bool = False` to `Brief`. When true, `to_plan_skeleton()` sets `reference: true` on every `shot_type: character` scene, causing `stage_stills` to use `plan.character_image` as the still-generation reference — no manual plan edits needed. `image_refs` (per-scene list → `reference_images` in plan) was already wired on alpha; this PR adds the brief-level flag, 3 tests, and skill docs for all three reference mechanisms (`image_refs`, `character_reference`, `reference: true` / `reference_images` in plan).
+**Breaks if:** `parallax plan` on a brief with `character_reference: true` produces a plan where character scenes lack `reference: true`; or a brief without `character_reference` fails to parse.
+
 ## 2026-05-05 — [FIX] Use probed audio duration to prevent last-word clip (PR #102 → alpha)
 `total_duration_s` was set to `words[-1]["end"]` — the faster-whisper word boundary — which misses trailing resonance and TTS decay. The video assembly trimmed exactly there, clipping the last word. Fix: `_trim_long_pauses` probes audio duration before the no-gaps early return and returns `max(last_word_end, probed_dur)` in both branches; the has-gaps branch uses `max(adjusted_end, total_dur - total_removed)` without a second probe. The `trim_pauses=False` path now uses `raw_audio_duration` from `generate_tts` (was discarded as `_raw_duration`).
 **Breaks if:** A produce run with Charon/tts-gemini still clips the last word before it finishes.
-
 ## 2026-05-05 — [CHANGED] Add trim_pauses plan config to tune or disable silence removal (PR #99 → alpha)
 `_trim_long_pauses` was unconditional (max_gap_s=0.4). Voices with dramatic pacing (e.g. Charon/tts-gemini) had large inter-sentence gaps removed, compressing the timeline and causing scene cuts to land mid-sentence. New `trim_pauses` field: `true` (default, unchanged), `false` (skip entirely), or a float (use as max_gap_s). `_restore_pronunciations` is called after all three branches so pronunciations survive regardless of trim path.
 **Breaks if:** a plan with `trim_pauses: false` produces an `audio.trim_pauses` event in run.log, or a plan with no `trim_pauses` key behaves differently than before.
