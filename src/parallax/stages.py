@@ -23,6 +23,7 @@ from typing import Any
 
 from . import runlog
 from .assembly import align_scenes, ken_burns_assemble
+from .ffmpeg_utils import run_ffmpeg
 from .avatar import burn_avatar, key_avatar_track
 from .captions import burn_captions
 from .headline import burn_headline, burn_titles
@@ -155,6 +156,39 @@ def stage_scan(plan: dict[str, Any], settings: Settings, state: PipelineState) -
     return plan
 
 
+_VIDEO_SUFFIXES = frozenset({".mp4", ".mov", ".avi", ".mkv", ".webm"})
+
+
+def _extract_character_image_frame(char_image: str, folder: Path) -> str:
+    """Return a path suitable for use as an image-gen reference.
+
+    If ``char_image`` is already an image file, return it unchanged.
+    If it's a video, extract the frame at 1 s into a cached PNG under
+    ``<folder>/__parallax_cache__/character_frame.png`` and return that.
+    The cache PNG is reused across calls — ffmpeg is not re-invoked when the
+    file already exists.
+
+    Raises RuntimeError naming the video path when ffmpeg exits non-zero.
+    """
+    if Path(char_image).suffix.lower() not in _VIDEO_SUFFIXES:
+        return char_image
+
+    cache_png = folder / "__parallax_cache__" / "character_frame.png"
+    if cache_png.exists():
+        return str(cache_png)
+
+    cache_png.parent.mkdir(parents=True, exist_ok=True)
+    result = run_ffmpeg(
+        ["ffmpeg", "-y", "-ss", "1", "-i", char_image, "-frames:v", "1", str(cache_png)],
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"_extract_character_image_frame: ffmpeg failed to extract frame from "
+            f"{char_image}: {result.stderr}"
+        )
+    return str(cache_png)
+
+
 def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState) -> dict[str, Any]:
     """Generate or reuse stills for every scene; lock new ones in the plan.
 
@@ -221,9 +255,9 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
                     # the per-image attention each one gets.
                     refs = [str(p) for p in candidates[:4]] or None
                 elif s.get("reference") and settings.character_image:
-                    refs = [settings.character_image]
+                    refs = [_extract_character_image_frame(settings.character_image, settings.folder)]
                 elif settings.stills_only and settings.character_image:
-                    refs = [settings.character_image]
+                    refs = [_extract_character_image_frame(settings.character_image, settings.folder)]
                 else:
                     refs = None
 
