@@ -142,24 +142,48 @@ def test_to_plan_skeleton_carries_aspect_voice_and_scenes(tmp_path):
     assert plan["scenes"][1]["motion_prompt"] == "slow zoom"
 
 
-def test_image_ref_round_trips_through_model(tmp_path):
+def test_image_refs_list_parses(tmp_path):
+    payload = _minimal_payload()
+    payload["script"]["scenes"][0]["image_refs"] = ["assets/char.png", "assets/product.png"]
+    p = _write_brief(tmp_path, payload)
+    brief = Brief.from_yaml(p)
+    assert brief.script.scenes[0].image_refs == ["assets/char.png", "assets/product.png"]
+
+
+def test_image_refs_flows_into_plan_skeleton_as_reference_images(tmp_path):
+    payload = _minimal_payload()
+    payload["script"]["scenes"][0]["image_refs"] = ["assets/char.png", "assets/product.png"]
+    p = _write_brief(tmp_path, payload)
+    brief = Brief.from_yaml(p)
+    plan = brief.to_plan_skeleton()
+    assert plan["scenes"][0]["reference_images"] == ["assets/char.png", "assets/product.png"]
+
+
+def test_deprecated_image_ref_migrates_to_image_refs(tmp_path):
     payload = _minimal_payload()
     payload["script"]["scenes"][0]["image_ref"] = "assets/bottle.png"
     p = _write_brief(tmp_path, payload)
-    brief = Brief.from_yaml(p)
-    assert brief.script.scenes[0].image_ref == "assets/bottle.png"
+    import warnings
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        brief = Brief.from_yaml(p)
+    assert brief.script.scenes[0].image_refs == ["assets/bottle.png"]
+    assert any("deprecated" in str(warning.message).lower() for warning in w)
 
 
-def test_image_ref_flows_into_plan_skeleton_as_reference_images(tmp_path):
+def test_deprecated_image_ref_flows_into_plan_skeleton_as_reference_images(tmp_path):
     payload = _minimal_payload()
     payload["script"]["scenes"][0]["image_ref"] = "assets/bottle.png"
     p = _write_brief(tmp_path, payload)
-    brief = Brief.from_yaml(p)
+    import warnings
+    with warnings.catch_warnings(record=True):
+        warnings.simplefilter("always")
+        brief = Brief.from_yaml(p)
     plan = brief.to_plan_skeleton()
     assert plan["scenes"][0]["reference_images"] == ["assets/bottle.png"]
 
 
-def test_scene_without_image_ref_has_no_reference_images_in_skeleton(tmp_path):
+def test_scene_without_image_refs_has_no_reference_images_in_skeleton(tmp_path):
     payload = _minimal_payload()
     p = _write_brief(tmp_path, payload)
     brief = Brief.from_yaml(p)

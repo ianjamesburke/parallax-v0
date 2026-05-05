@@ -57,8 +57,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
+import warnings
+from typing import Any
+
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 _ALLOWED_ASPECTS = ("9:16", "16:9", "1:1", "4:3", "3:4")
@@ -100,7 +103,22 @@ class BriefScene(BaseModel):
     animate: bool = False
     motion_prompt: str | None = None
     aspect: str | None = None  # per-scene override; defaults to brief.aspect
-    image_ref: str | None = None  # single reference image, relative to --folder
+    image_refs: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_image_ref(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "image_ref" in data:
+            warnings.warn(
+                "BriefScene.image_ref is deprecated — use image_refs: list[str] instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            val = data.pop("image_ref")
+            if val is not None:
+                existing = data.get("image_refs", [])
+                data["image_refs"] = list(existing) + [val]
+        return data
 
     @field_validator("aspect")
     @classmethod
@@ -197,7 +215,7 @@ class Brief(BaseModel):
                     **({"animate": True} if s.animate else {}),
                     **({"motion_prompt": s.motion_prompt} if s.motion_prompt else {}),
                     **({"aspect": s.aspect} if s.aspect else {}),
-                    **({"reference_images": [s.image_ref]} if s.image_ref else {}),
+                    **({"reference_images": s.image_refs} if s.image_refs else {}),
                 }
                 for s in self.script.scenes
             ],

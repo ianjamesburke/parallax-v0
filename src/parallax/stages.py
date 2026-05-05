@@ -200,24 +200,28 @@ def _extract_character_image_frame(char_image: str, folder: Path) -> str:
     return str(cache_png)
 
 
-def _generate_one_still(s: dict[str, Any], settings: Settings, state: PipelineState, plan: dict[str, Any]) -> str:
-    """Generate (with retry) one still for scene `s`. Thread-safe. Returns normalized still path."""
-    import re as _re
-    from .openrouter import generate_image
-    from .stills import AspectMismatchError, check_aspect, normalize_aspect
+def _resolve_still_refs(s: dict[str, Any], settings: Settings) -> list[str] | None:
+    """Return the reference image list for a scene still.
 
-    idx = s["index"]
-    prompt = s.get("prompt", "")
-    scene_aspect = s.get("aspect", settings.aspect)
-    scene_image_model = s.get("image_model") or settings.image_model
+    Additive: scene `reference_images` and settings `character_image` (when
+    `reference: true` or `stills_only`) are merged, not mutually exclusive.
+    Falls back to media/ images when no explicit refs are set.
+    """
+    import re as _re
+
+    refs: list[str] | None = None
 
     if "reference_images" in s:
         refs = [str(Path(r) if Path(r).is_absolute() else settings.folder / r) for r in s["reference_images"]]
-    elif s.get("reference") and settings.character_image:
-        refs = [_extract_character_image_frame(settings.character_image, settings.folder)]
+
+    if s.get("reference") and settings.character_image:
+        char_frame = _extract_character_image_frame(settings.character_image, settings.folder)
+        refs = (refs or []) + [char_frame]
     elif settings.stills_only and settings.character_image:
-        refs = [_extract_character_image_frame(settings.character_image, settings.folder)]
-    else:
+        char_frame = _extract_character_image_frame(settings.character_image, settings.folder)
+        refs = (refs or []) + [char_frame]
+
+    if refs is None:
         media_dir = settings.folder / "media"
         if media_dir.is_dir():
             derivative_pat = _re.compile(r"_[an]\d+x\d+$")
@@ -228,8 +232,21 @@ def _generate_one_still(s: dict[str, Any], settings: Settings, state: PipelineSt
                 and not derivative_pat.search(p.stem)
             )
             refs = [str(p) for p in candidates[:4]] or None
-        else:
-            refs = None
+
+    return refs
+
+
+def _generate_one_still(s: dict[str, Any], settings: Settings, state: PipelineState, plan: dict[str, Any]) -> str:
+    """Generate (with retry) one still for scene `s`. Thread-safe. Returns normalized still path."""
+    from .openrouter import generate_image
+    from .stills import AspectMismatchError, check_aspect, normalize_aspect
+
+    idx = s["index"]
+    prompt = s.get("prompt", "")
+    scene_aspect = s.get("aspect", settings.aspect)
+    scene_image_model = s.get("image_model") or settings.image_model
+
+    refs = _resolve_still_refs(s, settings)
 
     attempts = 2
     raw_still_path = None
