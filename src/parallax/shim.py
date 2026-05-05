@@ -23,6 +23,16 @@ def is_test_mode() -> bool:
     return os.environ.get("PARALLAX_TEST_MODE", "").lower() in ("1", "true", "yes")
 
 
+def is_mock_asset(path: "str | Path") -> bool:
+    """Return True if the path looks like a shim-generated mock file.
+
+    Mock files are named mock_*.png / mock_video_*.mp4 / mock_tts_*.wav —
+    all sharing the `mock_` prefix on the filename stem. Live runs use this
+    to detect and reject dry-run stubs that were locked into the plan.
+    """
+    return Path(path).name.startswith("mock_")
+
+
 def output_dir() -> Path:
     return Path(os.environ.get("PARALLAX_OUTPUT_DIR", "output"))
 
