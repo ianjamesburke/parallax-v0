@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 _ALLOWED_ASPECTS = ("9:16", "16:9", "1:1", "4:3", "3:4")
@@ -163,6 +163,7 @@ class Plan(BaseModel):
     voice_model: str = "tts-mini"
     style: str | None = None
     style_hint: str | None = None
+    pronunciations: dict[str, str] = Field(default_factory=dict)
 
     # Models
     image_model: str = "mid"

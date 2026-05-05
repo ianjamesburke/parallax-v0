@@ -24,6 +24,32 @@ from .shim import is_test_mode, output_dir
 log = get_logger(__name__)
 
 
+def apply_pronunciations(text: str, pronunciations: dict[str, str]) -> str:
+    """Substitute phonetic spellings before TTS. Word-boundary, case-insensitive."""
+    for word, phonetic in pronunciations.items():
+        text = re.sub(r'\b' + re.escape(word) + r'\b', phonetic, text, flags=re.IGNORECASE)
+    return text
+
+
+def _restore_pronunciations(
+    words: list[dict], pronunciations: dict[str, str]
+) -> list[dict]:
+    """Restore original spellings in aligned word list after forced alignment."""
+    if not pronunciations:
+        return list(words)
+
+    def _norm(s: str) -> str:
+        return re.sub(r'[-]', '', s).lower().strip(".,!?;:")
+
+    phonetic_map = {_norm(v): k for k, v in pronunciations.items()}
+    result = []
+    for w in words:
+        n = _norm(w["word"])
+        original = phonetic_map.get(n)
+        result.append({**w, "word": original} if original else w)
+    return result
+
+
 def generate_voiceover_dict(
     text: str,
     voice: str = "nova",
@@ -31,6 +57,7 @@ def generate_voiceover_dict(
     style: str | None = None,
     style_hint: str | None = None,
     voice_model: str = "tts-mini",
+    pronunciations: dict[str, str] | None = None,
 ) -> dict:
     """Generate voiceover and trim overlong inter-word silences.
 
@@ -49,6 +76,8 @@ def generate_voiceover_dict(
     dest = Path(out_dir or str(output_dir()))
     dest.mkdir(parents=True, exist_ok=True)
 
+    pronunciations = pronunciations or {}
+
     if is_test_mode():
         return json.loads(_mock_voiceover(text, dest))
 
@@ -60,8 +89,12 @@ def generate_voiceover_dict(
         voice, voice_model, len(text), style or style_hint or "default",
     )
 
+    tts_text = apply_pronunciations(text, pronunciations) if pronunciations else text
+    if pronunciations and tts_text != text:
+        log.info("voiceover: applying %d pronunciation substitution(s)", len(pronunciations))
+
     raw_path, words_with_ends, _raw_duration = openrouter.generate_tts(
-        text=text,
+        text=tts_text,
         alias=voice_model,
         voice=voice,
         out_dir=dest,
@@ -74,6 +107,7 @@ def generate_voiceover_dict(
     words_trimmed, duration = _trim_long_pauses(
         Path(raw_path), list(words_with_ends), audio_path,
     )
+    words_trimmed = _restore_pronunciations(words_trimmed, pronunciations)
 
     words_path = dest / "vo_words.json"
     words_path.write_text(json.dumps({
@@ -99,6 +133,7 @@ def generate_voiceover(
     style: str | None = None,
     style_hint: str | None = None,
     voice_model: str = "tts-mini",
+    pronunciations: dict[str, str] | None = None,
 ) -> str:
     """JSON-string wrapper around generate_voiceover_dict. Kept for CLI/external callers.
 
@@ -111,6 +146,7 @@ def generate_voiceover(
         style=style,
         style_hint=style_hint,
         voice_model=voice_model,
+        pronunciations=pronunciations,
     ))
 
 
