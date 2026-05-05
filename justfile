@@ -39,6 +39,3 @@ bump:
     git add pyproject.toml uv.lock
     git commit -m "chore: bump version to $new"
     echo "Bumped $current → $new"
-
-# Bump patch version and reinstall main parallax CLI (run from worktrees/alpha/)
-bump-and-install: bump install
