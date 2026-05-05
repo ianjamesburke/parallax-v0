@@ -180,6 +180,7 @@ class Settings:
 
     # Pipeline behaviour
     stills_only: bool
+    trim_pauses: bool | float = True
     mode: ProductionMode = ProductionMode.REAL
     events: EventEmitter = field(default=_default_emitter)
     usage: UsageSession = field(default_factory=UsageSession)
@@ -333,6 +334,7 @@ def _resolve_settings_from_plan(
         character_image=character_image,
         avatar_cfg=avatar_cfg,
         stills_only=plan.stills_only,
+        trim_pauses=plan.trim_pauses,
         mode=_resolve_mode(mode),
         titles_cfg=titles_cfg,
     )
@@ -440,6 +442,7 @@ def _resolve_settings_from_dict(
         character_image=character_image,
         avatar_cfg=plan.get("avatar"),
         stills_only=bool(plan.get("stills_only", False)),
+        trim_pauses=plan.get("trim_pauses", True),
         mode=_resolve_mode(mode),
         titles_cfg=plan.get("titles", []) or [],
     )

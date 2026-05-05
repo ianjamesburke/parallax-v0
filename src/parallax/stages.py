@@ -35,7 +35,7 @@ from .manifest import write_manifest
 from .project import scan_project_folder
 from .settings import ProductionMode, Settings
 from .shim import is_mock_asset
-from .voiceover import generate_voiceover
+from .voiceover import generate_voiceover_dict
 
 
 # --------------------------------------------------------------------------
@@ -560,12 +560,13 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
              f"generate_voiceover — voice={settings.voice} voice_model={voice_model} "
              f"style={settings.style or settings.style_hint or '<default>'}")
         pronunciations = plan.get("pronunciations") or {}
-        vo_result = json.loads(generate_voiceover(
+        vo_result = generate_voiceover_dict(
             text=full_script, voice=settings.voice,
             out_dir=state.audio_dir, style=settings.style, style_hint=settings.style_hint,
             voice_model=voice_model,
             pronunciations=pronunciations or None,
-        ))
+            trim_pauses=settings.trim_pauses,
+        )
         audio_path = vo_result["audio_path"]
         words_path = vo_result["words_path"]
         _log(settings, f"  audio: {Path(audio_path).name}  ({vo_result['total_duration_s']:.1f}s)")

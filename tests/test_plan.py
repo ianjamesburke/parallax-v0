@@ -276,3 +276,32 @@ def test_per_scene_aspect_override_invalid_rejected(tmp_path):
     p = _write_plan(tmp_path, payload)
     with pytest.raises(Exception):
         Plan.from_yaml(p)
+
+
+def test_plan_trim_pauses_defaults_to_true():
+    plan = Plan.model_validate({
+        "aspect": "9:16",
+        "voice": "nova",
+        "scenes": [{"index": 0, "vo_text": "hello"}],
+    })
+    assert plan.trim_pauses is True
+
+
+def test_plan_trim_pauses_false():
+    plan = Plan.model_validate({
+        "aspect": "9:16",
+        "voice": "nova",
+        "trim_pauses": False,
+        "scenes": [{"index": 0, "vo_text": "hello"}],
+    })
+    assert plan.trim_pauses is False
+
+
+def test_plan_trim_pauses_float():
+    plan = Plan.model_validate({
+        "aspect": "9:16",
+        "voice": "nova",
+        "trim_pauses": 0.8,
+        "scenes": [{"index": 0, "vo_text": "hello"}],
+    })
+    assert plan.trim_pauses == 0.8

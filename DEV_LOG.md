@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-05 — [CHANGED] Add trim_pauses plan config to tune or disable silence removal (PR #99 → alpha)
+`_trim_long_pauses` was unconditional (max_gap_s=0.4). Voices with dramatic pacing (e.g. Charon/tts-gemini) had large inter-sentence gaps removed, compressing the timeline and causing scene cuts to land mid-sentence. New `trim_pauses` field: `true` (default, unchanged), `false` (skip entirely), or a float (use as max_gap_s). `_restore_pronunciations` is called after all three branches so pronunciations survive regardless of trim path.
+**Breaks if:** a plan with `trim_pauses: false` produces an `audio.trim_pauses` event in run.log, or a plan with no `trim_pauses` key behaves differently than before.
+
 ## 2026-05-05 — [CHANGED] Add pronunciations map for TTS phonetic hints (PR #98 → alpha)
 `pronunciations: dict[str, str]` at the brief and plan level. Before TTS, phonetic forms replace target words (word-boundary, case-insensitive). After forced alignment, original spellings are restored in `vo_words.json` so captions display the intended text. Root cause for the fix: TTS mispronounces unusual words (e.g. "Shilajit" → "Shelaget"), WhisperX drops the unrecognized phoneme (0 tokens), and `align_scenes` shifts all subsequent scene boundaries forward because word count from the voiceover transcript is 1 short.
 **Breaks if:** `parallax schema brief` doesn't list `pronunciations`; a brief with `pronunciations: {Shilajit: shilajit}` fails validation; or `generate_voiceover_dict` receives a non-empty `pronunciations` kwarg but the TTS text is sent unchanged.
