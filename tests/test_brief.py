@@ -191,6 +191,41 @@ def test_scene_without_image_refs_has_no_reference_images_in_skeleton(tmp_path):
     assert "reference_images" not in plan["scenes"][0]
 
 
+def test_character_reference_sets_reference_flag_on_character_scenes(tmp_path):
+    payload = _minimal_payload()
+    payload["character_reference"] = True
+    # _minimal_payload scene 0 is shot_type "character"
+    p = _write_brief(tmp_path, payload)
+    brief = Brief.from_yaml(p)
+    plan = brief.to_plan_skeleton()
+    assert plan["scenes"][0]["reference"] is True
+
+
+def test_character_reference_does_not_affect_broll_scenes(tmp_path):
+    payload = _minimal_payload()
+    payload["character_reference"] = True
+    payload["script"]["scenes"].append({
+        "index": 1,
+        "shot_type": "broll",
+        "vo_text": "broll line",
+        "prompt": "wide shot",
+    })
+    p = _write_brief(tmp_path, payload)
+    brief = Brief.from_yaml(p)
+    plan = brief.to_plan_skeleton()
+    assert plan["scenes"][0]["reference"] is True      # character
+    assert "reference" not in plan["scenes"][1]        # broll
+
+
+def test_character_reference_false_leaves_no_reference_flag(tmp_path):
+    payload = _minimal_payload()
+    payload["character_reference"] = False
+    p = _write_brief(tmp_path, payload)
+    brief = Brief.from_yaml(p)
+    plan = brief.to_plan_skeleton()
+    assert "reference" not in plan["scenes"][0]
+
+
 def test_per_scene_aspect_override_validated(tmp_path):
     payload = _minimal_payload()
     payload["script"]["scenes"][0]["aspect"] = "16:9"

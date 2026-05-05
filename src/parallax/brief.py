@@ -150,6 +150,9 @@ class Brief(BaseModel):
     # Lower is cheaper. Seedance 2.0 Fast: 480p=$0.054/s, 720p=$0.121/s, 1080p=$0.272/s.
     # Defaults are aspect-aware (9:16→480x854, 16:9→854x480, 1:1→480x480).
     animate_resolution: str | None = None  # None = use aspect-derived default
+    # When true, the planner auto-sets `reference: true` on every character scene
+    # so the engine uses `character_image` as the reference for still generation.
+    character_reference: bool = False
     pronunciations: dict[str, str] = Field(default_factory=dict)
     success_criteria: list[str] = Field(default_factory=list)
     assets: Assets = Field(default_factory=Assets)
@@ -218,6 +221,7 @@ class Brief(BaseModel):
                     **({"motion_prompt": s.motion_prompt} if s.motion_prompt else {}),
                     **({"aspect": s.aspect} if s.aspect else {}),
                     **({"reference_images": s.image_refs} if s.image_refs else {}),
+                    **({"reference": True} if self.character_reference and s.shot_type == "character" else {}),
                 }
                 for s in self.script.scenes
             ],
