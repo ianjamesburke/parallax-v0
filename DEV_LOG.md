@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-05 — [FIX] Use probed audio duration to prevent last-word clip (PR #102 → alpha)
+`total_duration_s` was set to `words[-1]["end"]` — the faster-whisper word boundary — which misses trailing resonance and TTS decay. The video assembly trimmed exactly there, clipping the last word. Fix: `_trim_long_pauses` probes audio duration before the no-gaps early return and returns `max(last_word_end, probed_dur)` in both branches; the has-gaps branch uses `max(adjusted_end, total_dur - total_removed)` without a second probe. The `trim_pauses=False` path now uses `raw_audio_duration` from `generate_tts` (was discarded as `_raw_duration`).
+**Breaks if:** A produce run with Charon/tts-gemini still clips the last word before it finishes.
+
 ## 2026-05-05 — [CHANGED] Add trim_pauses plan config to tune or disable silence removal (PR #99 → alpha)
 `_trim_long_pauses` was unconditional (max_gap_s=0.4). Voices with dramatic pacing (e.g. Charon/tts-gemini) had large inter-sentence gaps removed, compressing the timeline and causing scene cuts to land mid-sentence. New `trim_pauses` field: `true` (default, unchanged), `false` (skip entirely), or a float (use as max_gap_s). `_restore_pronunciations` is called after all three branches so pronunciations survive regardless of trim path.
 **Breaks if:** a plan with `trim_pauses: false` produces an `audio.trim_pauses` event in run.log, or a plan with no `trim_pauses` key behaves differently than before.
