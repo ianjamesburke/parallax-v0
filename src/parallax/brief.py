@@ -100,6 +100,7 @@ class BriefScene(BaseModel):
     animate: bool = False
     motion_prompt: str | None = None
     aspect: str | None = None  # per-scene override; defaults to brief.aspect
+    still_path: str | None = None  # approved still from a prior version — skips generation
 
     @field_validator("aspect")
     @classmethod
@@ -158,7 +159,7 @@ class Brief(BaseModel):
     # --------------------------------------------------------- Validation
 
     def validate_assets(self, folder: str | Path) -> list[str]:
-        """Check every `provided` asset exists relative to `folder`.
+        """Check every `provided` asset and scene-level `still_path` exists.
 
         Returns a list of missing absolute paths (empty = all good).
         Generated assets are NOT checked — they're an inventory hint, not
@@ -171,6 +172,12 @@ class Brief(BaseModel):
             full = ap if ap.is_absolute() else root / ap
             if not full.is_file():
                 missing.append(str(full))
+        for scene in self.script.scenes:
+            if scene.still_path:
+                sp = Path(scene.still_path)
+                full = sp if sp.is_absolute() else root / sp
+                if not full.is_file():
+                    missing.append(str(full))
         return missing
 
     # ----------------------------------------------------- Plan derivation
@@ -196,6 +203,7 @@ class Brief(BaseModel):
                     **({"animate": True} if s.animate else {}),
                     **({"motion_prompt": s.motion_prompt} if s.motion_prompt else {}),
                     **({"aspect": s.aspect} if s.aspect else {}),
+                    **({"still_path": s.still_path} if s.still_path else {}),
                 }
                 for s in self.script.scenes
             ],

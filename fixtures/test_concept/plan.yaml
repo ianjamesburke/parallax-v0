@@ -1,20 +1,32 @@
+aspect: '9:16'
 voice: george
 voice_speed: 1.1
+voice_model: tts-mini
 image_model: mid
 video_model: mid
-aspect: "9:16"
-resolution: 1080x1920
+caption_style: bangers
+fontsize: 55
+words_per_chunk: smart
 captions: skip
+caption_shift_s: 0.0
+stills_only: false
+default_transition_duration_s: 0.5
 scenes:
 - index: 0
   shot_type: broll
   vo_text: A woman walks into a bright lit kitchen.
   prompt: Cinematic shot of a woman entering a sunlit kitchen, morning light.
+  animate: false
+  still_path: parallax/assets/scene_00_still.png
 - index: 1
   shot_type: broll
   vo_text: She picks up a glowing red apple.
   prompt: Close up on a hand picking up a glossy red apple from a wooden bowl.
+  animate: false
+  still_path: parallax/assets/scene_01_still.png
 - index: 2
   shot_type: broll
   vo_text: And takes the first crisp bite.
   prompt: Slow motion close up of a woman biting into a red apple.
+  animate: false
+  still_path: parallax/assets/scene_02_still.png

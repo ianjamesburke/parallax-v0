@@ -3,7 +3,7 @@ test:
 
 # Install CLI from current directory (works from any worktree)
 install:
-    uv tool install --reinstall .
+    uv tool install --python python3.11 --reinstall .
 
 # Install PR as isolated CLI: parallax-pr<N> (run from feature worktree)
 pr-install pr:
