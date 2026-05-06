@@ -52,6 +52,53 @@ def _find_scene_end(words: list[dict], cursor: int, plan_words: list[str]) -> in
     return None
 
 
+def _cross_check_transcript(scenes: list[dict], words: list[dict]) -> None:
+    """Compare TTS word sequence against plan vo_text and warn on mismatches.
+
+    Uses difflib to align plan words against TTS words per scene, filtering
+    out word merges/splits (e.g. "Mars Men" → "Marsmen") and number
+    reformatting. Only reports true substitutions where TTS produced a
+    different word than the script intended.
+    """
+    from difflib import SequenceMatcher
+
+    cursor = 0
+    for scene in scenes:
+        vo_text = scene.get("vo_text", "").strip()
+        if not vo_text:
+            continue
+        plan_tokens = re.sub(r'\[[^\]]*\]', '', vo_text).split()
+        plan_normed = [_norm_word(w) for w in plan_tokens if _norm_word(w)]
+
+        start_s = scene.get("start_s")
+        end_s = scene.get("end_s")
+        if start_s is None or end_s is None:
+            continue
+
+        scene_tts: list[dict] = []
+        while cursor < len(words) and words[cursor]["end"] <= end_s + 0.01:
+            scene_tts.append(words[cursor])
+            cursor += 1
+
+        tts_normed = [_norm_word(w["word"]) for w in scene_tts]
+
+        sm = SequenceMatcher(None, plan_normed, tts_normed)
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag != "replace":
+                continue
+            plan_chunk = "".join(plan_normed[i1:i2])
+            tts_chunk = "".join(tts_normed[j1:j2])
+            if plan_chunk == tts_chunk:
+                continue
+            plan_raw = " ".join(plan_tokens[i1:i2]) if i1 < len(plan_tokens) else "?"
+            tts_raw = " ".join(w["word"] for w in scene_tts[j1:j2]) if j1 < len(scene_tts) else "?"
+            t = scene_tts[j1]["start"] if j1 < len(scene_tts) else 0.0
+            log.warning(
+                "Scene %s transcript mismatch: plan=%r tts=%r (at %.2fs)",
+                scene.get("index", "?"), plan_raw, tts_raw, t,
+            )
+
+
 def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> list[dict]:
     """Assign start_s/end_s/duration_s so scenes form a contiguous cover of the audio.
 
@@ -129,6 +176,7 @@ def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> li
             end_s=s.get("end_s"),
             duration_s=s.get("duration_s"),
         )
+    _cross_check_transcript(scenes, words)
     return scenes
 
 
@@ -244,7 +292,7 @@ def ken_burns_assemble_obj(
                 [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
                  "-i", str(no_audio),
                  "-i", str(audio_path),
-                 "-c:v", "copy", "-c:a", "aac", "-shortest",
+                 "-c:v", "copy", "-c:a", "aac",
                  str(out)],
                 check=True,
             )
@@ -503,7 +551,7 @@ def assemble_clip_video_obj(
             ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
              "-i", str(no_audio),
              "-i", str(audio_path),
-             "-c:v", "copy", "-c:a", "aac", "-shortest",
+             "-c:v", "copy", "-c:a", "aac",
              str(out)],
             check=True,
         )

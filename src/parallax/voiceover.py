@@ -137,7 +137,15 @@ def _trim_long_pauses(
 
     if not gaps:
         shutil.copy2(audio_path, out_path)
-        return list(words), words[-1]["end"] if words else 0.0
+        probe_dur = run_ffmpeg(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(out_path)],
+            capture_output=True, text=True,
+        )
+        dur = float(probe_dur.stdout.strip()) if probe_dur.stdout.strip() else (
+            words[-1]["end"] if words else 0.0
+        )
+        return list(words), dur
 
     probe = run_ffmpeg(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -191,7 +199,14 @@ def _trim_long_pauses(
          "end": round(w["end"] - shifts[j], 3)}
         for j, w in enumerate(words)
     ]
-    new_dur = adjusted[-1]["end"] if adjusted else 0.0
+    probe_out = run_ffmpeg(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(out_path)],
+        capture_output=True, text=True,
+    )
+    new_dur = float(probe_out.stdout.strip()) if probe_out.stdout.strip() else (
+        adjusted[-1]["end"] if adjusted else 0.0
+    )
     total_removed = sum(e - s for s, e in gaps)
     log.info("_trim_long_pauses: %d gaps removed (%.2fs total), duration %.2fs→%.2fs",
              len(gaps), total_removed, total_dur, new_dur)
