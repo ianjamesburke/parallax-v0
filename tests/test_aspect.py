@@ -67,7 +67,7 @@ def test_resolve_settings_defaults_to_9_16_when_aspect_absent(tmp_path):
     plan_path.write_text(yaml.safe_dump(plan))
     settings = resolve_settings(plan, tmp_path, plan_path)
     assert settings.aspect == "9:16"
-    assert settings.resolution == "1080x1920"
+    assert settings.resolution == "720x1280"
 
 
 # ---------------------------------------------------------------------------

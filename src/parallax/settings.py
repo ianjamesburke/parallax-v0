@@ -33,7 +33,7 @@ from .ffmpeg_utils import parse_resolution, probe_resolution
 # plan and there are no clips to probe, the resolution is derived from this
 # table so the output matches the chosen aspect at a sensible default size.
 _ASPECT_TO_RESOLUTION: dict[str, str] = {
-    "9:16": "1080x1920",
+    "9:16": "720x1280",
     "16:9": "1920x1080",
     "1:1":  "1080x1080",
     "4:3":  "1080x810",
