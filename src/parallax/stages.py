@@ -577,17 +577,26 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
                      "words_path": words_path, "total_duration_s": total_dur}
         _log(settings, f"reusing voiceover: {Path(audio_path).name}")
     elif plan.get("audio_path") and not plan.get("words_path"):
-        from . import forced_align
         audio_path = str((settings.folder / plan["audio_path"]) if not Path(plan["audio_path"]).is_absolute() else Path(plan["audio_path"]))
         words_path = str(Path(audio_path).with_name("vo_words.json"))
-        _log(settings, f"forced_align → {Path(audio_path).name} (whisperx)")
-        words = forced_align.align_words(audio_path)
-        import wave as _wave
-        with _wave.open(audio_path, "rb") as _w:
-            total = _w.getnframes() / float(_w.getframerate())
-        Path(words_path).write_text(json.dumps(
-            {"words": words, "total_duration_s": round(total, 3)}, indent=2,
-        ))
+        if Path(words_path).exists():
+            _log(settings, f"reusing cached words: {Path(words_path).name}")
+            words_data = json.loads(Path(words_path).read_text())
+            words = words_data if isinstance(words_data, list) else words_data.get("words", [])
+            total = (
+                float(words_data.get("total_duration_s", words[-1]["end"])) if isinstance(words_data, dict)
+                else float(words[-1]["end"]) if words else 0.0
+            )
+        else:
+            from . import forced_align
+            _log(settings, f"forced_align → {Path(audio_path).name} (whisperx)")
+            words = forced_align.align_words(audio_path)
+            import wave as _wave
+            with _wave.open(audio_path, "rb") as _w:
+                total = _w.getnframes() / float(_w.getframerate())
+            Path(words_path).write_text(json.dumps(
+                {"words": words, "total_duration_s": round(total, 3)}, indent=2,
+            ))
         vo_result = {"words": words, "audio_path": audio_path, "words_path": words_path,
                      "total_duration_s": total}
         _log(settings, f"  aligned {len(words)} words ({words[0]['start']:.2f}s – {words[-1]['end']:.2f}s)")

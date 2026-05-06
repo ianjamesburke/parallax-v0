@@ -18,6 +18,10 @@ def register_parser(sub: argparse._SubParsersAction) -> None:
         "--no-whisperx", dest="no_whisperx", action="store_true", default=False,
         help="Use faster-whisper instead of WhisperX. Less precise timestamps; no install required.",
     )
+    transcribe_p.add_argument(
+        "--words", default=None,
+        help="Path to existing words JSON — skips transcription, reformats and writes to --out.",
+    )
 
     detect_p = audio_sub.add_parser(
         "detect-silences",
@@ -62,6 +66,10 @@ def register_parser(sub: argparse._SubParsersAction) -> None:
     cap_p.add_argument(
         "--crossfade", type=float, default=0.05,
         help="Crossfade duration at each cut joint, in seconds (default: 0.05).",
+    )
+    cap_p.add_argument(
+        "--words", default=None,
+        help="Path to existing words JSON — skips WhisperX alignment.",
     )
 
     vo_p = audio_sub.add_parser(
@@ -136,9 +144,15 @@ def run(args) -> int:
         return 0
 
     if args.audio_command == "transcribe":
+        from pathlib import Path
         from ..audio import transcribe_words
+        preloaded = None
+        if getattr(args, "words", None):
+            import json as _json
+            data = _json.loads(Path(args.words).read_text())
+            preloaded = data if isinstance(data, list) else data.get("words", [])
         try:
-            words = transcribe_words(args.input, args.out, no_whisperx=args.no_whisperx)
+            words = transcribe_words(args.input, args.out, no_whisperx=args.no_whisperx, words=preloaded)
         except RuntimeError as e:
             print(f"ERROR: {e}", file=sys.stderr)
             return 1
@@ -190,12 +204,19 @@ def run(args) -> int:
         return 0
 
     if args.audio_command == "cap-pauses":
+        from pathlib import Path
         from ..audio import cap_pauses
+        preloaded = None
+        if getattr(args, "words", None):
+            import json as _json
+            data = _json.loads(Path(args.words).read_text())
+            preloaded = data if isinstance(data, list) else data.get("words", [])
         result = cap_pauses(
             input_path=args.input,
             output_path=args.output,
             max_gap_s=args.max_gap,
             crossfade_s=args.crossfade,
+            words=preloaded,
         )
         print(f"cap-pauses: {result['gaps_trimmed']} gaps capped to {result['max_gap_s']:.2f}s")
         print(

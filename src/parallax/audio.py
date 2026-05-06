@@ -17,7 +17,7 @@ _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 log = logging.getLogger("parallax.audio")
 
 
-def transcribe_words(input_path: str, out_path: str, no_whisperx: bool = False) -> list[dict]:
+def transcribe_words(input_path: str, out_path: str, no_whisperx: bool = False, words: list[dict] | None = None) -> list[dict]:
     """Transcribe audio or video to word-level timestamps.
 
     Writes {"words": [{word, start, end}], "total_duration_s": X} to out_path.
@@ -26,6 +26,12 @@ def transcribe_words(input_path: str, out_path: str, no_whisperx: bool = False) 
     Prefers WhisperX (whisper + wav2vec2 forced alignment) when installed.
     Falls back to faster-whisper native word timestamps otherwise.
     """
+    if words is not None:
+        total = words[-1]["end"]
+        log.info("transcribe_words: reusing %d preloaded words, span %.2f–%.2fs", len(words), words[0]["start"], total)
+        Path(out_path).write_text(json.dumps({"words": words, "total_duration_s": total}, indent=2))
+        return words
+
     tmp_audio: str | None = None
     try:
         tmp_audio = tempfile.mktemp(suffix=".wav")
@@ -331,6 +337,7 @@ def cap_pauses(
     output_path: str,
     max_gap_s: float = 0.75,
     crossfade_s: float = 0.05,
+    words: list[dict] | None = None,
 ) -> dict:
     """Trim every inter-word gap > max_gap_s down to exactly max_gap_s.
 
@@ -350,25 +357,25 @@ def cap_pauses(
     is a single trimmed audio file, no plan YAML or project layout
     required.
     """
-    from . import forced_align
-
     src = Path(input_path).expanduser().resolve()
     dst = Path(output_path).expanduser().resolve()
     if not src.is_file():
         raise FileNotFoundError(f"cap_pauses: input not found: {src}")
     dst.parent.mkdir(parents=True, exist_ok=True)
 
-    # WhisperX needs wav-ish input. ffmpeg-based loaders accept m4a/mp3 fine,
-    # but we transcode to a temp wav so probe + filter math don't have to
-    # care about variable-bitrate containers.
-    with tempfile.TemporaryDirectory() as tmpdir:
-        wav_for_align = Path(tmpdir) / "for_align.wav"
-        run_ffmpeg(
-            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-             "-i", str(src), "-ar", "44100", "-ac", "1", str(wav_for_align)],
-            check=True, capture_output=True,
-        )
-        words = forced_align.align_words(wav_for_align)
+    if words is None:
+        from . import forced_align
+        # WhisperX needs wav-ish input. ffmpeg-based loaders accept m4a/mp3 fine,
+        # but we transcode to a temp wav so probe + filter math don't have to
+        # care about variable-bitrate containers.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wav_for_align = Path(tmpdir) / "for_align.wav"
+            run_ffmpeg(
+                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                 "-i", str(src), "-ar", "44100", "-ac", "1", str(wav_for_align)],
+                check=True, capture_output=True,
+            )
+            words = forced_align.align_words(wav_for_align)
 
     if not words:
         raise RuntimeError(f"cap_pauses: no words detected in {src}")
