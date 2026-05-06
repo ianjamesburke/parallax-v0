@@ -53,12 +53,14 @@ def _find_scene_end(words: list[dict], cursor: int, plan_words: list[str]) -> in
 
 
 def _cross_check_transcript(scenes: list[dict], words: list[dict]) -> None:
-    """Compare TTS word sequence against plan vo_text and warn on mismatches.
+    """Compare TTS words against plan vo_text; fix substitutions in place.
 
-    Uses difflib to align plan words against TTS words per scene, filtering
-    out word merges/splits (e.g. "Mars Men" → "Marsmen") and number
-    reformatting. Only reports true substitutions where TTS produced a
-    different word than the script intended.
+    Uses difflib to align plan words against TTS words per scene. For
+    same-count replacements (1:1, 2:2, etc.) where the concatenated
+    normalized forms differ, patches the TTS word text to match the plan
+    so captions display the script text, not TTS hallucinations.
+    Merges/splits (different word counts) are logged but left alone since
+    the timing doesn't map.
     """
     from difflib import SequenceMatcher
 
@@ -68,7 +70,8 @@ def _cross_check_transcript(scenes: list[dict], words: list[dict]) -> None:
         if not vo_text:
             continue
         plan_tokens = re.sub(r'\[[^\]]*\]', '', vo_text).split()
-        plan_normed = [_norm_word(w) for w in plan_tokens if _norm_word(w)]
+        plan_content = [(i, w) for i, w in enumerate(plan_tokens) if _norm_word(w)]
+        plan_normed = [_norm_word(w) for _, w in plan_content]
 
         start_s = scene.get("start_s")
         end_s = scene.get("end_s")
@@ -90,13 +93,23 @@ def _cross_check_transcript(scenes: list[dict], words: list[dict]) -> None:
             tts_chunk = "".join(tts_normed[j1:j2])
             if plan_chunk == tts_chunk:
                 continue
-            plan_raw = " ".join(plan_tokens[i1:i2]) if i1 < len(plan_tokens) else "?"
-            tts_raw = " ".join(w["word"] for w in scene_tts[j1:j2]) if j1 < len(scene_tts) else "?"
+
+            plan_span = [plan_tokens[idx] for idx, _ in plan_content[i1:i2]]
+            tts_raw = " ".join(w["word"] for w in scene_tts[j1:j2])
             t = scene_tts[j1]["start"] if j1 < len(scene_tts) else 0.0
-            log.warning(
-                "Scene %s transcript mismatch: plan=%r tts=%r (at %.2fs)",
-                scene.get("index", "?"), plan_raw, tts_raw, t,
-            )
+
+            if (i2 - i1) == (j2 - j1):
+                for k, tts_word in enumerate(scene_tts[j1:j2]):
+                    tts_word["word"] = plan_span[k]
+                log.info(
+                    "Scene %s caption fix: %r → %r (at %.2fs)",
+                    scene.get("index", "?"), tts_raw, " ".join(plan_span), t,
+                )
+            else:
+                log.warning(
+                    "Scene %s transcript mismatch (unfixable): plan=%r tts=%r (at %.2fs)",
+                    scene.get("index", "?"), " ".join(plan_span), tts_raw, t,
+                )
 
 
 def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> list[dict]:
