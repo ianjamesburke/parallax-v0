@@ -283,6 +283,56 @@ def test_generate_voiceover_dict_trim_pauses_false_skips_trim(tmp_path, monkeypa
     assert result["total_duration_s"] == 2.0
 
 
+def test_reuse_voiceover_uses_probed_file_duration(tmp_path, monkeypatch):
+    """_reuse_voiceover must probe the actual audio file, ignoring stale JSON total_duration_s."""
+    import json as _json
+    from parallax.settings import ProductionMode, Settings
+    from parallax.stages import PipelineState, stage_voiceover
+
+    audio = tmp_path / "vo.wav"
+    subprocess.run(
+        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+         "-f", "lavfi", "-i", "anullsrc=cl=mono:r=44100",
+         "-t", "2.0", "-c:a", "pcm_s16le", str(audio)],
+        check=True, capture_output=True,
+    )
+    words = [{"word": "hi", "start": 0.0, "end": 1.5}]
+    words_file = tmp_path / "words.json"
+    # Intentionally set total_duration_s to 1.5 (last word end), not 2.0 (actual file)
+    words_file.write_text(_json.dumps({"words": words, "total_duration_s": 1.5}))
+
+    plan = {"audio_path": str(audio), "words_path": str(words_file), "scenes": []}
+    plan_path = tmp_path / "plan.yaml"
+    plan_path.write_text("")
+    settings = Settings(
+        folder=tmp_path, plan_path=plan_path,
+        concept_prefix="", image_model="draft", video_model="mid",
+        aspect="9:16", resolution="1080x1920", animate_resolution="480x854",
+        video_width=1080, video_height=1920, res_scale=1.0,
+        voice="alloy", voice_model="tts-mini", voice_speed=1.0,
+        style=None, style_hint=None, caption_style="default", fontsize=48,
+        words_per_chunk=3, caption_animation_override=None, caption_shift_s=0.0,
+        skip_captions=False, headline=None, headline_fontsize=None,
+        headline_bg=None, headline_color=None, character_image=None,
+        avatar_cfg=None, stills_only=False, mode=ProductionMode.TEST,
+        events=lambda *_: None, run_id="test-run",
+    )
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir()
+    state = PipelineState(
+        out_dir=str(tmp_path), assets_dir=str(tmp_path),
+        stills_dir=str(tmp_path), video_dir=str(tmp_path),
+        audio_dir=str(audio_dir), version=1, short_id="test",
+        convention_name="test.mp4",
+    )
+
+    stage_voiceover(plan, settings, state)
+    assert state.vo_result is not None
+    assert abs(state.vo_result["total_duration_s"] - 2.0) < 0.1, (
+        f"expected ~2.0 (probed), got {state.vo_result['total_duration_s']}"
+    )
+
+
 def test_generate_voiceover_dict_trim_pauses_float_uses_custom_max_gap(tmp_path, monkeypatch):
     """trim_pauses=0.8 must call _trim_long_pauses with max_gap_s=0.8."""
     monkeypatch.delenv("PARALLAX_TEST_MODE", raising=False)
