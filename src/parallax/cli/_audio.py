@@ -14,6 +14,10 @@ def register_parser(sub: argparse._SubParsersAction) -> None:
     )
     transcribe_p.add_argument("input", help="Audio or video file to transcribe.")
     transcribe_p.add_argument("--out", required=True, help="Output path for words JSON.")
+    transcribe_p.add_argument(
+        "--no-whisperx", dest="no_whisperx", action="store_true", default=False,
+        help="Use faster-whisper instead of WhisperX. Less precise timestamps; no install required.",
+    )
 
     detect_p = audio_sub.add_parser(
         "detect-silences",
@@ -134,7 +138,7 @@ def run(args) -> int:
     if args.audio_command == "transcribe":
         from ..audio import transcribe_words
         try:
-            words = transcribe_words(args.input, args.out)
+            words = transcribe_words(args.input, args.out, no_whisperx=args.no_whisperx)
         except RuntimeError as e:
             print(f"ERROR: {e}", file=sys.stderr)
             return 1

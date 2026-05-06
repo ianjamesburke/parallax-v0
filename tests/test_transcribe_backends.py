@@ -80,7 +80,7 @@ class TestWhisperBackendSelection:
 
         with patch.object(wb_mod, "_HAS_WHISPERX", False), \
              patch("faster_whisper.WhisperModel", MockWhisperModel):
-            words = wb_mod.transcribe_wav(str(wav))
+            words = wb_mod.transcribe_wav(str(wav), no_whisperx=True)
 
         assert words == _stub_word_list()
 
@@ -97,8 +97,42 @@ class TestWhisperBackendSelection:
         with patch.object(wb_mod.log, "warning") as mock_warn, \
              patch.object(wb_mod, "_HAS_WHISPERX", False), \
              patch("faster_whisper.WhisperModel", MockWhisperModel):
-            wb_mod.transcribe_wav(str(wav))
+            wb_mod.transcribe_wav(str(wav), no_whisperx=True)
 
+        mock_warn.assert_called_once()
+        assert "faster-whisper" in mock_warn.call_args[0][0]
+
+    def test_raises_when_whisperx_absent_no_flag(self, tmp_path: Path) -> None:
+        wav = _make_wav(tmp_path)
+        with patch.object(wb_mod, "_HAS_WHISPERX", False):
+            with pytest.raises(RuntimeError, match="WhisperX not found"):
+                wb_mod.transcribe_wav(str(wav))
+
+    def test_no_whisperx_flag_uses_faster_whisper(self, tmp_path: Path) -> None:
+        wav = _make_wav(tmp_path)
+        mock_word = SimpleNamespace(word=" hello ", start=0.1, end=0.4)
+        mock_segment = SimpleNamespace(words=[mock_word])
+        mock_info = SimpleNamespace(language="en")
+        mock_fw_model = MagicMock()
+        mock_fw_model.transcribe.return_value = ([mock_segment], mock_info)
+        MockWhisperModel = MagicMock(return_value=mock_fw_model)
+        with patch.object(wb_mod, "_HAS_WHISPERX", False), \
+             patch("faster_whisper.WhisperModel", MockWhisperModel):
+            words = wb_mod.transcribe_wav(str(wav), no_whisperx=True)
+        assert words == [{"word": "hello", "start": 0.1, "end": 0.4}]
+
+    def test_no_whisperx_flag_logs_quality_warning(self, tmp_path: Path) -> None:
+        wav = _make_wav(tmp_path)
+        mock_word = SimpleNamespace(word=" hi ", start=0.1, end=0.3)
+        mock_segment = SimpleNamespace(words=[mock_word])
+        mock_info = SimpleNamespace(language="en")
+        mock_fw_model = MagicMock()
+        mock_fw_model.transcribe.return_value = ([mock_segment], mock_info)
+        MockWhisperModel = MagicMock(return_value=mock_fw_model)
+        with patch.object(wb_mod.log, "warning") as mock_warn, \
+             patch.object(wb_mod, "_HAS_WHISPERX", False), \
+             patch("faster_whisper.WhisperModel", MockWhisperModel):
+            wb_mod.transcribe_wav(str(wav), no_whisperx=True)
         mock_warn.assert_called_once()
         assert "faster-whisper" in mock_warn.call_args[0][0]
 
@@ -175,41 +209,11 @@ class TestForcedAlignDelegation:
         mock_wx.load_model.assert_called_once()
         assert words == _stub_word_list()
 
-    def test_align_words_falls_back_to_faster_whisper(self, tmp_path: Path) -> None:
+    def test_align_words_raises_when_whisperx_absent(self, tmp_path: Path) -> None:
         wav = _make_wav(tmp_path)
-
-        mock_word = SimpleNamespace(word=" hello ", start=0.1, end=0.4)
-        mock_word2 = SimpleNamespace(word=" world ", start=0.5, end=0.9)
-        mock_segment = SimpleNamespace(words=[mock_word, mock_word2])
-        mock_info = SimpleNamespace(language="en")
-
-        mock_fw_model = MagicMock()
-        mock_fw_model.transcribe.return_value = ([mock_segment], mock_info)
-        MockWhisperModel = MagicMock(return_value=mock_fw_model)
-
-        with patch.object(wb_mod, "_HAS_WHISPERX", False), \
-             patch("faster_whisper.WhisperModel", MockWhisperModel):
-            words = fa_mod.align_words(wav)
-
-        assert words == _stub_word_list()
-
-    def test_fallback_logs_warning_via_backend(self, tmp_path: Path) -> None:
-        wav = _make_wav(tmp_path)
-
-        mock_word = SimpleNamespace(word=" hi ", start=0.1, end=0.3)
-        mock_segment = SimpleNamespace(words=[mock_word])
-        mock_info = SimpleNamespace(language="en")
-        mock_fw_model = MagicMock()
-        mock_fw_model.transcribe.return_value = ([mock_segment], mock_info)
-        MockWhisperModel = MagicMock(return_value=mock_fw_model)
-
-        with patch.object(wb_mod.log, "warning") as mock_warn, \
-             patch.object(wb_mod, "_HAS_WHISPERX", False), \
-             patch("faster_whisper.WhisperModel", MockWhisperModel):
-            fa_mod.align_words(wav)
-
-        mock_warn.assert_called_once()
-        assert "faster-whisper" in mock_warn.call_args[0][0]
+        with patch.object(wb_mod, "_HAS_WHISPERX", False):
+            with pytest.raises(RuntimeError, match="WhisperX not found"):
+                fa_mod.align_words(wav)
 
 
 # ---------------------------------------------------------------------------
@@ -255,11 +259,18 @@ class TestTranscribeWordsBackendSelection:
 
         with patch.object(wb_mod, "_HAS_WHISPERX", False), \
              patch("faster_whisper.WhisperModel", MockWhisperModel):
-            words = audio_mod.transcribe_words(str(wav), str(out))
+            words = audio_mod.transcribe_words(str(wav), str(out), no_whisperx=True)
 
         assert words == [{"word": "world", "start": 0.5, "end": 0.9}]
         data = json.loads(out.read_text())
         assert data["words"] == words
+
+    def test_raises_when_whisperx_absent(self, tmp_path: Path) -> None:
+        wav = _make_wav(tmp_path)
+        out = tmp_path / "words.json"
+        with patch.object(wb_mod, "_HAS_WHISPERX", False):
+            with pytest.raises(RuntimeError, match="WhisperX not found"):
+                audio_mod.transcribe_words(str(wav), str(out))
 
     def test_writes_valid_json_structure(self, tmp_path: Path) -> None:
         wav = _make_wav(tmp_path)
