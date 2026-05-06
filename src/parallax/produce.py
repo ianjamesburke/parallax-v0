@@ -70,6 +70,45 @@ class ProductionResult:
     error: str | None
 
 
+def _apply_regenerate_flags(plan: dict, plan_path: Path) -> None:
+    """Clear all asset locks on scenes marked `regenerate: true`, then remove the flag.
+
+    Writes the cleaned plan back to disk so the next run starts with no stale locks.
+    Only per-scene asset lock fields are cleared: still_path, clip_path, end_frame_path.
+    Top-level audio_path/words_path are NOT cleared — those are plan-wide locks.
+    """
+    _SCENE_LOCK_FIELDS = ("still_path", "clip_path", "end_frame_path")
+    changed = False
+    for scene in plan.get("scenes", []):
+        if scene.get("regenerate"):
+            for f in _SCENE_LOCK_FIELDS:
+                if f in scene:
+                    del scene[f]
+                    changed = True
+            del scene["regenerate"]
+            changed = True
+
+    if not changed:
+        return
+
+    # Write the cleaned plan back to disk so it persists across runs.
+    try:
+        with plan_path.open("r", encoding="utf-8") as f:
+            disk_plan = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        return
+
+    for disk_scene in disk_plan.get("scenes", []):
+        if disk_scene.get("regenerate"):
+            for f in _SCENE_LOCK_FIELDS:
+                disk_scene.pop(f, None)
+            disk_scene.pop("regenerate", None)
+
+    with plan_path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(disk_plan, f, default_flow_style=False, allow_unicode=True,
+                       sort_keys=False, width=10000)
+
+
 def run_plan(
     folder: str | Path,
     plan_path: str | Path,
@@ -104,6 +143,8 @@ def run_plan(
     # The mutable stage blackboard stays dict-shaped so stages can write
     # _runtime without touching the frozen Pydantic model.
     plan: dict[str, Any] = typed_plan.to_dict()
+
+    _apply_regenerate_flags(plan, plan_path)
 
     if aspect is not None:
         plan["aspect"] = aspect

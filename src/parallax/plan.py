@@ -134,6 +134,9 @@ class PlanScene(BaseModel):
     transition: str | None = None
     transition_duration_s: float | None = None
 
+    # Explicit re-generation signal — cleared and removed by produce on the next run.
+    regenerate: bool | None = None
+
     @model_validator(mode="before")
     @classmethod
     def _reject_renamed_fields(cls, data: Any) -> Any:

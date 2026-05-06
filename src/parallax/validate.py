@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import yaml
+
 log = logging.getLogger(__name__)
 
 
@@ -80,6 +82,74 @@ def validate_plan(plan_path: str | Path, folder: str | Path) -> dict:
 
     log.info("validate: loading plan from %s", plan_path)
 
+    if not plan_path.is_file():
+        errors.append({"field": "plan", "message": f"plan not found: {plan_path}"})
+        return _result(errors, warnings)
+
+    # Raw YAML load + bare-colon check (before Pydantic).
+    # A bare colon in a block-scalar value (e.g. `prompt: movement: she leans in`)
+    # causes a YAML ScannerError. We detect this by: (a) catching the parse error and
+    # checking its message, and (b) scanning raw text for "key: word: rest" patterns
+    # in the free-text fields so we can name the offending field.
+    _FREE_TEXT_FIELDS = ("prompt", "vo_text", "motion_prompt")
+    raw: dict = {}
+    try:
+        with plan_path.open("r", encoding="utf-8") as fp:
+            raw = yaml.safe_load(fp) or {}
+    except yaml.YAMLError as exc:
+        # Try to identify which field has the bare colon by scanning raw text.
+        bare_colon_field: str | None = None
+        try:
+            with plan_path.open("r", encoding="utf-8") as fp:
+                lines = fp.readlines()
+            for line in lines:
+                stripped = line.strip()
+                for fname in _FREE_TEXT_FIELDS:
+                    prefix = f"{fname}: "
+                    if stripped.startswith(prefix):
+                        remainder = stripped[len(prefix):]
+                        # A bare colon in the remainder (not at the end, not a flow scalar)
+                        # means it's a key: value situation.
+                        if ": " in remainder or remainder.endswith(":"):
+                            bare_colon_field = fname
+                            break
+                if bare_colon_field:
+                    break
+        except Exception:
+            pass
+
+        if bare_colon_field:
+            errors.append({
+                "field": f"scenes[?].{bare_colon_field}",
+                "message": (
+                    f"`{bare_colon_field}` contains a bare colon and was misparsed "
+                    f"as a YAML mapping. Fix: wrap the value in double quotes: "
+                    f'{bare_colon_field}: "value with: colon"'
+                ),
+            })
+        else:
+            errors.append({"field": "plan", "message": f"could not read plan YAML: {exc}"})
+        return _result(errors, warnings)
+
+    # Also check successfully-parsed YAML for dict-valued free-text fields
+    # (can happen in flow-style YAML: `prompt: {key: val}`).
+    for scene in raw.get("scenes", []):
+        idx = scene.get("index", "?")
+        for fname in _FREE_TEXT_FIELDS:
+            val = scene.get(fname)
+            if isinstance(val, dict):
+                errors.append({
+                    "field": f"scenes[{idx}].{fname}",
+                    "message": (
+                        f"scene {idx} — `{fname}` contains a bare colon and was misparsed "
+                        f"as a YAML mapping. Fix: wrap the value in double quotes: "
+                        f'{fname}: "value with: colon"'
+                    ),
+                })
+    if errors:
+        return _result(errors, warnings)
+
+    # Pydantic schema validation
     from .plan import Plan
 
     try:

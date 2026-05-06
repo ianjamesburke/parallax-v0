@@ -160,3 +160,47 @@ def test_validate_plan_reference_images_missing(tmp_path):
     result = validate_plan(plan, tmp_path)
     assert result["valid"] is False
     assert len([e for e in result["errors"] if "reference_images" in e["field"]]) == 2
+
+
+def test_validate_plan_bare_colon_in_prompt(tmp_path):
+    """validate_plan must catch bare colons in prompt with a specific error."""
+    plan = tmp_path / "plan.yaml"
+    # Write raw YAML with an unquoted colon in prompt — yaml.safe_load misparsing
+    plan.write_text(
+        "scenes:\n"
+        "  - index: 0\n"
+        "    vo_text: hello\n"
+        "    prompt: movement: she leans in\n"
+    )
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is False
+    colon_errors = [e for e in result["errors"] if "bare colon" in e["message"]]
+    assert len(colon_errors) >= 1
+    assert "prompt" in colon_errors[0]["field"]
+
+
+def test_validate_plan_bare_colon_in_vo_text(tmp_path):
+    """validate_plan catches bare colons in vo_text field."""
+    plan = tmp_path / "plan.yaml"
+    plan.write_text(
+        "scenes:\n"
+        "  - index: 0\n"
+        "    vo_text: key: value style text\n"
+        "    prompt: normal prompt\n"
+    )
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is False
+    assert any("vo_text" in e["field"] for e in result["errors"])
+
+
+def test_validate_plan_quoted_colon_ok(tmp_path):
+    """validate_plan must accept properly quoted colons in prompts."""
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "scenes": [{"index": 0, "vo_text": "hello", "prompt": "movement: she leans in"}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is True
