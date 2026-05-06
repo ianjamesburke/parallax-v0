@@ -235,7 +235,7 @@ def _print_log_list(limit: int, since: str | None) -> int:
         cutoff = _dt.now(_tz.utc) - delta
         rows = [
             r for r in rows
-            if _safe_iso(r.get("started")) and _safe_iso(r.get("started")) >= cutoff
+            if (_ts := _safe_iso(r.get("started"))) is not None and _ts >= cutoff
         ]
 
     rows = rows[:limit]

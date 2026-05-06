@@ -113,7 +113,7 @@ def render_mock_image(
         crop_w = int(round(base * target_w / target_h))
         left = (base - crop_w) // 2
         cropped = img.crop((left, 0, left + crop_w, base))
-    final = cropped.resize((target_w, target_h), Image.LANCZOS)
+    final = cropped.resize((target_w, target_h), Image.LANCZOS)  # type: ignore[attr-defined]
 
     key = hashlib.sha1(f"{prompt}|{model}|{resolution}".encode()).hexdigest()[:10]
     path = out / f"mock_{key}.png"
