@@ -162,6 +162,29 @@ def test_validate_plan_reference_images_missing(tmp_path):
     assert len([e for e in result["errors"] if "reference_images" in e["field"]]) == 2
 
 
+def test_validate_plan_reference_images_resolve_from_folder_not_plan_dir(tmp_path):
+    """Issue #64: validate_plan must resolve relative reference_images against --folder, not plan dir."""
+    folder = tmp_path / "github" / "PX0001"
+    folder.mkdir(parents=True)
+    plan_dir = tmp_path / "drive" / "PX0001" / "parallax" / "scratch"
+    plan_dir.mkdir(parents=True)
+
+    ref_file = folder / "bottle.png"
+    ref_file.write_bytes(b"")
+
+    plan = plan_dir / "plan.yaml"
+    _write_yaml(plan, {
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene",
+                    "reference_images": ["bottle.png"]}],
+    })
+
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, folder)
+    # bottle.png exists in folder, so no reference_images errors
+    ref_errors = [e for e in result["errors"] if "reference_images" in e["field"]]
+    assert ref_errors == [], f"Expected no reference_images errors but got: {ref_errors}"
+
+
 def test_validate_plan_bare_colon_in_prompt(tmp_path):
     """validate_plan must catch bare colons in prompt with a specific error."""
     plan = tmp_path / "plan.yaml"
