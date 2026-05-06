@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-06 — [FIX] Replace silent WhisperX fallback with actionable install prompt (PR #128 → alpha)
+`parallax audio transcribe` was silently falling back to faster-whisper when WhisperX was absent, producing imprecise word timestamps that caused visible scene cut drift in production (Banana Man session). Now raises `RuntimeError` with exact install command (`uv tool run --from parallax pip install whisperx`). `--no-whisperx` flag explicitly opts into faster-whisper with a quality warning. Added `parallax[whisperx]` optional dep group.
+**Breaks if:** `parallax audio transcribe <file> --out /tmp/w.json` with WhisperX absent exits 0 or doesn't print "WhisperX not found"; or `--no-whisperx` flag is missing from `parallax audio transcribe --help`.
+
 ## 2026-05-06 — [CHANGED] Add ElevenLabs TTS provider + audio voiceover CLI (PR #112 → alpha)
 New `src/parallax/elevenlabs.py` calls the ElevenLabs `/v1/text-to-speech/{voice_id}/with-timestamps` endpoint and aggregates character-level alignment into word timestamps. `voiceover.py` routes to it when `voice_model: elevenlabs`; all other backends unchanged. API key from `ELEVENLABS_API_KEY` env var (fallback: `ELEVEN_LABS_API_KEY`). Default voice: Rachel (`21m00Tcm4TlvDq8ikWAM`); `voice:` accepts any ElevenLabs voice ID. New `parallax audio voiceover` CLI subcommand: `--text` (or stdin), `--out`, `--voice`, `--voice-model`, `--speed`, `--style`.
 **Breaks if:** `parallax produce` with `voice_model: elevenlabs` raises an import error or doesn't call the ElevenLabs API; `ELEVENLABS_API_KEY` unset produces a silent failure; or `parallax audio voiceover --help` doesn't list the subcommand.
