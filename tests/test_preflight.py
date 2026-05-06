@@ -197,3 +197,78 @@ def test_clip_default_duration():
     clip_scenes = [s for s in result.scenes if s.kind == "clip"]
     assert len(clip_scenes) == 1
     assert clip_scenes[0].duration_s == 5.0
+
+
+# ---------------------------------------------------------------------------
+# 10. Overwrite detection — folder param
+# ---------------------------------------------------------------------------
+
+def test_overwrite_detected_for_unlocked_still(tmp_path):
+    assets = tmp_path / "parallax" / "assets"
+    assets.mkdir(parents=True)
+    (assets / "scene_00_still.png").touch()
+
+    plan = _make_plan(scenes=[{"index": 0}])
+    result = compute_preflight(plan, folder=tmp_path)
+
+    still_scenes = [s for s in result.scenes if s.kind == "still" and s.index == 0]
+    assert len(still_scenes) == 1
+    assert still_scenes[0].will_overwrite is True
+    assert result.has_overwrites is True
+
+
+def test_overwrite_detected_for_unlocked_clip(tmp_path):
+    assets = tmp_path / "parallax" / "assets"
+    assets.mkdir(parents=True)
+    (assets / "scene_01_still.png").touch()
+    (assets / "scene_01_animated.mp4").touch()
+
+    plan = _make_plan(scenes=[{"index": 1, "animate": True}])
+    result = compute_preflight(plan, folder=tmp_path)
+
+    clip_scenes = [s for s in result.scenes if s.kind == "clip" and s.index == 1]
+    assert len(clip_scenes) == 1
+    assert clip_scenes[0].will_overwrite is True
+    assert result.has_overwrites is True
+
+
+def test_no_overwrite_when_still_locked(tmp_path):
+    assets = tmp_path / "parallax" / "assets"
+    assets.mkdir(parents=True)
+    (assets / "scene_00_still.png").touch()
+
+    plan = _make_plan(scenes=[{"index": 0, "still_path": "parallax/assets/scene_00_still.png"}])
+    result = compute_preflight(plan, folder=tmp_path)
+
+    still_scenes = [s for s in result.scenes if s.kind == "still"]
+    assert all(not s.will_overwrite for s in still_scenes)
+    assert result.has_overwrites is False
+
+
+def test_no_overwrite_when_file_does_not_exist(tmp_path):
+    plan = _make_plan(scenes=[{"index": 0}])
+    result = compute_preflight(plan, folder=tmp_path)
+    assert result.has_overwrites is False
+
+
+def test_format_preflight_shows_overwrite_warning(tmp_path):
+    assets = tmp_path / "parallax" / "assets"
+    assets.mkdir(parents=True)
+    (assets / "scene_00_still.png").touch()
+
+    plan = _make_plan(scenes=[{"index": 0}])
+    result = compute_preflight(plan, folder=tmp_path)
+    text = format_preflight(result)
+    assert "overwrite" in text.lower()
+
+
+def test_prompt_proceed_shows_overwrite_warning(tmp_path, capsys):
+    assets = tmp_path / "parallax" / "assets"
+    assets.mkdir(parents=True)
+    (assets / "scene_00_still.png").touch()
+
+    plan = _make_plan(scenes=[{"index": 0}])
+    result = compute_preflight(plan, folder=tmp_path)
+    prompt_proceed(result, yes=True)
+    captured = capsys.readouterr()
+    assert "overwrite" in captured.out.lower()
