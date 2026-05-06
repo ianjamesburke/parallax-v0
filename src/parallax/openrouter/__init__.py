@@ -264,9 +264,9 @@ def generate_image(
     refs = _validate_refs(reference_images, spec)
     # Test-mode (shim) resolution: prefer explicit `size`, then derive from
     # `aspect_ratio` so non-9:16 runs render the correct shape under shim,
-    # then fall back to the legacy 1080x1920 default.
+    # then fall back to the 720x1280 default.
     from ..settings import _ASPECT_TO_RESOLUTION as _ASPECT_RES
-    test_resolution = size or _ASPECT_RES.get(aspect_ratio or "", "1080x1920")
+    test_resolution = size or _ASPECT_RES.get(aspect_ratio or "", "720x1280")
     return _dispatch(
         kind="image",
         alias=alias,
@@ -307,7 +307,7 @@ def generate_video(
     input_references. Only pass input_references when there is no image_path.
     """
     from ..settings import _ASPECT_TO_RESOLUTION as _ASPECT_RES
-    test_resolution = size or _ASPECT_RES.get(aspect_ratio or "", "1080x1920")
+    test_resolution = size or _ASPECT_RES.get(aspect_ratio or "", "720x1280")
     return _dispatch(
         kind="video",
         alias=alias,
