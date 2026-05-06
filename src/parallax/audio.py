@@ -17,7 +17,7 @@ _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 log = logging.getLogger("parallax.audio")
 
 
-def transcribe_words(input_path: str, out_path: str) -> list[dict]:
+def transcribe_words(input_path: str, out_path: str, no_whisperx: bool = False) -> list[dict]:
     """Transcribe audio or video to word-level timestamps.
 
     Writes {"words": [{word, start, end}], "total_duration_s": X} to out_path.
@@ -35,7 +35,7 @@ def transcribe_words(input_path: str, out_path: str) -> list[dict]:
             capture_output=True,
         )
 
-        words = whisper_backend.transcribe_wav(tmp_audio, label=Path(input_path).name)
+        words = whisper_backend.transcribe_wav(tmp_audio, label=Path(input_path).name, no_whisperx=no_whisperx)
 
         if not words:
             raise RuntimeError(f"transcribe_words: produced 0 words for {input_path}")

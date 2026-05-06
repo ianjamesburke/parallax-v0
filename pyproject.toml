@@ -15,6 +15,9 @@ dependencies = [
 [project.scripts]
 parallax = "parallax.cli:main"
 
+[project.optional-dependencies]
+whisperx = ["whisperx"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
