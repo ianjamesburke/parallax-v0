@@ -113,21 +113,61 @@ def _log(settings: Settings, msg: str) -> None:
 _plan_lock = threading.Lock()
 
 
+def _is_clip_reusable(clip: str | None, mode: ProductionMode) -> bool:
+    """Return True if an existing clip asset can be reused without re-generating.
+
+    A clip is NOT reusable if:
+    - clip is None
+    - mode is REAL and the path points to a mock/dry-run placeholder
+    - the file does not exist on disk
+    """
+    if clip is None:
+        return False
+    if mode == ProductionMode.REAL and is_mock_asset(clip):
+        return False
+    return Path(clip).exists()
+
+
 def _lock_field_in_plan(plan_path: Path, plan: dict, scene_idx: int, field_name: str, value: str, folder: Path) -> None:
-    """Write an asset path back into the plan YAML so the scene is locked on future runs."""
+    """Write an asset path back into the plan YAML so the scene is locked on future runs.
+
+    Reads the current on-disk YAML, patches only the specific scene/field, and writes
+    back with yaml.safe_dump — preserving any user edits made during or between runs.
+    """
     import yaml
     try:
         locked_path = str(Path(value).relative_to(folder))
     except ValueError:
         locked_path = value
     with _plan_lock:
+        # Patch the in-memory dict so downstream stages in this run see the new value.
         for scene in plan.get("scenes", []):
             if scene.get("index") == scene_idx:
                 scene[field_name] = locked_path
                 break
+
+        # Read current on-disk state to avoid overwriting concurrent user edits.
         try:
-            with plan_path.open("w") as f:
-                yaml.dump(plan, f, default_flow_style=False, allow_unicode=True, sort_keys=False, width=10000)
+            with plan_path.open("r", encoding="utf-8") as f:
+                disk_plan = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            disk_plan = {"scenes": []}
+
+        patched = False
+        for scene in disk_plan.get("scenes", []):
+            if scene.get("index") == scene_idx:
+                scene[field_name] = locked_path
+                patched = True
+                break
+
+        if not patched:
+            runlog.event("plan.lock.warn", level="WARN", scene=scene_idx, field=field_name,
+                         msg="scene not found in on-disk plan — field not written")
+
+        try:
+            with plan_path.open("w", encoding="utf-8") as f:
+                yaml.safe_dump(disk_plan, f, default_flow_style=False, allow_unicode=True,
+                               sort_keys=False, width=10000)
         except Exception as exc:
             runlog.event("plan.lock.error", level="ERROR", scene=scene_idx, field=field_name, error=str(exc))
             raise RuntimeError(f"plan lock failed: could not write {plan_path}: {exc}") from exc
@@ -466,9 +506,7 @@ def stage_animate(plan: dict[str, Any], settings: Settings, state: PipelineState
     plan_video_model = plan.get("video_model", "mid")
 
     def _clip_reusable(clip: str | None) -> bool:
-        return clip is not None and not (
-            settings.mode == ProductionMode.REAL and is_mock_asset(clip)
-        )
+        return _is_clip_reusable(clip, settings.mode)
 
     to_animate = [s for s in scenes if s.animate and not _clip_reusable(s.clip_path)]
 
@@ -1067,6 +1105,8 @@ _KNOWN_SCENE_FIELDS = {
     "duration_s", "start_offset_s", "fade_in_s", "fade_out_s",
     # Clip trim — seek into and/or limit the source clip window.
     "clip_trim_start_s", "clip_trim_end_s",
+    # Explicit re-generation signal — cleared by produce before stages run.
+    "regenerate",
 }
 
 

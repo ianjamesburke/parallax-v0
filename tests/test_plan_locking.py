@@ -52,7 +52,7 @@ def test_write_failure_raises_and_logs_error(bound_run: Path, tmp_path: Path):
     plan = _base_plan()
     asset = str(folder / "still.png")
 
-    with patch("yaml.dump", side_effect=OSError("disk full")):
+    with patch("yaml.safe_dump", side_effect=OSError("disk full")):
         with pytest.raises(RuntimeError, match="plan lock failed"):
             _lock_field_in_plan(plan_path, plan, 0, "still_path", asset, folder)
 
@@ -121,6 +121,54 @@ def test_no_active_run_write_failure_still_raises(tmp_path: Path):
     plan = _base_plan()
     asset = str(folder / "still.png")
 
-    with patch("yaml.dump", side_effect=OSError("permission denied")):
+    with patch("yaml.safe_dump", side_effect=OSError("permission denied")):
         with pytest.raises(RuntimeError, match="plan lock failed"):
             _lock_field_in_plan(plan_path, plan, 0, "still_path", asset, folder)
+
+
+def test_lock_reads_disk_not_overwrites_user_edit(tmp_path: Path):
+    """_lock_field_in_plan must read on-disk state so user edits between calls are preserved."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    plan_path = folder / "plan.yaml"
+
+    # Simulate a user edit mid-run: add video_model to scene 1 on disk
+    plan_path.write_text(yaml.safe_dump({
+        "video_model": "mid",
+        "scenes": [
+            {"index": 0, "vo_text": "Hello", "video_model": "draft"},
+            {"index": 1, "vo_text": "World", "video_model": "kling"},
+        ]
+    }))
+
+    # Lock still_path for scene 0 — in-memory plan does NOT know about kling
+    in_memory_plan = {"video_model": "mid", "scenes": [
+        {"index": 0, "vo_text": "Hello"},
+        {"index": 1, "vo_text": "World"},
+    ]}
+    asset = str(folder / "still.png")
+    _lock_field_in_plan(plan_path, in_memory_plan, 0, "still_path", asset, folder)
+
+    on_disk = yaml.safe_load(plan_path.read_text())
+    # user's kling setting on scene 1 must survive the write
+    assert on_disk["scenes"][1].get("video_model") == "kling"
+    # scene 0 got its still_path
+    assert on_disk["scenes"][0]["still_path"] == "still.png"
+
+
+def test_lock_uses_safe_dump_quotes_colons(tmp_path: Path):
+    """_lock_field_in_plan must use yaml.safe_dump so prompts with colons are quoted."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    plan_path = folder / "plan.yaml"
+    plan_data = {"scenes": [{"index": 0, "prompt": "movement: she leans in"}]}
+    # Write using safe_dump so the colon is quoted on disk
+    plan_path.write_text(yaml.safe_dump(plan_data))
+
+    in_memory = {"scenes": [{"index": 0, "prompt": "movement: she leans in"}]}
+    asset = str(folder / "still.png")
+    _lock_field_in_plan(plan_path, in_memory, 0, "still_path", asset, folder)
+
+    # Must be readable without parse error (colon still properly quoted)
+    reloaded = yaml.safe_load(plan_path.read_text())
+    assert reloaded["scenes"][0]["prompt"] == "movement: she leans in"
