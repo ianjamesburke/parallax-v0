@@ -193,6 +193,7 @@ def analyze_image(
 def _image_real(
     prompt: str, spec: ModelSpec, refs: list[Path], out_dir: Path | None,
     *, size: str | None = None, aspect_ratio: str | None = None,
+    out_file: Path | None = None,
 ) -> Path:
     """Generate an image via OpenRouter's chat/completions endpoint.
 
@@ -214,7 +215,8 @@ def _image_real(
 
     _check_key()
     out = out_dir or output_dir()
-    out.mkdir(parents=True, exist_ok=True)
+    if out_file is None:
+        out.mkdir(parents=True, exist_ok=True)
     model_id = _strip_or_prefix(spec.model_id)
 
     # Textual aspect cue — belt-and-suspenders alongside the body field below.
@@ -288,6 +290,10 @@ def _image_real(
     if not b64:
         raise RuntimeError(f"OpenRouter {model_id} image data URL missing payload: {header}")
     suffix = "png" if "png" in header else ("jpg" if "jpeg" in header or "jpg" in header else "png")
-    out_path = out / f"openrouter_{spec.alias}_{int(_time.time()*1000)}.{suffix}"
+    if out_file is not None:
+        out_path = out_file
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        out_path = out / f"openrouter_{spec.alias}_{int(_time.time()*1000)}.{suffix}"
     out_path.write_bytes(base64.b64decode(b64))
     return out_path

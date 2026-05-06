@@ -56,6 +56,7 @@ def render_mock_image(
     model: str,
     out_dir: Path | None = None,
     resolution: str = "1080x1920",
+    out_file: Path | None = None,
 ) -> Path:
     """Render a PNG that contains the request parameters as readable text.
 
@@ -67,12 +68,6 @@ def render_mock_image(
     legible), then center-cropped to the requested resolution's aspect.
     Output dimensions match the requested resolution within rounding.
     """
-    out = out_dir or output_dir()
-    try:
-        out.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        raise RuntimeError(f"shim: could not create output dir {out}: {e}") from e
-
     from .ffmpeg_utils import parse_resolution
     target_w, target_h = parse_resolution(resolution)
 
@@ -114,6 +109,21 @@ def render_mock_image(
         left = (base - crop_w) // 2
         cropped = img.crop((left, 0, left + crop_w, base))
     final = cropped.resize((target_w, target_h), Image.LANCZOS)  # type: ignore[attr-defined]
+
+    if out_file is not None:
+        path = out_file
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            final.save(path)
+        except OSError as e:
+            raise RuntimeError(f"shim: could not write PNG {path}: {e}") from e
+        return path
+
+    out = out_dir or output_dir()
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise RuntimeError(f"shim: could not create output dir {out}: {e}") from e
 
     key = hashlib.sha1(f"{prompt}|{model}|{resolution}".encode()).hexdigest()[:10]
     path = out / f"mock_{key}.png"

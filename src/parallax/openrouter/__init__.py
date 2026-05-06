@@ -248,6 +248,7 @@ def generate_image(
     *,
     reference_images: list[str] | list[Path] | None = None,
     out_dir: Path | None = None,
+    out_file: Path | None = None,
     size: str | None = None,
     aspect_ratio: str | None = None,
 ) -> Path:
@@ -270,10 +271,10 @@ def generate_image(
     return _dispatch(
         kind="image",
         alias=alias,
-        primary_call=lambda s: _image_real(prompt, s, refs, out_dir, size=size, aspect_ratio=aspect_ratio),
+        primary_call=lambda s: _image_real(prompt, s, refs, out_dir, size=size, aspect_ratio=aspect_ratio, out_file=out_file),
         test_call=lambda s: render_mock_image(
             prompt=prompt, model=s.alias, out_dir=out_dir,
-            resolution=test_resolution,
+            resolution=test_resolution, out_file=out_file,
         ),
         prompt=prompt,
         out_dir=out_dir,
