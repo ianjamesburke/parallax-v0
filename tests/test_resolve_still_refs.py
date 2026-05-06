@@ -75,6 +75,26 @@ def test_media_fallback_used_when_no_explicit_refs(tmp_path):
     assert all("media" in r for r in result)
 
 
+def test_reference_images_resolve_to_folder_not_plan_dir(tmp_path):
+    """Issue #64: relative reference_images must resolve from --folder, not plan file dir.
+
+    Scenario: plan lives on a drive mount, --folder points to a local checkout.
+    The reference file is in --folder; plan dir is irrelevant.
+    """
+    folder = tmp_path / "github" / "PX0001"
+    folder.mkdir(parents=True)
+    plan_dir = tmp_path / "drive" / "PX0001" / "parallax" / "scratch"
+    plan_dir.mkdir(parents=True)
+
+    s = {"index": 0, "reference_images": ["bottle.png"]}
+    settings = SimpleNamespace(folder=folder, character_image=None, stills_only=False, product_image=None)
+    result = _resolve_still_refs(s, settings)
+    # Must resolve against folder, not plan_dir
+    assert result is not None
+    assert result == [str(folder / "bottle.png")]
+    assert str(plan_dir) not in result[0]
+
+
 def test_media_fallback_skips_derivatives(tmp_path):
     media = tmp_path / "media"
     media.mkdir()
