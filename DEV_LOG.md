@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-06 — [CHANGED] Default image dimensions 1080×1920 → 720×1280 (PR #135 → alpha)
+`_ASPECT_TO_RESOLUTION["9:16"]` in `settings.py` and the `generate_image`/`generate_video` fallbacks in `openrouter/__init__.py` now default to `720x1280`. HD (1080×1920) is still available via `--size 1080x1920` or `resolution: 1080x1920` in the plan. Motivation: HD generation is 2.25× more expensive; the default should be economical.
+**Breaks if:** A produce run with no explicit `resolution:` or `--size` generates stills at 1080×1920 instead of 720×1280.
+
 ## 2026-05-06 — [CHANGED] Add parallax video animate subcommand (PR #131 → alpha)
 `parallax video animate --prompt <text> [--start img] [--end img] [--ref img ...] [--model alias] [--duration s] [--out dir]` generates a video without a full plan. Routes directly to `openrouter.generate_video()` which already supported all three input modes (`first_frame`, `last_frame`, `input_references`); this PR is purely CLI wiring. `--start` and `--ref` are mutually exclusive via argparse; `--end` requires `--start` (validated in `run()`). Default model: `mid`; default duration: 5s.
 **Breaks if:** `parallax video animate --prompt "x" --start img.png --out /tmp/` exits non-zero or fails to print a path; `--end` without `--start` does not exit 2 with `--end requires --start`; `parallax video animate --help` is missing from `parallax video --help`.
