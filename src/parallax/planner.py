@@ -43,8 +43,13 @@ _TOP_LEVEL_ORDER = (
     "video_model",
     "caption_style",
     "character_image",
+    "product_image",
     "scenes",
 )
+
+# Asset kinds that are wired into the plan. Any kind NOT in this set will
+# trigger a WARNING at plan-time so the user knows the asset is ignored.
+_WIRED_ASSET_KINDS = frozenset({"character_ref", "product_ref"})
 
 
 @dataclass
@@ -80,6 +85,16 @@ def _first_character_ref(brief: Brief, folder: Path) -> str | None:
     """
     for asset in brief.assets.provided:
         if asset.kind == "character_ref":
+            return str(_resolve_provided_path(folder, asset.path))
+    return None
+
+
+def _first_product_ref(brief: Brief, folder: Path) -> str | None:
+    """Return the absolute path to the first `product_ref` provided
+    asset, or None if the brief has none.
+    """
+    for asset in brief.assets.provided:
+        if asset.kind == "product_ref":
             return str(_resolve_provided_path(folder, asset.path))
     return None
 
@@ -217,6 +232,19 @@ def plan_from_brief(
         for scene in plan["scenes"]:
             if scene.get("shot_type") == "character" and "still_path" not in scene:
                 scene["reference"] = True
+
+    product_image = _first_product_ref(brief, folder)
+    if product_image is not None:
+        plan["product_image"] = product_image
+
+    # Warn about any provided asset kind that isn't wired into the plan.
+    for asset in brief.assets.provided:
+        if asset.kind not in _WIRED_ASSET_KINDS:
+            print(
+                f"WARNING: {asset.kind} asset '{asset.path}' provided but not wired into plan"
+                f" — will be ignored",
+                flush=True,
+            )
 
     plan = _ordered_plan(plan)
 

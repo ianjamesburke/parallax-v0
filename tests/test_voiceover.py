@@ -313,7 +313,7 @@ def test_reuse_voiceover_uses_probed_file_duration(tmp_path, monkeypatch):
         style=None, style_hint=None, caption_style="default", fontsize=48,
         words_per_chunk=3, caption_animation_override=None, caption_shift_s=0.0,
         skip_captions=False, headline=None, headline_fontsize=None,
-        headline_bg=None, headline_color=None, character_image=None,
+        headline_bg=None, headline_color=None, character_image=None, product_image=None,
         avatar_cfg=None, stills_only=False, mode=ProductionMode.TEST,
         events=lambda *_: None, run_id="test-run",
     )
