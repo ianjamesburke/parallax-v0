@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .log import get_logger
@@ -29,6 +30,7 @@ class PreflightScene:
     duration_s: float   # 0.0 for stills
     locked: bool
     cost_usd: float
+    will_overwrite: bool = False
 
 
 @dataclass
@@ -39,20 +41,29 @@ class PreflightResult:
     voiceover_cost_usd: float = 0.0
     estimated_total_usd: float = 0.0
     balance_usd: float | None = None
+    has_overwrites: bool = False
 
 
 def compute_preflight(
     plan: dict[str, Any],
     balance_usd: float | None = None,
+    folder: Path | None = None,
 ) -> PreflightResult:
     """Compute per-scene cost estimates from a plan dict.
 
     Does not make any network calls — cost comes from the model catalog.
     Locked assets (still_path / clip_path / audio_path set) contribute $0.
+
+    When `folder` is provided, unlocked scenes are checked against
+    ``folder/parallax/assets/`` for existing files that would be silently
+    overwritten. Scenes with existing files get ``will_overwrite=True`` and
+    the result carries ``has_overwrites=True``.
     """
     image_model = plan.get("image_model", "mid")
     video_model = plan.get("video_model", "mid")
     voice_model = plan.get("voice_model", "tts-mini")
+
+    assets_dir = (Path(folder) / "parallax" / "assets") if folder is not None else None
 
     scenes: list[PreflightScene] = []
 
@@ -67,6 +78,12 @@ def compute_preflight(
         else:
             still_cost = resolve(still_alias, kind="image").cost_usd
 
+        still_overwrite = (
+            not still_locked
+            and assets_dir is not None
+            and (assets_dir / f"scene_{idx:02d}_still.png").exists()
+        )
+
         scenes.append(PreflightScene(
             index=idx,
             kind="still",
@@ -74,9 +91,10 @@ def compute_preflight(
             duration_s=0.0,
             locked=still_locked,
             cost_usd=still_cost,
+            will_overwrite=still_overwrite,
         ))
-        log.info("preflight scene %d: still (%s) locked=%s ~$%.3f",
-                 idx, still_alias, still_locked, still_cost)
+        log.info("preflight scene %d: still (%s) locked=%s overwrite=%s ~$%.3f",
+                 idx, still_alias, still_locked, still_overwrite, still_cost)
 
         # --- Clip (only if animate=True) ---
         if s.get("animate", False):
@@ -88,6 +106,12 @@ def compute_preflight(
             else:
                 clip_cost = resolve(clip_alias, kind="video").cost_usd * duration
 
+            clip_overwrite = (
+                not clip_locked
+                and assets_dir is not None
+                and (assets_dir / f"scene_{idx:02d}_animated.mp4").exists()
+            )
+
             scenes.append(PreflightScene(
                 index=idx,
                 kind="clip",
@@ -95,9 +119,10 @@ def compute_preflight(
                 duration_s=duration,
                 locked=clip_locked,
                 cost_usd=clip_cost,
+                will_overwrite=clip_overwrite,
             ))
-            log.info("preflight scene %d: clip (%s, %.0fs) locked=%s ~$%.3f",
-                     idx, clip_alias, duration, clip_locked, clip_cost)
+            log.info("preflight scene %d: clip (%s, %.0fs) locked=%s overwrite=%s ~$%.3f",
+                     idx, clip_alias, duration, clip_locked, clip_overwrite, clip_cost)
 
     # --- Voiceover ---
     vo_locked = bool(plan.get("audio_path"))
@@ -105,7 +130,9 @@ def compute_preflight(
 
     estimated_total = sum(sc.cost_usd for sc in scenes) + vo_cost
     balance_str = f"${balance_usd:.2f}" if balance_usd is not None else "unknown"
-    log.info("preflight: estimated_total=$%.3f balance=%s", estimated_total, balance_str)
+    has_overwrites = any(sc.will_overwrite for sc in scenes)
+    log.info("preflight: estimated_total=$%.3f balance=%s has_overwrites=%s",
+             estimated_total, balance_str, has_overwrites)
 
     return PreflightResult(
         scenes=scenes,
@@ -114,6 +141,7 @@ def compute_preflight(
         voiceover_cost_usd=vo_cost,
         estimated_total_usd=estimated_total,
         balance_usd=balance_usd,
+        has_overwrites=has_overwrites,
     )
 
 
@@ -125,8 +153,16 @@ def format_preflight(result: PreflightResult) -> str:
     """
     lines: list[str] = ["==> pre-flight cost estimate"]
 
+    if result.has_overwrites:
+        lines.append("    ⚠ WARNING: existing files will be overwritten (use regenerate: true to be explicit)")
+
     for s in result.scenes:
-        status = "[locked — skipping]" if s.locked else "[will regenerate]"
+        if s.locked:
+            status = "[locked — skipping]"
+        elif s.will_overwrite:
+            status = "[will overwrite existing file!]"
+        else:
+            status = "[will regenerate]"
         if s.kind == "still":
             row = (
                 f"    scene {s.index} — still ({s.model_alias})"
