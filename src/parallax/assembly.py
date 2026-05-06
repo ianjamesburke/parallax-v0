@@ -28,12 +28,16 @@ def _norm_word(w: str) -> str:
     return re.sub(r'[^\w]', '', w).lower()
 
 
-def _find_scene_end(words: list[dict], cursor: int, plan_words: list[str]) -> int | None:
+def _find_scene_end(words: list[dict], cursor: int, plan_words: list[str], window_cap: int | None = None) -> int | None:
     """Find the TTS word index where a scene ends by matching its last content word.
 
     Searches forward from *cursor* in a window proportional to the expected
     word count.  Falls back to second-to-last word if the last one isn't found
     (handles TTS mangling proper nouns like "Shilajit" → "Shiligid").
+
+    window_cap: hard upper bound on the search window (prevents cross-scene
+    word stealing when adjacent scenes share vocabulary). Computed from
+    proportional word distribution by the caller.
     """
     content_words = [w for w in plan_words if _norm_word(w)]
     if not content_words:
@@ -41,6 +45,8 @@ def _find_scene_end(words: list[dict], cursor: int, plan_words: list[str]) -> in
 
     expected = len(content_words)
     window_end = min(cursor + expected * 2 + 5, len(words))
+    if window_cap is not None:
+        window_end = min(window_end, window_cap)
 
     for target_word in reversed(content_words[-2:]):
         target = _norm_word(target_word)
@@ -137,15 +143,37 @@ def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> li
     payload = words_payload
     words: list[dict] = payload if isinstance(payload, list) else payload.get("words", [])
 
-    cursor = 0
+    # Pre-compute proportional word-count caps so _find_scene_end can't steal
+    # words from an adjacent scene that shares vocabulary (Bug 2 fix).
+    # Each scene gets a hard window_cap = proportional TTS word index + 2-word slack.
+    scene_word_counts = []
     for scene in scenes:
+        vo = scene.get("vo_text", "").strip()
+        pw = re.sub(r'\[[^\]]*\]', '', vo).split() if vo else []
+        scene_word_counts.append(len([w for w in pw if _norm_word(w)]))
+    total_plan_words = sum(scene_word_counts)
+    window_caps: list[int] = []
+    if total_plan_words > 0:
+        accum = 0
+        for count in scene_word_counts:
+            accum += count
+            cap = round(accum / total_plan_words * len(words)) + 2
+            window_caps.append(min(cap, len(words)))
+    else:
+        window_caps = [len(words)] * len(scenes)
+
+    # Approximate avg word duration for short-scene warning.
+    avg_word_dur = (float(words[-1]["end"]) / len(words)) if words else 1.0
+
+    cursor = 0
+    for scene, window_cap in zip(scenes, window_caps):
         vo_text = scene.get("vo_text", "").strip()
         if not vo_text:
             continue
         plan_words = re.sub(r'\[[^\]]*\]', '', vo_text).split()
         content_count = len([w for w in plan_words if _norm_word(w)])
 
-        end_idx = _find_scene_end(words, cursor, plan_words)
+        end_idx = _find_scene_end(words, cursor, plan_words, window_cap=window_cap)
         if end_idx is None:
             if cursor + content_count > len(words):
                 log.warning("Scene %s: no match and only %d words remain; extending to end",
@@ -155,9 +183,34 @@ def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> li
                 continue
             end_idx = cursor + content_count - 1
 
-        scene["start_s"] = round(words[cursor]["start"], 3)
+        word_start_s = words[cursor]["start"]
+        scene["start_s"] = round(word_start_s, 3)
         scene["end_s"] = round(words[end_idx]["end"], 3)
-        cursor = end_idx + 1
+
+        # Short-scene sanity warning (Bug 2 symptom detection).
+        detected_dur = scene["end_s"] - scene["start_s"]
+        expected_min_dur = content_count * avg_word_dur * 0.5
+        if content_count > 1 and detected_dur < expected_min_dur:
+            log.warning(
+                "Scene %s: detected duration %.2fs may be too short for %d words "
+                "(expected ~%.2fs+); check for shared-vocabulary adjacent-scene misalignment",
+                scene.get("index", "?"), detected_dur, content_count, expected_min_dur,
+            )
+
+        # Bug 1 fix: when duration_s is pinned on this scene, advance the
+        # cursor to the first word at/after the pinned end so the next scene's
+        # word search starts at the correct audio position.
+        pinned_dur = scene.get("duration_s")
+        if pinned_dur is not None:
+            pinned_end_s = word_start_s + float(pinned_dur)
+            new_cursor = len(words)
+            for j in range(end_idx + 1, len(words)):
+                if words[j]["start"] >= pinned_end_s - 0.01:
+                    new_cursor = j
+                    break
+            cursor = new_cursor
+        else:
+            cursor = end_idx + 1
 
     # Resolve total audio duration. Required to cover trailing silence on
     # the last scene; without it the mux would clip the voiceover tail.
@@ -175,7 +228,7 @@ def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> li
             scenes[i]["start_s"] = scenes[i - 1]["end_s"]
         scenes[-1]["end_s"] = round(total, 3)
         for s in scenes:
-            s["duration_s"] = round(s["end_s"] - s["start_s"], 3)
+            s["duration_s"] = round(s["end_s"] - s["start_s"], 2)
 
     log.info("align_scenes: %d scenes aligned, total=%.2fs", len(scenes), total)
     from . import runlog

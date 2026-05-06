@@ -718,8 +718,19 @@ def stage_align(plan: dict[str, Any], settings: Settings, state: PipelineState) 
         "total_duration_s": vo_result.get("total_duration_s",
                                           vo_result["words"][-1]["end"] if vo_result["words"] else 0.0),
     }
+    # Merge plan-level duration_s pins into scene dicts so align_scenes_obj
+    # can anchor the next scene's word-search cursor correctly (Bug 1 fix).
+    raw_by_idx = {s.get("index"): s for s in plan.get("scenes", [])}
+    scenes_for_align = []
+    for s in scenes:
+        sd = _scene_to_dict(s)
+        raw_dur = raw_by_idx.get(sd.get("index"), {}).get("duration_s")
+        if raw_dur is not None:
+            sd["duration_s"] = raw_dur
+        scenes_for_align.append(sd)
+
     aligned_json = align_scenes(
-        scenes_json=json.dumps([_scene_to_dict(s) for s in scenes]),
+        scenes_json=json.dumps(scenes_for_align),
         words_json=json.dumps(words_payload),
     )
     aligned = json.loads(aligned_json)
