@@ -23,6 +23,35 @@ from .shim import is_test_mode, output_dir
 log = get_logger(__name__)
 
 
+def _norm_word(w: str) -> str:
+    """Strip punctuation and lowercase for TTS↔plan word comparison."""
+    return re.sub(r'[^\w]', '', w).lower()
+
+
+def _find_scene_end(words: list[dict], cursor: int, plan_words: list[str]) -> int | None:
+    """Find the TTS word index where a scene ends by matching its last content word.
+
+    Searches forward from *cursor* in a window proportional to the expected
+    word count.  Falls back to second-to-last word if the last one isn't found
+    (handles TTS mangling proper nouns like "Shilajit" → "Shiligid").
+    """
+    content_words = [w for w in plan_words if _norm_word(w)]
+    if not content_words:
+        return None
+
+    expected = len(content_words)
+    window_end = min(cursor + expected * 2 + 5, len(words))
+
+    for target_word in reversed(content_words[-2:]):
+        target = _norm_word(target_word)
+        for i in range(window_end - 1, max(cursor - 1, -1), -1):
+            if _norm_word(words[i]["word"]) == target:
+                if target_word is content_words[-1]:
+                    return i
+                return min(i + 1, len(words) - 1)
+    return None
+
+
 def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> list[dict]:
     """Assign start_s/end_s/duration_s so scenes form a contiguous cover of the audio.
 
@@ -54,18 +83,22 @@ def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> li
         vo_text = scene.get("vo_text", "").strip()
         if not vo_text:
             continue
-        count = len(re.sub(r'\[[^\]]*\]', '', vo_text).split())
-        if cursor + count > len(words):
-            log.warning("Scene %s needs %d words but only %d remain; extending to end",
-                        scene.get("index", "?"), count, len(words) - cursor)
-            count = len(words) - cursor
-        if count == 0:
-            continue
-        first = words[cursor]
-        last = words[cursor + count - 1]
-        scene["start_s"] = round(first["start"], 3)
-        scene["end_s"] = round(last["end"], 3)
-        cursor += count
+        plan_words = re.sub(r'\[[^\]]*\]', '', vo_text).split()
+        content_count = len([w for w in plan_words if _norm_word(w)])
+
+        end_idx = _find_scene_end(words, cursor, plan_words)
+        if end_idx is None:
+            if cursor + content_count > len(words):
+                log.warning("Scene %s: no match and only %d words remain; extending to end",
+                            scene.get("index", "?"), len(words) - cursor)
+                content_count = len(words) - cursor
+            if content_count == 0:
+                continue
+            end_idx = cursor + content_count - 1
+
+        scene["start_s"] = round(words[cursor]["start"], 3)
+        scene["end_s"] = round(words[end_idx]["end"], 3)
+        cursor = end_idx + 1
 
     # Resolve total audio duration. Required to cover trailing silence on
     # the last scene; without it the mux would clip the voiceover tail.
