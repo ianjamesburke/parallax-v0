@@ -518,12 +518,20 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
         words_path = str((settings.folder / plan["words_path"]) if not Path(plan["words_path"]).is_absolute() else Path(plan["words_path"]))
         words_data = json.loads(Path(words_path).read_text())
         words_list = words_data if isinstance(words_data, list) else words_data.get("words", [])
-        if isinstance(words_data, dict) and words_data.get("total_duration_s") is not None:
-            total_dur = float(words_data["total_duration_s"])
-        else:
-            import wave as _wave
-            with _wave.open(audio_path, "rb") as _w:
-                total_dur = _w.getnframes() / float(_w.getframerate())
+        # Always probe the actual file — JSON total_duration_s can be set to
+        # last-word-end (missing trailing silence) from older runs.
+        _probe = run_ffmpeg(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)],
+            capture_output=True, text=True,
+        )
+        total_dur = (
+            float(_probe.stdout.strip())
+            if _probe.stdout.strip()
+            else float(words_data.get("total_duration_s", words_list[-1]["end"] if words_list else 0.0))
+            if isinstance(words_data, dict)
+            else float(words_list[-1]["end"]) if words_list else 0.0
+        )
         vo_result = {"words": words_list, "audio_path": audio_path,
                      "words_path": words_path, "total_duration_s": total_dur}
         _log(settings, f"reusing voiceover: {Path(audio_path).name}")
@@ -648,8 +656,17 @@ def stage_speed_adjust(plan: dict[str, Any], settings: Settings, state: Pipeline
          "end": round(w["end"] * scale, 3)}
         for w in vo_result.get("words", [])
     ]
-    sped_dur = sped_words[-1]["end"] if sped_words else round(
-        float(vo_result.get("total_duration_s", 0.0)) * scale, 3
+    _sped_probe = run_ffmpeg(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)],
+        capture_output=True, text=True,
+    )
+    sped_dur = (
+        float(_sped_probe.stdout.strip())
+        if _sped_probe.stdout.strip()
+        else (sped_words[-1]["end"] if sped_words else round(
+            float(vo_result.get("total_duration_s", 0.0)) * scale, 3
+        ))
     )
 
     words_path.write_text(json.dumps(
