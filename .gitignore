@@ -14,3 +14,6 @@ worktrees/
 # Test smoke artifacts — fixtures' brief/plan stay in git, runtime output does not.
 fixtures/**/parallax/
 .DS_Store
+
+# Live test sandbox — real assets and API runs, not for version control.
+sandbox/

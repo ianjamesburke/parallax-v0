@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -22,16 +23,104 @@ from .shim import is_test_mode, output_dir
 log = get_logger(__name__)
 
 
-def align_scenes(scenes_json: str, words_json: str) -> str:
+def _norm_word(w: str) -> str:
+    """Strip punctuation and lowercase for TTS↔plan word comparison."""
+    return re.sub(r'[^\w]', '', w).lower()
+
+
+def _find_scene_end(words: list[dict], cursor: int, plan_words: list[str]) -> int | None:
+    """Find the TTS word index where a scene ends by matching its last content word.
+
+    Searches forward from *cursor* in a window proportional to the expected
+    word count.  Falls back to second-to-last word if the last one isn't found
+    (handles TTS mangling proper nouns like "Shilajit" → "Shiligid").
+    """
+    content_words = [w for w in plan_words if _norm_word(w)]
+    if not content_words:
+        return None
+
+    expected = len(content_words)
+    window_end = min(cursor + expected * 2 + 5, len(words))
+
+    for target_word in reversed(content_words[-2:]):
+        target = _norm_word(target_word)
+        for i in range(window_end - 1, max(cursor - 1, -1), -1):
+            if _norm_word(words[i]["word"]) == target:
+                if target_word is content_words[-1]:
+                    return i
+                return min(i + 1, len(words) - 1)
+    return None
+
+
+def _cross_check_transcript(scenes: list[dict], words: list[dict]) -> None:
+    """Compare TTS words against plan vo_text; fix substitutions in place.
+
+    Uses difflib to align plan words against TTS words per scene. For
+    same-count replacements (1:1, 2:2, etc.) where the concatenated
+    normalized forms differ, patches the TTS word text to match the plan
+    so captions display the script text, not TTS hallucinations.
+    Merges/splits (different word counts) are logged but left alone since
+    the timing doesn't map.
+    """
+    from difflib import SequenceMatcher
+
+    cursor = 0
+    for scene in scenes:
+        vo_text = scene.get("vo_text", "").strip()
+        if not vo_text:
+            continue
+        plan_tokens = re.sub(r'\[[^\]]*\]', '', vo_text).split()
+        plan_content = [(i, w) for i, w in enumerate(plan_tokens) if _norm_word(w)]
+        plan_normed = [_norm_word(w) for _, w in plan_content]
+
+        start_s = scene.get("start_s")
+        end_s = scene.get("end_s")
+        if start_s is None or end_s is None:
+            continue
+
+        scene_tts: list[dict] = []
+        while cursor < len(words) and words[cursor]["end"] <= end_s + 0.01:
+            scene_tts.append(words[cursor])
+            cursor += 1
+
+        tts_normed = [_norm_word(w["word"]) for w in scene_tts]
+
+        sm = SequenceMatcher(None, plan_normed, tts_normed)
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag != "replace":
+                continue
+            plan_chunk = "".join(plan_normed[i1:i2])
+            tts_chunk = "".join(tts_normed[j1:j2])
+            if plan_chunk == tts_chunk:
+                continue
+
+            plan_span = [plan_tokens[idx] for idx, _ in plan_content[i1:i2]]
+            tts_raw = " ".join(w["word"] for w in scene_tts[j1:j2])
+            t = scene_tts[j1]["start"] if j1 < len(scene_tts) else 0.0
+
+            if (i2 - i1) == (j2 - j1):
+                for k, tts_word in enumerate(scene_tts[j1:j2]):
+                    tts_word["word"] = plan_span[k]
+                log.info(
+                    "Scene %s caption fix: %r → %r (at %.2fs)",
+                    scene.get("index", "?"), tts_raw, " ".join(plan_span), t,
+                )
+            else:
+                log.warning(
+                    "Scene %s transcript mismatch (unfixable): plan=%r tts=%r (at %.2fs)",
+                    scene.get("index", "?"), " ".join(plan_span), tts_raw, t,
+                )
+
+
+def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> list[dict]:
     """Assign start_s/end_s/duration_s so scenes form a contiguous cover of the audio.
 
-    scenes_json: JSON list of {index, vo_text, ...}
-    words_json: JSON of either [{word, start, end}, ...] or
-                {"words": [...], "total_duration_s": float}.
-                When `total_duration_s` is supplied the final scene is
-                extended to that value so the assembled video matches the
-                audio length exactly — without it, trailing silence past
-                the last word is lost on mux (`-shortest` trims audio).
+    scenes: list of {index, vo_text, ...}
+    words_payload: either [{word, start, end}, ...] or {"words": [...], "total_duration_s": float}.
+                   When `total_duration_s` is supplied the final scene is
+                   extended to that value so the assembled video matches the
+                   audio length exactly — without it, trailing silence past
+                   the last word is lost on mux (`-shortest` trims audio).
 
     Invariants enforced on output:
       - scenes[0].start_s == 0          (covers any leading silence)
@@ -43,10 +132,9 @@ def align_scenes(scenes_json: str, words_json: str) -> str:
     scene cuts land on actual word boundaries and the final mux preserves
     the full voiceover end-to-end.
 
-    Returns updated scenes JSON list.
+    Returns updated scenes list.
     """
-    scenes: list[dict] = json.loads(scenes_json)
-    payload = json.loads(words_json)
+    payload = words_payload
     words: list[dict] = payload if isinstance(payload, list) else payload.get("words", [])
 
     cursor = 0
@@ -54,19 +142,22 @@ def align_scenes(scenes_json: str, words_json: str) -> str:
         vo_text = scene.get("vo_text", "").strip()
         if not vo_text:
             continue
-        clean = re.sub(r'\[[\w\s]+\]', '', vo_text).strip()
-        count = len(clean.split())
-        if cursor + count > len(words):
-            log.warning("Scene %s needs %d words but only %d remain; extending to end",
-                        scene.get("index", "?"), count, len(words) - cursor)
-            count = len(words) - cursor
-        if count == 0:
-            continue
-        first = words[cursor]
-        last = words[cursor + count - 1]
-        scene["start_s"] = round(first["start"], 3)
-        scene["end_s"] = round(last["end"], 3)
-        cursor += count
+        plan_words = re.sub(r'\[[^\]]*\]', '', vo_text).split()
+        content_count = len([w for w in plan_words if _norm_word(w)])
+
+        end_idx = _find_scene_end(words, cursor, plan_words)
+        if end_idx is None:
+            if cursor + content_count > len(words):
+                log.warning("Scene %s: no match and only %d words remain; extending to end",
+                            scene.get("index", "?"), len(words) - cursor)
+                content_count = len(words) - cursor
+            if content_count == 0:
+                continue
+            end_idx = cursor + content_count - 1
+
+        scene["start_s"] = round(words[cursor]["start"], 3)
+        scene["end_s"] = round(words[end_idx]["end"], 3)
+        cursor = end_idx + 1
 
     # Resolve total audio duration. Required to cover trailing silence on
     # the last scene; without it the mux would clip the voiceover tail.
@@ -97,7 +188,21 @@ def align_scenes(scenes_json: str, words_json: str) -> str:
             end_s=s.get("end_s"),
             duration_s=s.get("duration_s"),
         )
-    return json.dumps(scenes)
+    _cross_check_transcript(scenes, words)
+    return scenes
+
+
+def align_scenes(scenes_json: str, words_json: str) -> str:
+    """JSON-string wrapper around align_scenes_obj for callers that use serialized data.
+
+    scenes_json: JSON list of {index, vo_text, ...}
+    words_json: JSON of either [{word, start, end}, ...] or {"words": [...], "total_duration_s": float}.
+    Returns updated scenes as a JSON string.
+    """
+    scenes: list[dict] = json.loads(scenes_json)
+    payload = json.loads(words_json)
+    result = align_scenes_obj(scenes, payload)
+    return json.dumps(result)
 
 
 _SUPPORTED_XFADE_TRANSITIONS = frozenset({
@@ -338,7 +443,7 @@ def ken_burns_assemble(
                 [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
                  "-i", str(no_audio),
                  "-i", str(audio_path),
-                 "-c:v", "copy", "-c:a", "aac", "-shortest",
+                 "-c:v", "copy", "-c:a", "aac",
                  str(out)],
                 check=True,
             )
@@ -562,7 +667,7 @@ def assemble_clip_video(
             ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
              "-i", str(no_audio),
              "-i", str(audio_path),
-             "-c:v", "copy", "-c:a", "aac", "-shortest",
+             "-c:v", "copy", "-c:a", "aac",
              str(out)],
             check=True,
         )
@@ -641,18 +746,6 @@ def _make_clip_segment(
 # --------------------------------------------------------------------------
 # Object-oriented wrappers (avoid JSON-string roundtrips for internal callers)
 # --------------------------------------------------------------------------
-
-def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> list[dict]:
-    """Align scenes using native Python objects instead of JSON strings.
-
-    scenes: list of {index, vo_text, ...}
-    words_payload: either [{word, start, end}, ...] or {"words": [...], "total_duration_s": float}.
-    Returns the updated scenes list.
-    """
-    payload_str = json.dumps(words_payload)
-    scenes_str = json.dumps(scenes)
-    return json.loads(align_scenes(scenes_str, payload_str))
-
 
 def ken_burns_assemble_obj(
     scenes: list[dict],

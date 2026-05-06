@@ -193,6 +193,8 @@ def _trim_long_pauses(
         if gap > max_gap_s:
             gaps.append((words[i]["end"] + keep_gap_s, words[i + 1]["start"]))
 
+
+
     probe = run_ffmpeg(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)],
@@ -202,7 +204,7 @@ def _trim_long_pauses(
 
     if not gaps:
         shutil.copy2(audio_path, out_path)
-        return list(words), max(words[-1]["end"], total_dur) if words else 0.0
+        return list(words), max(words[-1]["end"], total_dur) if words else total_dur
 
     # Build the audio segments to keep
     keep: list[tuple[float, float]] = []

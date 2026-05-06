@@ -142,3 +142,94 @@ def test_align_scenes_obj_same_result_as_json_wrapper():
         align_scenes(json.dumps(scenes_data), json.dumps(payload))
     )
     assert obj_result == json_result
+
+
+# ─── TTS word mismatch scenarios ─────────────────────────────────────────
+
+
+def test_em_dash_in_plan_text_does_not_shift_cursor():
+    """Punctuation-only tokens like '—' in vo_text shouldn't consume TTS words."""
+    scenes = [
+        {"index": 0, "vo_text": "He was exhausted — energy gone."},
+        {"index": 1, "vo_text": "He felt better now."},
+        {"index": 2, "vo_text": "Done here."},
+    ]
+    words = [
+        _word("He", 0.0, 0.1), _word("was", 0.1, 0.2), _word("exhausted", 0.2, 0.5),
+        _word("energy", 0.8, 1.0), _word("gone.", 1.0, 1.3),
+        _word("He", 1.6, 1.7), _word("felt", 1.7, 1.9),
+        _word("better", 1.9, 2.2), _word("now.", 2.2, 2.5),
+        _word("Done", 2.7, 2.9), _word("here.", 2.9, 3.1),
+    ]
+    payload = {"words": words, "total_duration_s": 3.5}
+    out = align_scenes_obj(scenes, payload)
+    assert _scene_boundary_word(words, out[0]) == "gone."
+    assert _scene_boundary_word(words, out[1]) == "now."
+
+
+def test_tts_number_reformatting():
+    """TTS turning 'ninety-day' → '90 -day' shouldn't break alignment."""
+    scenes = [
+        {"index": 0, "vo_text": "At the ninety-day mark things changed."},
+        {"index": 1, "vo_text": "He felt great."},
+        {"index": 2, "vo_text": "The end."},
+    ]
+    words = [
+        _word("At", 0.0, 0.1), _word("the", 0.1, 0.2),
+        _word("90", 0.2, 0.4), _word("-day", 0.4, 0.6),
+        _word("mark", 0.6, 0.8), _word("things", 0.8, 1.0),
+        _word("changed.", 1.0, 1.3),
+        _word("He", 1.5, 1.6), _word("felt", 1.6, 1.8), _word("great.", 1.8, 2.1),
+        _word("The", 2.3, 2.4), _word("end.", 2.4, 2.6),
+    ]
+    payload = {"words": words, "total_duration_s": 3.0}
+    out = align_scenes_obj(scenes, payload)
+    assert _scene_boundary_word(words, out[0]) == "changed."
+    assert _scene_boundary_word(words, out[1]) == "great."
+
+
+def test_tts_large_number_expansion():
+    """'a hundred and twenty thousand' → '120 ,000' shouldn't drift cursor."""
+    scenes = [
+        {"index": 0, "vo_text": "Over a hundred and twenty thousand men tried it."},
+        {"index": 1, "vo_text": "Results were clear."},
+        {"index": 2, "vo_text": "Goodbye now."},
+    ]
+    words = [
+        _word("Over", 0.0, 0.2), _word("120", 0.2, 0.5),
+        _word(",000", 0.5, 0.7), _word("men", 0.7, 0.9),
+        _word("tried", 0.9, 1.1), _word("it.", 1.1, 1.3),
+        _word("Results", 1.5, 1.8), _word("were", 1.8, 2.0), _word("clear.", 2.0, 2.3),
+        _word("Goodbye", 2.5, 2.7), _word("now.", 2.7, 2.9),
+    ]
+    payload = {"words": words, "total_duration_s": 3.0}
+    out = align_scenes_obj(scenes, payload)
+    assert _scene_boundary_word(words, out[0]) == "it."
+    assert _scene_boundary_word(words, out[1]) == "clear."
+
+
+def test_second_to_last_fallback_when_last_word_mangled():
+    """If TTS mangles the last word, fall back to second-to-last."""
+    scenes = [
+        {"index": 0, "vo_text": "Take some Shilajit daily."},
+        {"index": 1, "vo_text": "You will improve."},
+        {"index": 2, "vo_text": "Trust me."},
+    ]
+    words = [
+        _word("Take", 0.0, 0.2), _word("some", 0.2, 0.4),
+        _word("Shiligid", 0.4, 0.8), _word("daily.", 0.8, 1.1),
+        _word("You", 1.3, 1.4), _word("will", 1.4, 1.6), _word("improve.", 1.6, 2.0),
+        _word("Trust", 2.2, 2.4), _word("me.", 2.4, 2.6),
+    ]
+    payload = {"words": words, "total_duration_s": 3.0}
+    out = align_scenes_obj(scenes, payload)
+    assert _scene_boundary_word(words, out[0]) == "daily."
+    assert _scene_boundary_word(words, out[1]) == "improve."
+
+
+def _scene_boundary_word(words: list[dict], scene: dict) -> str | None:
+    """Return the TTS word text at a scene's end_s (pre-contiguous boundary)."""
+    for w in words:
+        if abs(w["end"] - scene["end_s"]) < 0.005:
+            return w["word"]
+    return None

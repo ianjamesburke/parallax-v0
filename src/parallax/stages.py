@@ -728,6 +728,16 @@ def stage_align(plan: dict[str, Any], settings: Settings, state: PipelineState) 
         _log(settings, f"  [{s['index']:02d}] {s.get('start_s', 0):.2f}s – {s.get('end_s', 0):.2f}s ({s.get('duration_s', 0):.2f}s)")
     state.aligned = aligned
     state.aligned_json = json.dumps(aligned)
+
+    # Write corrected words back — cross-check may have patched TTS
+    # hallucinations (e.g. "sweatsh" → "switch") in the words list.
+    # Captions read from the file, so the fixes must be persisted.
+    if state.words_path:
+        words_path = Path(state.words_path)
+        words_path.write_text(json.dumps({
+            "words": vo_result["words"],
+            "total_duration_s": words_payload["total_duration_s"],
+        }, indent=2))
     return plan
 
 

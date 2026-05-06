@@ -124,7 +124,7 @@ def test_trim_long_pauses_empty_words(tmp_path):
     out_path = tmp_path / "out.mp3"
     adjusted, dur = voiceover._trim_long_pauses(audio, [], out_path)
     assert adjusted == []
-    assert dur == 0.0
+    assert dur >= 0.4  # probes actual file duration, not word-based
     assert out_path.exists()
 
 
