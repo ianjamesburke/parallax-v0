@@ -94,14 +94,22 @@ def generate_voiceover_dict(
     if pronunciations and tts_text != text:
         log.info("voiceover: applying %d pronunciation substitution(s)", len(pronunciations))
 
-    raw_path, words_with_ends, raw_audio_duration = openrouter.generate_tts(
-        text=tts_text,
-        alias=voice_model,
-        voice=voice,
-        out_dir=dest,
-        style=style,
-        style_hint=style_hint,
-    )
+    if voice_model == "elevenlabs":
+        from . import elevenlabs as _elevenlabs
+        raw_path, words_with_ends, raw_audio_duration = _elevenlabs.generate_tts(
+            text=tts_text,
+            voice=voice,
+            out_dir=dest,
+        )
+    else:
+        raw_path, words_with_ends, raw_audio_duration = openrouter.generate_tts(
+            text=tts_text,
+            alias=voice_model,
+            voice=voice,
+            out_dir=dest,
+            style=style,
+            style_hint=style_hint,
+        )
 
     import shutil as _shutil
     raw_suffix = Path(raw_path).suffix or ".mp3"

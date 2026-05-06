@@ -60,6 +60,26 @@ def register_parser(sub: argparse._SubParsersAction) -> None:
         help="Crossfade duration at each cut joint, in seconds (default: 0.05).",
     )
 
+    vo_p = audio_sub.add_parser(
+        "voiceover",
+        help="Synthesize a voiceover from text. Supports elevenlabs, tts-mini, tts-gemini backends.",
+    )
+    vo_p.add_argument("--text", default=None, help="Text to synthesize. Reads from stdin if omitted.")
+    vo_p.add_argument("--out", required=True, help="Output audio file path (e.g. /tmp/out.mp3).")
+    vo_p.add_argument("--voice", default="nova", help="Voice name or ElevenLabs voice ID (default: nova).")
+    vo_p.add_argument(
+        "--voice-model", dest="voice_model", default="tts-mini",
+        help="TTS backend: tts-mini, tts-gemini, elevenlabs (default: tts-mini).",
+    )
+    vo_p.add_argument(
+        "--speed", type=float, default=None,
+        help="atempo multiplier applied after synthesis (e.g. 1.2 = 20%% faster).",
+    )
+    vo_p.add_argument(
+        "--style", default=None,
+        help="Delivery style preset: rapid_fire, fast, calm, natural. OpenRouter backends only.",
+    )
+
     speed_p = audio_sub.add_parser(
         "speed",
         help="Apply ffmpeg atempo to retime an audio file. Use --rate <multiplier> or --by <pct%%.>",
@@ -75,6 +95,42 @@ def register_parser(sub: argparse._SubParsersAction) -> None:
 
 
 def run(args) -> int:
+    if args.audio_command == "voiceover":
+        import shutil
+        import tempfile
+        from pathlib import Path as _P
+
+        from ..voiceover import generate_voiceover_dict
+
+        text = args.text or sys.stdin.read().strip()
+        if not text:
+            print("ERROR: provide --text or pipe text via stdin.", file=sys.stderr)
+            return 1
+
+        out_path = _P(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = generate_voiceover_dict(
+                text=text,
+                voice=args.voice,
+                out_dir=tmp,
+                style=args.style,
+                voice_model=args.voice_model,
+            )
+            audio_src = _P(result["audio_path"])
+            if args.speed and args.speed != 1.0:
+                from ..audio import speedup
+                speedup(audio_src, out_path, args.speed)
+            else:
+                shutil.copy2(audio_src, out_path)
+
+        duration = result["total_duration_s"]
+        print(f"voiceover: {duration:.2f}s → {out_path}")
+        if args.speed and args.speed != 1.0:
+            print(f"  speed: {args.speed:.2f}x applied")
+        return 0
+
     if args.audio_command == "transcribe":
         from ..audio import transcribe_words
         try:
