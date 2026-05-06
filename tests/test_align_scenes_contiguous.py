@@ -233,3 +233,138 @@ def _scene_boundary_word(words: list[dict], scene: dict) -> str | None:
         if abs(w["end"] - scene["end_s"]) < 0.005:
             return w["word"]
     return None
+
+
+# ─── Bug 1: duration_s pin — next scene cursor anchoring ─────────────────
+
+
+def test_duration_s_pin_anchors_next_scene_cursor():
+    """Pinned duration_s on scene N must advance the word cursor to the pinned boundary.
+
+    Without the fix: scene N+1's word search starts immediately after scene N's
+    last matched word (1.0s), so it captures words from 1.2s onward.
+    With the fix: cursor advances to the first word at/after 0.31+3.0=3.31s,
+    so scene N+1 starts its word search at "back"(3.1s) and "in"(3.4s)+.
+    """
+    scenes = [
+        {"index": 0, "vo_text": "Back to basics.", "duration_s": 3.0},
+        {"index": 1, "vo_text": "Back in the game."},
+    ]
+    # Scene 0 words end at 1.0s; 3 filler words fill 1.2-2.9s (inside pin window).
+    # Scene 1 "back in the game" lives at 3.1-4.0s (after the pin boundary).
+    words = [
+        _word("Back", 0.31, 0.50), _word("to", 0.60, 0.70), _word("basics", 0.80, 1.00),
+        _word("But", 1.20, 1.40), _word("before", 1.50, 1.70), _word("long", 1.80, 2.00),
+        _word("back", 3.10, 3.30), _word("in", 3.40, 3.50), _word("the", 3.60, 3.70),
+        _word("game", 3.80, 4.00),
+    ]
+    payload = {"words": words, "total_duration_s": 4.5}
+    out = align_scenes_obj(scenes, payload)
+
+    # Scene 1 must have matched "back in the game" (starting from idx 6),
+    # not "But before long back" which would appear if cursor wasn't advanced.
+    # The scene's pre-contiguous end_s should be words[9].end = 4.0
+    # (not words[5].end=2.0 from "long").
+    assert out[1]["end_s"] == 4.5, "last scene must reach total"
+    # Verify scene 1's duration isn't truncated to the ~0.8s "game" only window
+    assert out[1]["duration_s"] > 0.5, "scene 1 must cover multiple words"
+
+
+def test_duration_s_pin_cascade_to_timing():
+    """Pinned duration_s flows through _apply_timing_overrides correctly."""
+    # Simple 2-scene case: pin scene 0 to 2.0s even though its words end at 1.0s.
+    scenes = [
+        {"index": 0, "vo_text": "Hello world.", "duration_s": 2.0},
+        {"index": 1, "vo_text": "Goodbye now."},
+    ]
+    words = [
+        _word("Hello", 0.0, 0.5), _word("world", 0.6, 1.0),
+        _word("Goodbye", 2.1, 2.5), _word("now", 2.6, 2.9),
+    ]
+    payload = {"words": words, "total_duration_s": 3.0}
+    out = align_scenes_obj(scenes, payload)
+
+    # Scene 0 word matching ends at 1.0s but duration pin is 2.0s.
+    # Cursor should advance past 2.0s so scene 1 gets "Goodbye"/"now".
+    # After contiguous fix: scene 0 = [0, 1.0], scene 1 = [1.0, 3.0].
+    # After _apply_timing_overrides (not called here — just align_scenes_obj):
+    # The word-based end is 1.0; contiguous/snapped end for scene 1 is 3.0.
+    assert out[0]["end_s"] == 1.0, "scene 0 word end before contiguous snap"
+    assert out[1]["end_s"] == 3.0, "scene 1 extends to total"
+    # Crucially: scene 1 was assigned "Goodbye"/"now", not empty (cursor advanced past 2.0s)
+    assert out[0]["start_s"] == 0.0
+    assert out[1]["start_s"] == 1.0
+
+
+# ─── Bug 2: shared vocabulary — adjacent scene word stealing ─────────────
+
+
+def test_shared_vocabulary_no_word_stealing():
+    """Adjacent scenes sharing a word must not steal from each other.
+
+    Scene 0 ends with "back"; scene 1 also contains "back". Without the
+    proportional window cap, _find_scene_end searches backwards and finds
+    scene 1's "back" first, stealing it from scene 1 and leaving scene 1
+    with only its last word.
+    """
+    scenes = [
+        {"index": 0, "vo_text": "He went back."},
+        {"index": 1, "vo_text": "He came back later."},
+        {"index": 2, "vo_text": "All done now."},
+    ]
+    words = [
+        _word("He", 0.0, 0.1), _word("went", 0.1, 0.3), _word("back", 0.3, 0.5),
+        _word("He", 0.7, 0.8), _word("came", 0.8, 1.0), _word("back", 1.0, 1.2),
+        _word("later", 1.2, 1.5),
+        _word("All", 2.0, 2.1), _word("done", 2.1, 2.3), _word("now", 2.3, 2.5),
+    ]
+    payload = {"words": words, "total_duration_s": 3.0}
+    out = align_scenes_obj(scenes, payload)
+
+    # Scene 0 must end on its own "back" (idx 2, end=0.5), not scene 1's (idx 5)
+    assert _scene_boundary_word(words, out[0]) == "back"
+    assert abs(out[0]["end_s"] - 0.5) < 0.01, f"scene 0 end should be ~0.5s, got {out[0]['end_s']}"
+
+    # Scene 1 must capture "He came back later" (end on "later" at 1.5s)
+    assert _scene_boundary_word(words, out[1]) == "later"
+
+    # Scene 2 must be non-trivial (not truncated by word stealing)
+    assert out[2]["end_s"] == 3.0
+
+
+def test_shared_last_word_adjacent_scenes_duration_ok():
+    """Two scenes whose last words collide must both get plausible durations."""
+    scenes = [
+        {"index": 0, "vo_text": "Before long he tried."},  # last word "tried"
+        {"index": 1, "vo_text": "He tried again."},        # contains "tried"
+    ]
+    words = [
+        _word("Before", 0.0, 0.2), _word("long", 0.2, 0.4),
+        _word("he", 0.4, 0.5), _word("tried", 0.5, 0.8),
+        _word("He", 1.0, 1.1), _word("tried", 1.1, 1.4), _word("again", 1.4, 1.7),
+    ]
+    payload = {"words": words, "total_duration_s": 2.0}
+    out = align_scenes_obj(scenes, payload)
+
+    # Scene 0 must NOT steal "He tried again" words
+    assert out[0]["duration_s"] < 1.5, "scene 0 must not steal scene 1's words"
+    assert out[1]["end_s"] == 2.0
+
+
+# ─── Precision ───────────────────────────────────────────────────────────
+
+
+def test_duration_s_written_with_2_decimal_places():
+    """duration_s must be rounded to 2dp (not 1dp which loses sub-second precision)."""
+    scenes = [
+        {"index": 0, "vo_text": "First."},
+        {"index": 1, "vo_text": "Second."},
+    ]
+    words = [_word("First", 0.0, 0.333), _word("Second", 0.5, 1.111)]
+    payload = {"words": words, "total_duration_s": 1.555}
+    out = align_scenes_obj(scenes, payload)
+
+    for s in out:
+        dur = s["duration_s"]
+        # Must be 2dp: str representation should have at most 2 decimal digits
+        assert round(dur, 2) == dur, f"duration_s {dur} is not 2dp"
