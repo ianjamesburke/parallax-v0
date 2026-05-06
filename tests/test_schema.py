@@ -102,3 +102,59 @@ def test_schema_output_flag_requires_target(capsys: pytest.CaptureFixture, tmp_p
     rc = cli.main(["schema", "--output", str(tmp_path / "out.json")])
     assert rc != 0
     assert capsys.readouterr().err.strip()
+
+
+# ---------------------------------------------------------------------------
+# parallax schema cli
+# ---------------------------------------------------------------------------
+
+def test_schema_cli_exits_zero() -> None:
+    rc = cli.main(["schema", "cli"])
+    assert rc == 0
+
+
+def test_schema_cli_is_valid_json(capsys: pytest.CaptureFixture) -> None:
+    rc = cli.main(["schema", "cli"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    parsed = json.loads(out)
+    assert "commands" in parsed
+
+
+def test_schema_cli_contains_top_level_commands(capsys: pytest.CaptureFixture) -> None:
+    cli.main(["schema", "cli"])
+    parsed = json.loads(capsys.readouterr().out)
+    names = {c["name"] for c in parsed["commands"]}
+    expected = {"produce", "models", "audio", "video", "image", "log", "usage",
+                "credits", "update", "completions", "verify", "schema", "validate"}
+    assert expected.issubset(names), f"missing: {expected - names}"
+
+
+def test_schema_cli_commands_have_args(capsys: pytest.CaptureFixture) -> None:
+    cli.main(["schema", "cli"])
+    parsed = json.loads(capsys.readouterr().out)
+    produce = next(c for c in parsed["commands"] if c["name"] == "produce")
+    arg_dests = {a["dest"] for a in produce["args"]}
+    assert "folder" in arg_dests
+    assert "plan" in arg_dests
+
+
+def test_schema_cli_subcommands_nested(capsys: pytest.CaptureFixture) -> None:
+    cli.main(["schema", "cli"])
+    parsed = json.loads(capsys.readouterr().out)
+    audio = next(c for c in parsed["commands"] if c["name"] == "audio")
+    sub_names = {c["name"] for c in audio["commands"]}
+    assert "transcribe" in sub_names
+    assert "speed" in sub_names
+
+
+def test_schema_cli_output_flag_writes_file(
+    capsys: pytest.CaptureFixture, tmp_path
+) -> None:
+    out_file = tmp_path / "cli_schema.json"
+    rc = cli.main(["schema", "cli", "--output", str(out_file)])
+    assert rc == 0
+    assert out_file.exists()
+    parsed = json.loads(out_file.read_text())
+    assert "commands" in parsed
+    assert capsys.readouterr().out == ""

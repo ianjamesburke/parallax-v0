@@ -16,9 +16,9 @@ def register_parser(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "target",
         nargs="?",
-        choices=("brief", "plan"),
+        choices=("brief", "plan", "cli"),
         default=None,
-        help="Which schema to emit. Omit to print a human-readable field overview of both.",
+        help="Which schema to emit: 'brief'/'plan' for YAML field schemas, 'cli' for full CLI surface JSON. Omit to print a human-readable overview of brief+plan.",
     )
     p.add_argument(
         "--output",
@@ -40,6 +40,16 @@ def run(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+
+    if args.target == "cli":
+        from . import build_parser
+        text = json.dumps(_serialize_parser(build_parser()), indent=2)
+        if output is not None:
+            Path(output).write_text(text)
+            print(f"Wrote cli schema to {output}", file=sys.stderr)
+        else:
+            print(text)
+        return 0
 
     if args.target is not None:
         model = Brief if args.target == "brief" else Plan
@@ -169,3 +179,56 @@ def _default_label(original: dict) -> str:
             return f"[default: {json.dumps(val)}]"
         return f"[default: {val!r}]"
     return ""
+
+
+# ---------------------------------------------------------------------------
+# CLI surface serialization (argparse → JSON)
+# ---------------------------------------------------------------------------
+
+def _serialize_parser(parser: argparse.ArgumentParser) -> dict:
+    prog_parts = parser.prog.split()
+    name = prog_parts[-1] if prog_parts else parser.prog
+    result: dict[str, Any] = {
+        "name": name,
+        "prog": parser.prog,
+        "description": parser.description or "",
+        "args": [],
+        "commands": [],
+    }
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for subparser in action.choices.values():
+                result["commands"].append(_serialize_parser(subparser))
+        elif isinstance(action, (argparse._HelpAction, argparse._VersionAction)):
+            continue
+        else:
+            result["args"].append(_serialize_action(action))
+    return result
+
+
+def _serialize_action(action: argparse.Action) -> dict:
+    if action.type is not None:
+        type_name = getattr(action.type, "__name__", None) or str(action.type)
+    elif isinstance(action, (argparse._StoreTrueAction, argparse._StoreFalseAction, argparse._StoreConstAction)):
+        type_name = "bool"
+    elif isinstance(action, argparse._CountAction):
+        type_name = "int"
+    elif isinstance(action, argparse._AppendAction):
+        type_name = "list[str]"
+    else:
+        type_name = "str"
+
+    default = action.default
+    if default is argparse.SUPPRESS:
+        default = None
+
+    return {
+        "flags": list(action.option_strings) if action.option_strings else [action.dest],
+        "dest": action.dest,
+        "required": getattr(action, "required", not action.option_strings),
+        "default": default,
+        "type": type_name,
+        "choices": list(action.choices) if action.choices else None,
+        "nargs": action.nargs,
+        "help": action.help or "",
+    }

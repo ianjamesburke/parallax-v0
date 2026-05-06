@@ -9,7 +9,7 @@ from ..log import configure as configure_logging
 from . import _audio, _image, _log, _meta, _models, _produce, _schema, _validate, _video
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="parallax", description="Agentic creative production CLI.")
     parser.add_argument("--version", action="version", version=f"parallax {__version__}")
     parser.add_argument(
@@ -29,6 +29,11 @@ def main(argv: list[str] | None = None) -> int:
     _validate.register_parser(sub)
 
     _enable_help_on_empty(parser)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
 
     try:
         import argcomplete
