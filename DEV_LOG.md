@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-06 — [CHANGED] --words flag for cap-pauses/transcribe; vo_words.json caching in produce (PR #140 → alpha)
+`parallax audio cap-pauses --words <path>` and `parallax audio transcribe --words <path>` now accept pre-computed word-boundary JSON and skip WhisperX/forced_align entirely. `stage_voiceover` also checks for a sibling `vo_words.json` before calling `forced_align.align_words` when `audio_path` is locked but `words_path` is not — avoids re-transcribing on repeated produce runs.
+**Breaks if:** `parallax audio cap-pauses --words words.json --input audio.wav --output out.wav` exits non-zero or outputs a file shorter than expected; or a produce run with locked `audio_path` and a sibling `vo_words.json` still logs "forced_align → ..." instead of "reusing cached words".
+
 ## 2026-05-06 — [CHANGED] Preflight warns before overwriting existing scene assets (PR #139 → alpha)
 `compute_preflight` now accepts a `folder` param and checks `folder/parallax/assets/` for `scene_NN_still.png` / `scene_NN_animated.mp4` on unlocked scenes. Matching files set `will_overwrite=True` on the `PreflightScene`, and the cost table shows `[will overwrite existing file!]` with a `⚠ WARNING` banner. Locked scenes (with `still_path:` / `clip_path:` set) are exempt. `produce.run_plan` already passes `folder` to `compute_preflight`. Root cause of incident: deterministic asset names in `parallax/assets/` + no preflight check = silent overwrite on re-run.
 **Breaks if:** Running produce on a folder where `parallax/assets/scene_00_still.png` exists and scene 0 is unlocked shows no overwrite warning; or a locked scene shows `[will overwrite existing file!]` instead of `[locked — skipping]`.
