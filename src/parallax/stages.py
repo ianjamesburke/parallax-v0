@@ -641,6 +641,7 @@ def stage_speed_adjust(plan: dict[str, Any], settings: Settings, state: Pipeline
     if abs(rate - 1.0) <= 1e-3:
         return plan
 
+    assert state.words_path is not None
     audio_path = Path(state.audio_path)
     words_path = Path(state.words_path)
     tmp_out = audio_path.with_name(f"{audio_path.stem}_sped{audio_path.suffix}")
@@ -839,6 +840,7 @@ def stage_captions(plan: dict[str, Any], settings: Settings, state: PipelineStat
     """
     if settings.skip_captions:
         return plan
+    assert state.current_video is not None and state.words_path is not None
     captioned_path = str(Path(state.video_dir) / f"{settings.concept_prefix}captioned.mp4")
     _log(settings, f"burn_captions → {captioned_path}")
     burn_captions(
@@ -876,6 +878,7 @@ def stage_titles(plan: dict[str, Any], settings: Settings, state: PipelineState)
         elif "start_s" in t and "end_s" in t:
             resolved_titles.append({"text": t["text"], "start_s": t["start_s"], "end_s": t["end_s"]})
     if resolved_titles:
+        assert state.current_video is not None
         titled_path = str(Path(state.video_dir) / f"{settings.concept_prefix}titled.mp4")
         _log(settings, f"burn_titles → {titled_path}")
         burn_titles(
@@ -1015,6 +1018,7 @@ def stage_finalize(plan: dict[str, Any], settings: Settings, state: PipelineStat
 
     final_out = str(Path(state.out_dir) / state.convention_name)
     if state.current_video != final_out:
+        assert state.current_video is not None
         Path(state.current_video).rename(final_out)
         state.current_video = final_out
 

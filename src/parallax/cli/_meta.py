@@ -230,7 +230,7 @@ def _update_skill() -> None:
 
 def _run_completions_print(shell: str) -> int:
     import argcomplete
-    print(argcomplete.shellcode(["parallax"], shell=shell))
+    print(argcomplete.shellcode(["parallax"], shell=shell))  # type: ignore[attr-defined]
     return 0
 
 
@@ -257,7 +257,7 @@ def _run_completions_install(shell: str | None, path: str | None) -> int:
         out = Path.home() / ".cache" / target_shell / f"parallax-completion.{target_shell}"
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(argcomplete.shellcode(["parallax"], shell=target_shell))
+    out.write_text(argcomplete.shellcode(["parallax"], shell=target_shell))  # type: ignore[attr-defined]
 
     print(f"Wrote {target_shell} completion stub to {out}")
     print()

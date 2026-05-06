@@ -20,7 +20,7 @@ _DEFAULT_DEVICE = "cpu"
 _DEFAULT_COMPUTE = "int8"
 
 try:
-    import whisperx as _whisperx
+    import whisperx as _whisperx  # type: ignore[import-untyped]
     _HAS_WHISPERX = True
 except ImportError:
     _whisperx = None  # type: ignore[assignment]
@@ -68,6 +68,7 @@ def transcribe_wav(wav_path: str, label: str = "", no_whisperx: bool = False) ->
 def _transcribe_whisperx(
     wav_path: str, label: str, model_name: str, device: str, compute_type: str
 ) -> list[dict]:
+    assert _whisperx is not None, "whisperx not installed"
     log.info("whisper_backend: transcribing %s with whisperx (%s, %s)", label, model_name, device)
     model = _whisperx.load_model(model_name, device=device, compute_type=compute_type)
     audio = _whisperx.load_audio(wav_path)
