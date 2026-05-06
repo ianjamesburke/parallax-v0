@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-06 — [CHANGED] Add ElevenLabs TTS provider (PR #112 → alpha)
+New `src/parallax/elevenlabs.py` calls the ElevenLabs `/v1/text-to-speech/{voice_id}/with-timestamps` endpoint and aggregates character-level alignment into word timestamps. `voiceover.py` routes to it when `voice_model: elevenlabs`; all other backends unchanged. API key from `ELEVENLABS_API_KEY` env var (fallback: `ELEVEN_LABS_API_KEY`). Default voice: Rachel (`21m00Tcm4TlvDq8ikWAM`); `voice:` field accepts any ElevenLabs voice ID directly.
+**Breaks if:** `parallax produce` with `voice_model: elevenlabs` raises an import error or doesn't call the ElevenLabs API; or `ELEVENLABS_API_KEY` unset produces a silent failure instead of a clear error message.
+
 ## 2026-05-05 — [CHANGED] Add clip_trim_start_s / clip_trim_end_s scene fields (PR #104 → alpha)
 Added `clip_trim_start_s` (float or `"auto"`) and `clip_trim_end_s` (float) as per-scene plan fields. `clip_trim_start_s: auto` resolves to `prev_trim_start + prev_duration_s` when the previous scene shares the same `clip_path`, enabling seamless continuation across scenes from the same footage. Trim is extracted to a temp file via ffmpeg `-ss` before the existing ping-pong/loop logic so both operations compose correctly. `_resolve_auto_trim` runs inside `ken_burns_assemble` before the scene loop.
 **Breaks if:** `parallax validate plan` with `clip_trim_start_s: 2.0` or `clip_trim_start_s: auto` returns a schema error; or a scene with `clip_trim_start_s` set silently ignores the seek (output clip starts from beginning of source).
