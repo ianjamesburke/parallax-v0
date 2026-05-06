@@ -74,6 +74,7 @@ def _make_settings(tmp_path: Path, mode: ProductionMode) -> Settings:
         headline_bg=None,
         headline_color=None,
         character_image=None,
+        product_image=None,
         avatar_cfg=None,
         stills_only=False,
         mode=mode,

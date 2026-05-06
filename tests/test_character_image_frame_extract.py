@@ -152,6 +152,7 @@ def _make_settings_with_char(tmp_path: Path, char_image: str | None = None) -> S
         headline_bg=None,
         headline_color=None,
         character_image=char_image,
+        product_image=None,
         avatar_cfg=None,
         stills_only=False,
         mode=ProductionMode.TEST,

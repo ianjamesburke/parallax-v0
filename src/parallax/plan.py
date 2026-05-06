@@ -190,8 +190,9 @@ class Plan(BaseModel):
     # Video generation resolution (plan-level default; per-scene overrides allowed)
     animate_resolution: str | None = None
 
-    # Character / avatar
+    # Character / avatar / product
     character_image: str | None = None
+    product_image: str | None = None
     avatar: Avatar | None = None
 
     # Voiceover audio locks

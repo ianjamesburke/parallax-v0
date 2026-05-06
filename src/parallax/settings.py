@@ -174,8 +174,9 @@ class Settings:
     headline_bg: str | None
     headline_color: str | None
 
-    # Character / avatar
+    # Character / avatar / product
     character_image: str | None
+    product_image: str | None
     avatar_cfg: dict[str, Any] | None
 
     # Pipeline behaviour
@@ -298,6 +299,14 @@ def _resolve_settings_from_plan(
                 raise FileNotFoundError(f"character_image not found: {resolved}")
         character_image = str(resolved)
 
+    prod_image_raw = plan.product_image
+    product_image: str | None = None
+    if prod_image_raw:
+        p = Path(prod_image_raw)
+        resolved = p if p.is_absolute() else (folder / p)
+        if resolved.is_file():
+            product_image = str(resolved)
+
     avatar_cfg: dict[str, Any] | None = None
     if plan.avatar is not None:
         avatar_cfg = plan.avatar.model_dump(mode="python", exclude_none=True)
@@ -332,6 +341,7 @@ def _resolve_settings_from_plan(
         headline_bg=plan.headline_bg,
         headline_color=plan.headline_color,
         character_image=character_image,
+        product_image=product_image,
         avatar_cfg=avatar_cfg,
         stills_only=plan.stills_only,
         trim_pauses=plan.trim_pauses,
@@ -412,6 +422,14 @@ def _resolve_settings_from_dict(
                 raise FileNotFoundError(f"character_image not found: {resolved}")
         character_image = str(resolved)
 
+    prod_image_raw = plan.get("product_image")
+    product_image: str | None = None
+    if prod_image_raw:
+        p = Path(prod_image_raw)
+        resolved = p if p.is_absolute() else (folder / p)
+        if resolved.is_file():
+            product_image = str(resolved)
+
     return Settings(
         folder=folder,
         plan_path=plan_path,
@@ -440,6 +458,7 @@ def _resolve_settings_from_dict(
         headline_bg=headline_bg,
         headline_color=headline_color,
         character_image=character_image,
+        product_image=product_image,
         avatar_cfg=plan.get("avatar"),
         stills_only=bool(plan.get("stills_only", False)),
         trim_pauses=plan.get("trim_pauses", True),

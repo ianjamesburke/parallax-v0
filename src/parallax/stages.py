@@ -223,6 +223,9 @@ def _resolve_still_refs(s: dict[str, Any], settings: Settings) -> list[str] | No
         char_frame = _extract_character_image_frame(settings.character_image, settings.folder)
         refs = (refs or []) + [char_frame]
 
+    if settings.product_image and s.get("shot_type", "broll") == "broll":
+        refs = [settings.product_image] + (refs or [])
+
     if refs is None:
         media_dir = settings.folder / "media"
         if media_dir.is_dir():

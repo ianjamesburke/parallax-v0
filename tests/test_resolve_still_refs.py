@@ -9,8 +9,8 @@ from unittest.mock import patch
 from parallax.stages import _resolve_still_refs
 
 
-def _settings(tmp_path: Path, *, character_image: str | None = None, stills_only: bool = False):
-    return SimpleNamespace(folder=tmp_path, character_image=character_image, stills_only=stills_only)
+def _settings(tmp_path: Path, *, character_image: str | None = None, stills_only: bool = False, product_image: str | None = None):
+    return SimpleNamespace(folder=tmp_path, character_image=character_image, stills_only=stills_only, product_image=product_image)
 
 
 def test_no_refs_no_media_returns_none(tmp_path):

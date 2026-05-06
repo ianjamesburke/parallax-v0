@@ -235,3 +235,71 @@ def test_character_scenes_no_reference_when_no_character_ref(tmp_path):
     assert character_scene["shot_type"] == "character"
     assert "reference" not in character_scene
 
+
+def test_product_image_set_from_first_product_ref(tmp_path):
+    brief_path = _write_brief(tmp_path, _payload())
+    _materialize_assets(tmp_path)
+
+    result = plan_from_brief(brief_path, folder=tmp_path)
+    plan = yaml.safe_load(result.plan_path.read_text())
+
+    assert "product_image" in plan
+    expected = str((tmp_path / "brand" / "logo.png").resolve())
+    assert plan["product_image"] == expected
+
+
+def test_product_image_omitted_when_no_product_ref(tmp_path):
+    payload = _payload()
+    payload["assets"]["provided"] = [
+        {"path": "brand/founder.png", "kind": "character_ref", "description": "Founder"},
+    ]
+    brief_path = _write_brief(tmp_path, payload)
+    (tmp_path / "brand").mkdir()
+    (tmp_path / "brand" / "founder.png").write_bytes(b"\x89PNG")
+
+    result = plan_from_brief(brief_path, folder=tmp_path)
+    plan = yaml.safe_load(result.plan_path.read_text())
+
+    assert "product_image" not in plan
+
+
+def test_product_image_appears_after_character_image_in_plan(tmp_path):
+    """product_image key must follow character_image in the ordered plan output."""
+    brief_path = _write_brief(tmp_path, _payload())
+    _materialize_assets(tmp_path)
+
+    result = plan_from_brief(brief_path, folder=tmp_path)
+    plan_text = result.plan_path.read_text()
+    char_pos = plan_text.index("character_image")
+    prod_pos = plan_text.index("product_image")
+    assert char_pos < prod_pos
+
+
+def test_unwired_asset_kind_prints_warning(tmp_path, capsys):
+    payload = _payload()
+    payload["assets"]["provided"].append(
+        {"path": "brand/style.png", "kind": "style_ref", "description": "Style board"},
+    )
+    (tmp_path / "brand").mkdir(exist_ok=True)
+    (tmp_path / "brand" / "logo.png").write_bytes(b"\x89PNG")
+    (tmp_path / "brand" / "founder.png").write_bytes(b"\x89PNG")
+    (tmp_path / "brand" / "style.png").write_bytes(b"\x89PNG")
+    brief_path = _write_brief(tmp_path, payload)
+
+    plan_from_brief(brief_path, folder=tmp_path)
+
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.out
+    assert "style_ref" in captured.out
+    assert "will be ignored" in captured.out
+
+
+def test_wired_kinds_do_not_print_warning(tmp_path, capsys):
+    brief_path = _write_brief(tmp_path, _payload())
+    _materialize_assets(tmp_path)
+
+    plan_from_brief(brief_path, folder=tmp_path)
+
+    captured = capsys.readouterr()
+    assert "WARNING" not in captured.out
+
