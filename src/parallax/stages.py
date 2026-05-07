@@ -35,6 +35,7 @@ from .manifest import write_manifest
 from .project import scan_project_folder
 from .settings import ProductionMode, Settings
 from .shim import is_mock_asset
+from .text_expand import expand_digits
 from .voiceover import generate_voiceover_dict
 
 
@@ -642,7 +643,7 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
         _log(settings, f"  aligned {len(words)} words ({words[0]['start']:.2f}s – {words[-1]['end']:.2f}s)")
     else:
         scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
-        full_script = " ".join(s.get("vo_text", "") for s in scenes_raw).strip()
+        full_script = " ".join(expand_digits(s.get("vo_text", "")) for s in scenes_raw).strip()
         if not full_script:
             _log(settings, "generate_voiceover — no vo_text on any scene, skipping")
             return plan
