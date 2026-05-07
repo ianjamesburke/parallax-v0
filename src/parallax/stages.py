@@ -62,6 +62,7 @@ class SceneRuntime:
     zoom_direction: str | None = None
     zoom_amount: float | None = None
     video_references: list[str] | None = None
+    reference_images: list[str] | None = None
 
 
 @dataclass
@@ -90,6 +91,7 @@ class PipelineState:
     manifest_path: str | None = None
     current_video: str | None = None
     run_cost: float = 0.0
+    debug_level: int = 0
 
 
 # --------------------------------------------------------------------------
@@ -460,6 +462,8 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
             scene_rt.zoom_amount = float(s["zoom_amount"])
         if s.get("video_references"):
             scene_rt.video_references = s["video_references"]
+        if s.get("reference_images"):
+            scene_rt.reference_images = s["reference_images"]
         scenes.append(scene_rt)
 
     state.scenes = scenes
@@ -1021,6 +1025,7 @@ def stage_assemble(plan: dict[str, Any], settings: Settings, state: PipelineStat
         resolution=settings.resolution,
         transitions=resolved_transitions if any_transition else None,
         transition_duration_s=resolved_durations if any_transition else None,
+        debug_level=state.debug_level,
     )
     state.current_video = draft_path
     return plan

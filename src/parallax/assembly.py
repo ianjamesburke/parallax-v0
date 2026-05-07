@@ -12,13 +12,15 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
-from .ffmpeg_utils import _get_ffmpeg, parse_resolution, pipe_rawvideo_frames, run_ffmpeg
+from .ffmpeg_utils import _get_ffmpeg, _ffmpeg_has_drawtext, _get_drawtext_ffmpeg, parse_resolution, pipe_rawvideo_frames, run_ffmpeg
 from .log import get_logger
 from .shim import is_test_mode, output_dir
+from .captions.styles import _FONTS_DIR
 
 log = get_logger(__name__)
 
@@ -342,6 +344,69 @@ def _resolve_auto_trim(scenes: list[dict]) -> list[dict]:
     return result
 
 
+def _apply_debug_overlay(
+    clip_in: str,
+    clip_out: str,
+    scene_dict: dict,
+    debug_level: int,
+    tmp_dir: str,
+) -> None:
+    """Burn scene-index/prompt/refs overlay onto clip_in → clip_out."""
+    if not _ffmpeg_has_drawtext():
+        log.warning("debug overlay skipped — ffmpeg lacks drawtext (libfreetype)")
+        shutil.copy2(clip_in, clip_out)
+        return
+
+    idx = scene_dict.get("index", "?")
+    font_path = str(_FONTS_DIR / "Anton-Regular.ttf")
+    fontsize = 16
+    line_height = 22
+
+    # Build (text, color) pairs
+    entries: list[tuple[str, str]] = [(f"SCENE #{str(idx).zfill(2)}", "yellow")]
+
+    if debug_level >= 2:
+        prompt = scene_dict.get("prompt", "")
+        words = prompt.split()
+        lines: list[str] = []
+        cur: list[str] = []
+        for w in words:
+            if sum(len(x) + 1 for x in cur) + len(w) > 45:
+                lines.append(" ".join(cur))
+                cur = [w]
+            else:
+                cur.append(w)
+        if cur:
+            lines.append(" ".join(cur))
+        for line in lines[:6]:
+            entries.append((line, "white"))
+
+    if debug_level >= 3:
+        refs = list(scene_dict.get("reference_images") or []) + list(scene_dict.get("video_references") or [])
+        for r in refs[:3]:
+            entries.append((Path(r).name, "0x90FF90"))
+
+    filters = []
+    for i, (text, color) in enumerate(entries):
+        tf = str(Path(tmp_dir) / f"dbgtxt_{idx}_{i}.txt")
+        Path(tf).write_text(text, encoding="utf-8")
+        y = 10 + i * line_height
+        filters.append(
+            f"drawtext=fontfile='{font_path}':textfile='{tf}'"
+            f":fontcolor={color}:fontsize={fontsize}"
+            f":x=10:y={y}:box=1:boxcolor=black@0.55:boxborderw=3"
+        )
+
+    ffmpeg = _get_drawtext_ffmpeg()
+    run_ffmpeg(
+        [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+         "-i", clip_in, "-vf", ",".join(filters),
+         "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p", "-an",
+         clip_out],
+        check=True,
+    )
+
+
 def ken_burns_assemble(
     scenes_json: str,
     audio_path: str | None,
@@ -349,6 +414,7 @@ def ken_burns_assemble(
     resolution: str = "1080x1920",
     transitions: list[str | None] | None = None,
     transition_duration_s: list[float] | None = None,
+    debug_level: int = 0,
 ) -> str:
     """Assemble Ken Burns draft video from stills + aligned scene durations.
 
@@ -432,7 +498,12 @@ def ken_burns_assemble(
                 _make_kb_clip(still, dur, clip_out, resolution=resolution, scene_index=i,
                               zoom_direction=zoom_dir, zoom_amount=zoom_amount)
 
-            clip_paths.append(clip_out)
+            if debug_level > 0:
+                dbg_out = str(Path(tmp_dir) / f"dbg_{i:04d}.mp4")
+                _apply_debug_overlay(clip_out, dbg_out, scene, debug_level, tmp_dir)
+                clip_paths.append(dbg_out)
+            else:
+                clip_paths.append(clip_out)
 
         if not clip_paths:
             raise RuntimeError("No scenes with valid stills to assemble")

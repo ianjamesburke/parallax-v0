@@ -149,6 +149,7 @@ def run_plan(
     mode: "ProductionMode | None" = None,
     yes: bool = False,
     hq: bool = False,
+    debug_level: int = 0,
 ) -> ProductionResult:
     """Run the full plan-driven production pipeline.
 
@@ -286,6 +287,7 @@ def run_plan(
         # path — no audio/video stages, no convention rename, no full mp4.
         if settings.stills_only:
             state = PipelineState()
+            state.debug_level = debug_level
             plan = _wrap_stage(stage_scan)(plan, settings, state)
             plan = _wrap_stage(stage_stills)(plan, settings, state)
             settings.events("log", {"msg": "stills_only — skipping audio, video, and assembly stages"})
@@ -309,6 +311,7 @@ def run_plan(
             )
 
         state = PipelineState()
+        state.debug_level = debug_level
         for stage in STAGES:
             plan = stage(plan, settings, state)
 

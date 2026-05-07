@@ -43,6 +43,10 @@ def register_parser(sub: argparse._SubParsersAction) -> None:
         help="Use premium-tier models: image=premium (Gemini 3 Pro), video=mid (Kling). "
              "Per-scene model overrides in the plan still take precedence.",
     )
+    produce_p.add_argument(
+        "--debug", type=int, choices=(0, 1, 2, 3), default=0, metavar="N",
+        help="Burn debug overlay on every scene: 1=scene index, 2=+prompt, 3=+refs. Default: 0 (off).",
+    )
 
     plan_p = sub.add_parser("plan", help="Translate a brief.yaml into a plan.yaml.")
     plan_p.add_argument("--folder", required=True, help="Project root.")
@@ -127,6 +131,7 @@ def _run_produce(args) -> int:
         folder=args.folder, plan_path=plan_path,
         aspect=args.aspect, yes=getattr(args, "yes", False),
         hq=getattr(args, "hq", False),
+        debug_level=getattr(args, "debug", 0),
     )
     if result.status == "cancelled":
         print("produce cancelled.", flush=True)

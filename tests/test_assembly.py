@@ -216,3 +216,28 @@ def test_ken_burns_assemble_with_clip_path(tmp_path, monkeypatch):
         json.dumps(scenes), str(audio), str(out), "1080x1920",
     )
     assert out.exists() and out.stat().st_size > 0
+
+
+def test_ken_burns_debug_overlay_level2(tmp_path):
+    """debug_level=2 produces a valid video of correct duration."""
+    still = tmp_path / "still.png"
+    _make_still(still)
+    audio = tmp_path / "audio.wav"
+    _make_silent_wav(audio, 4.0)
+    out = tmp_path / "debug_out.mp4"
+
+    scenes = json.dumps([{
+        "index": 3,
+        "still_path": str(still),
+        "duration_s": 4.0,
+        "prompt": "A robot standing in a neon-lit city street at midnight",
+    }])
+    assembly.ken_burns_assemble(
+        scenes_json=scenes,
+        audio_path=str(audio),
+        output_path=str(out),
+        resolution="1080x1920",
+        debug_level=2,
+    )
+    assert out.exists()
+    assert abs(_probe_format_duration(out) - 4.0) < 0.5
