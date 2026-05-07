@@ -39,7 +39,7 @@ The filtered, sorted list is your candidate set. Pick the first one → proceed 
 ## Phase 1 — Pre-flight
 
 ```bash
-git -C worktrees/alpha status --porcelain
+git status --porcelain
 ```
 
 If alpha is dirty: **stop**. Ask whether to commit first or carry changes into the new branch.
@@ -53,7 +53,7 @@ gh issue edit <number> --add-label "in progress"
 
 ## Phase 2 — Worktree Setup
 
-Run from inside `worktrees/alpha/`:
+Run from the repo root:
 ```bash
 wtp add -b feature/<issue-number>-short-description
 ```
@@ -63,10 +63,10 @@ wtp add -b feature/<issue-number>-short-description
 **Immediately verify the base:**
 ```bash
 git -C worktrees/<branch> log --oneline -1
-git -C worktrees/alpha log --oneline -1
+git log --oneline -1
 ```
 
-If they don't match: delete the worktree and branch, redo from inside `worktrees/alpha/`. Never proceed on the wrong base.
+If they don't match: delete the worktree and branch, redo from the repo root. Never proceed on the wrong base.
 
 ---
 
@@ -213,17 +213,17 @@ After DEV_LOG is committed on the feature branch. Run without stopping:
 
 0. Sync alpha and rebase:
    ```bash
-   git -C worktrees/alpha pull origin alpha
+   git pull origin alpha
    git -C worktrees/<branch> rebase origin/alpha
    ```
    If conflicts: resolve, then `git -C worktrees/<branch> push --force-with-lease origin HEAD`. DEV_LOG.md conflicts are the most common: always resolve by placing the new entry ABOVE the conflicting HEAD block (DEV_LOG is newest-first). If rebase meaningfully changes the feature, re-surface the testing block before merging.
 
 1. `gh pr merge <number> --squash` — never pass `--delete-branch`
-2. `just pr-clean <pr-number>` — run from `worktrees/alpha/`
-3. `git -C worktrees/alpha pull origin alpha`
+2. `just pr-clean <pr-number>` — run from the repo root
+3. `git pull origin alpha`
 4. `wtp remove --force <branch>` then `git push origin --delete <branch>`
-5. `just bump-and-install` — from `worktrees/alpha/`
-6. `git -C worktrees/alpha push origin alpha` — keeps local and remote alpha in sync; prevents divergence next cycle
+5. `just bump-and-install` — from the repo root
+6. `git push origin alpha` — keeps local and remote alpha in sync; prevents divergence next cycle
 
 ---
 
@@ -250,12 +250,12 @@ Then run `/improve` to surface friction from this session.
 
 ## Rules
 
-- Never branch from main — always from `worktrees/alpha/`
+- Never branch from main — always from the repo root (alpha)
 - Never skip base verification after `wtp add`
 - Never merge before user confirms testing passed
 - Never claim [COMPLETE] without user verification
 - `just pr-install` runs from the **feature worktree**
-- `just pr-clean` and `just bump-and-install` run from **`worktrees/alpha/`**
+- `just pr-clean` and `just bump-and-install` run from the **repo root**
 - Never pass `--delete-branch` to `gh pr merge` — git refuses to delete a branch checked out by a worktree
 - Alpha must be clean when the cycle ends
 - Subagents stage only — orchestrator owns the commit and the PR

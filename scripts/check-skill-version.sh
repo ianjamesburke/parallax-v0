@@ -6,7 +6,7 @@ set -euo pipefail
 
 SKILL_FILE="${1:-/Users/ianburke/Documents/GitHub/parallax-v0-skill/skill.md}"
 
-cli_version=$(grep '^version' worktrees/alpha/pyproject.toml | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+cli_version=$(grep '^version' pyproject.toml | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 skill_version=$(grep '^version:' "$SKILL_FILE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 
 if [[ "$cli_version" == "$skill_version" ]]; then
