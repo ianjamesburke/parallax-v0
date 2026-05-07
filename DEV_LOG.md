@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-07 — [CHANGED] WhisperX is now a required dependency — faster-whisper fallback removed (PR #172 → alpha)
+`whisper_backend.py` now has a single transcription path (WhisperX). `_HAS_WHISPERX`, `_transcribe_faster_whisper`, and the `no_whisperx` parameter are gone. `whisperx` moved from optional extras to core `[project.dependencies]`; `faster-whisper` removed as a direct dep (still present as a transitive dep of whisperx itself). `parallax audio transcribe --no-whisperx` now errors with "No such option."
+**Breaks if:** `parallax audio transcribe --help` still shows `--no-whisperx`; or `parallax produce` logs `faster-whisper` anywhere in its output.
+
 ## 2026-05-07 — [CHANGED] Auto-expand digits in vo_text before TTS (PR #171 → alpha)
 `expand_digits()` in `text_expand.py` converts digit tokens to spoken form before the TTS script is built in `stage_voiceover` and before `plan_words`/`scene_word_counts` are computed in `align_scenes_obj`. Root cause: `120,000` in Mars Men scene 16 counted as 1 word in `plan_words` but rendered as 4 TTS words — causing `_find_scene_end` to anchor in the wrong region and drift all downstream boundaries. Handles: comma-formatted integers, currency ($99), bare 0–999. Skips 4-digit numbers (years, model numbers) and numbers adjacent to letters (3D, B2B). `vo_text` in the plan is never mutated — captions still display the original form.
 **Breaks if:** `parallax produce` with `120,000` in any scene's `vo_text` generates audio where the aligner drifts boundaries starting from that scene; or `from parallax.text_expand import expand_digits` raises ImportError.
