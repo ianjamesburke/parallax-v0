@@ -1,11 +1,6 @@
 """WhisperX forced alignment — produces real per-word timestamps for a wav.
 
-Prefers WhisperX (whisper + wav2vec2 forced alignment, ~50 ms precision) when
-installed. Falls back to faster-whisper's native word timestamps when WhisperX
-is not available (slightly less precise on short tokens, fine for captions).
-
-Install WhisperX for best results:
-    pip install whisperx
+Uses WhisperX (whisper + wav2vec2 forced alignment, ~50ms precision).
 
 Output is the canonical `vo_words.json` shape used everywhere else:
 `[{"word": str, "start": float, "end": float}, ...]`
@@ -22,10 +17,7 @@ log = logging.getLogger("parallax.forced_align")
 
 
 def align_words(wav_path: str | Path) -> list[dict]:
-    """Transcribe + align a wav, return `[{word, start, end}, ...]`.
-
-    Uses WhisperX when installed (whisper + wav2vec2 forced alignment).
-    Falls back to faster-whisper native word timestamps otherwise.
+    """Transcribe + align a wav, return `[{word, start, end}, ...]` using WhisperX.
 
     Override the model with PARALLAX_WHISPER_MODEL (e.g. base.en, small.en),
     device with PARALLAX_WHISPER_DEVICE (cpu, cuda), compute type with

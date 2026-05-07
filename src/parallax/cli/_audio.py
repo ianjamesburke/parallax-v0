@@ -17,7 +17,6 @@ audio_app = typer.Typer(
 def audio_transcribe(
     input: str = typer.Argument(..., help="Audio or video file to transcribe."),
     out: str = typer.Option(..., "--out", help="Output path for words JSON."),
-    no_whisperx: bool = typer.Option(False, "--no-whisperx", help="Use faster-whisper instead of WhisperX."),
     words: Optional[str] = typer.Option(None, "--words", help="Path to existing words JSON — skips transcription."),
 ) -> int:
     from pathlib import Path
@@ -28,7 +27,7 @@ def audio_transcribe(
         data = _json.loads(Path(words).read_text())
         preloaded = data if isinstance(data, list) else data.get("words", [])
     try:
-        result = transcribe_words(input, out, no_whisperx=no_whisperx, words=preloaded)
+        result = transcribe_words(input, out, words=preloaded)
     except RuntimeError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
