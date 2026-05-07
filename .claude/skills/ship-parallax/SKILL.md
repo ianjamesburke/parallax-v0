@@ -213,14 +213,14 @@ After DEV_LOG is committed on the feature branch. Run without stopping:
 
 0. Sync alpha and rebase:
    ```bash
-   git pull origin alpha
+   git -C /Users/ianburke/Documents/GitHub/parallax-v0 pull origin alpha
    git -C worktrees/<branch> rebase origin/alpha
    ```
    If conflicts: resolve, then `git -C worktrees/<branch> push --force-with-lease origin HEAD`. DEV_LOG.md conflicts are the most common: always resolve by placing the new entry ABOVE the conflicting HEAD block (DEV_LOG is newest-first). If rebase meaningfully changes the feature, re-surface the testing block before merging.
 
 1. `gh pr merge <number> --squash` — never pass `--delete-branch`
 2. `just pr-clean <pr-number>` — run from the repo root
-3. `git pull origin alpha`
+3. `git -C /Users/ianburke/Documents/GitHub/parallax-v0 pull origin alpha`
 4. `wtp remove --force <branch>` then `git push origin --delete <branch>`
 5. `just bump-and-install` — from the repo root
 6. `git push origin alpha` — keeps local and remote alpha in sync; prevents divergence next cycle
