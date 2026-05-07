@@ -11,6 +11,7 @@ Public API:
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,6 +38,10 @@ class PreflightScene:
     output_resolution: str | None = None
 
 
+def _hash_vo_text(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
 @dataclass
 class PreflightResult:
     scenes: list[PreflightScene] = field(default_factory=list)
@@ -46,6 +51,7 @@ class PreflightResult:
     estimated_total_usd: float = 0.0
     balance_usd: float | None = None
     has_overwrites: bool = False
+    warnings: list[str] = field(default_factory=list)
 
 
 def compute_preflight(
@@ -144,6 +150,33 @@ def compute_preflight(
     vo_locked = bool(plan.get("audio_path"))
     vo_cost = 0.0  # Current TTS models have cost_usd=0
 
+    # --- Locked-audio warnings ---
+    locked_audio_warnings: list[str] = []
+    if vo_locked:
+        voice_speed = float(plan.get("voice_speed", 1.0))
+        if voice_speed != 1.0:
+            locked_audio_warnings.append("voice_speed ignored — audio is locked")
+
+        trim_pauses = plan.get("trim_pauses", True)
+        if trim_pauses is not False:
+            audio_path_val = plan.get("audio_path", "")
+            locked_audio_warnings.append(
+                f"trim_pauses ignored — audio is locked. "
+                f"Run: parallax audio cap-pauses {audio_path_val} to apply manually."
+            )
+
+        stored_hashes: dict = plan.get("vo_text_hashes") or {}
+        if stored_hashes:
+            for scene in plan.get("scenes", []):
+                idx = str(scene.get("index", ""))
+                if idx in stored_hashes:
+                    current_hash = _hash_vo_text(scene.get("vo_text", ""))
+                    if stored_hashes[idx] != current_hash:
+                        locked_audio_warnings.append(
+                            f"vo_text for scene {idx} has changed but audio_path is locked — "
+                            f"alignment may be incorrect. Clear audio_path to regenerate."
+                        )
+
     estimated_total = sum(sc.cost_usd for sc in scenes) + vo_cost
     balance_str = f"${balance_usd:.2f}" if balance_usd is not None else "unknown"
     has_overwrites = any(sc.will_overwrite for sc in scenes)
@@ -158,6 +191,7 @@ def compute_preflight(
         estimated_total_usd=estimated_total,
         balance_usd=balance_usd,
         has_overwrites=has_overwrites,
+        warnings=locked_audio_warnings,
     )
 
 
@@ -180,6 +214,9 @@ def format_preflight(result: PreflightResult) -> str:
 
     if result.has_overwrites:
         lines.append("    ⚠ WARNING: existing files will be overwritten (use regenerate: true to be explicit)")
+
+    for w in result.warnings:
+        lines.append(f"    ⚠ WARNING: {w}")
 
     for s in result.scenes:
         if s.locked:

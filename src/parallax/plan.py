@@ -209,6 +209,9 @@ class Plan(BaseModel):
     # Voiceover audio locks
     audio_path: str | None = None
     words_path: str | None = None
+    # Hashes of each scene's vo_text at the time audio_path was first locked.
+    # Written by produce on first lock; compared on subsequent runs to detect drift.
+    vo_text_hashes: dict[str, str] | None = None
 
     # Pipeline behavior
     stills_only: bool = False
