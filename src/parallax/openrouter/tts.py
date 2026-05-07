@@ -163,10 +163,11 @@ def _tts_real(
         from .. import forced_align
         words = forced_align.align_words(wav_path)
     except Exception as exc:
-        import logging
-        logging.getLogger("parallax.openrouter.tts").warning(
-            "forced_align failed (%s); falling back to evenly-distributed word timings",
-            exc,
+        print(
+            f"[WARNING] forced_align failed ({exc}); word timestamps are evenly distributed "
+            f"(not real speech timing) — captions may be unsynchronized. "
+            f"Run `parallax audio transcribe {wav_path} --output <words_path>` after produce "
+            f"to get real word timestamps."
         )
         words = _tts_evenly_distributed_words(transcript or text, duration_s)
 
@@ -231,10 +232,11 @@ def _tts_real_speech(
         from .. import forced_align
         words = forced_align.align_words(wav_path)
     except Exception as exc:
-        import logging
-        logging.getLogger("parallax.openrouter.tts").warning(
-            "forced_align failed (%s); falling back to evenly-distributed word timings",
-            exc,
+        print(
+            f"[WARNING] forced_align failed ({exc}); word timestamps are evenly distributed "
+            f"(not real speech timing) — captions may be unsynchronized. "
+            f"Run `parallax audio transcribe {wav_path} --output <words_path>` after produce "
+            f"to get real word timestamps."
         )
         words = _tts_evenly_distributed_words(
             strip_emotional_tags(text),  # strip tags for word-count accuracy

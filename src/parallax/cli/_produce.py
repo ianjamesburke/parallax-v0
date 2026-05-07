@@ -127,12 +127,16 @@ def _run_produce(args) -> int:
             scene_index=args.scene,
             aspect=args.aspect,
         )
-    result = run_plan(
-        folder=args.folder, plan_path=plan_path,
-        aspect=args.aspect, yes=getattr(args, "yes", False),
-        hq=getattr(args, "hq", False),
-        debug_level=getattr(args, "debug", 0),
-    )
+    try:
+        result = run_plan(
+            folder=args.folder, plan_path=plan_path,
+            aspect=args.aspect, yes=getattr(args, "yes", False),
+            hq=getattr(args, "hq", False),
+            debug_level=getattr(args, "debug", 0),
+        )
+    except Exception as e:
+        print(f"\nError: {type(e).__name__}: {e}\n", file=sys.stderr)
+        return 1
     if result.status == "cancelled":
         print("produce cancelled.", flush=True)
         return 0

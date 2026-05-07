@@ -84,7 +84,7 @@ class VoicePostprocess(BaseModel):
     """Auto-chain cap-pauses + speed after VO generation, then lock audio_path."""
     model_config = ConfigDict(extra="forbid")
 
-    cap_pauses: bool = False
+    cap_pauses: bool = False  # Post-process the generated voiceover audio: surgically remove inter-word gaps > max_gap_s using word timestamps. Runs after voiceover generation, before audio_path is locked.
     max_gap_s: float = 0.5
     speed: float = 1.0
 
@@ -224,7 +224,7 @@ class Plan(BaseModel):
 
     # Pipeline behavior
     stills_only: bool = False
-    trim_pauses: bool | float = True
+    trim_pauses: bool | float = True  # Remove overlong inter-word gaps in the raw TTS audio during voiceover generation. True uses the default threshold (0.4s); pass a float to override; False skips entirely. Does NOT touch scene boundaries.
     voice_postprocess: VoicePostprocess | None = None
     titles: list[dict[str, Any]] | None = None
 

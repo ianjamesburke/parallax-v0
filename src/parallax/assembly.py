@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import re
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
@@ -115,8 +114,8 @@ def _cross_check_transcript(scenes: list[dict], words: list[dict]) -> None:
                 )
             else:
                 log.warning(
-                    "Scene %s transcript mismatch (unfixable): plan=%r tts=%r (at %.2fs)",
-                    scene.get("index", "?"), " ".join(plan_span), tts_raw, t,
+                    "Scene %s transcript mismatch: plan=%r tts=%r (at %.2fs) — fix: add `pronunciations: {%r: <phonetic>}` to plan",
+                    scene.get("index", "?"), " ".join(plan_span), tts_raw, t, " ".join(plan_span),
                 )
 
 

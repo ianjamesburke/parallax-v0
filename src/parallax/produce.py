@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import json
 import sys
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -283,48 +284,59 @@ def run_plan(
         )
         settings.events("log", {"msg": f"run_id: {run_id}  →  parallax log {run_id}"})
 
-        # `stills_only` short-circuits after stage_stills with its own end-of-run
-        # path — no audio/video stages, no convention rename, no full mp4.
-        if settings.stills_only:
+        try:
+            # `stills_only` short-circuits after stage_stills with its own end-of-run
+            # path — no audio/video stages, no convention rename, no full mp4.
+            if settings.stills_only:
+                state = PipelineState()
+                state.debug_level = debug_level
+                plan = _wrap_stage(stage_scan)(plan, settings, state)
+                plan = _wrap_stage(stage_stills)(plan, settings, state)
+                settings.events("log", {"msg": "stills_only — skipping audio, video, and assembly stages"})
+                run_cost = settings.usage.total_cost_usd
+                cost_data = {
+                    "run_id": run_id,
+                    "session_id": current_session_id.get(),
+                    "cost_usd": run_cost,
+                    "version": state.version,
+                }
+                (Path(state.out_dir) / "cost.json").write_text(json.dumps(cost_data, indent=2) + "\n")
+                runlog.end_run(status="ok", final_video=state.stills_dir)
+                return ProductionResult(
+                    status="ok",
+                    run_id=run_id,
+                    output_dir=Path(state.out_dir),
+                    final_video=None,
+                    stills_dir=Path(state.stills_dir),
+                    cost_usd=run_cost,
+                    error=None,
+                )
+
             state = PipelineState()
             state.debug_level = debug_level
-            plan = _wrap_stage(stage_scan)(plan, settings, state)
-            plan = _wrap_stage(stage_stills)(plan, settings, state)
-            settings.events("log", {"msg": "stills_only — skipping audio, video, and assembly stages"})
-            run_cost = settings.usage.total_cost_usd
-            cost_data = {
-                "run_id": run_id,
-                "session_id": current_session_id.get(),
-                "cost_usd": run_cost,
-                "version": state.version,
-            }
-            (Path(state.out_dir) / "cost.json").write_text(json.dumps(cost_data, indent=2) + "\n")
-            runlog.end_run(status="ok", final_video=state.stills_dir)
+            for stage in STAGES:
+                plan = stage(plan, settings, state)
+
+            runlog.end_run(status="ok", final_video=str(state.current_video))
             return ProductionResult(
                 status="ok",
                 run_id=run_id,
                 output_dir=Path(state.out_dir),
-                final_video=None,
-                stills_dir=Path(state.stills_dir),
-                cost_usd=run_cost,
+                final_video=Path(state.current_video) if state.current_video else None,
+                stills_dir=None,
+                cost_usd=settings.usage.total_cost_usd,
                 error=None,
             )
-
-        state = PipelineState()
-        state.debug_level = debug_level
-        for stage in STAGES:
-            plan = stage(plan, settings, state)
-
-        runlog.end_run(status="ok", final_video=str(state.current_video))
-        return ProductionResult(
-            status="ok",
-            run_id=run_id,
-            output_dir=Path(state.out_dir),
-            final_video=Path(state.current_video) if state.current_video else None,
-            stills_dir=None,
-            cost_usd=settings.usage.total_cost_usd,
-            error=None,
-        )
+        except Exception as _exc:
+            runlog.event(
+                "run.error",
+                level="ERROR",
+                exc_type=type(_exc).__name__,
+                exc_message=str(_exc),
+                traceback=traceback.format_exc(),
+            )
+            runlog.end_run(status="error")
+            raise
     finally:
         _tmo.reset(_tmo_token)
 

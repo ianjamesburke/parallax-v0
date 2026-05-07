@@ -40,9 +40,8 @@ def transcribe_wav(wav_path: str, label: str = "", no_whisperx: bool = False) ->
     """Transcribe a wav file to word-level timestamps.
 
     Prefers WhisperX (whisper + wav2vec2 forced alignment) when installed.
-    Pass no_whisperx=True to use faster-whisper even when WhisperX is absent
-    (less precise timestamps). Without that flag, raises RuntimeError if
-    WhisperX is not installed.
+    Falls back to faster-whisper (less precise timestamps) when WhisperX is
+    not installed, or when no_whisperx=True is passed.
 
     Returns [{"word": str, "start": float, "end": float}, ...].
     Raises RuntimeError if 0 words are produced.
@@ -50,19 +49,17 @@ def transcribe_wav(wav_path: str, label: str = "", no_whisperx: bool = False) ->
     model_name, device, compute_type = get_config()
     display = label or Path(wav_path).name
 
-    if _HAS_WHISPERX:
+    if _HAS_WHISPERX and not no_whisperx:
         return _transcribe_whisperx(wav_path, display, model_name, device, compute_type)
-    if no_whisperx:
+    if not _HAS_WHISPERX:
         log.warning(
-            "whisper_backend: --no-whisperx set — using faster-whisper "
-            "(word-boundary precision is lower; timestamps may be imprecise)"
+            "whisper_backend: WhisperX not installed — falling back to faster-whisper "
+            "(timestamps will be less precise). "
+            "For better precision: uv tool run --from parallax pip install whisperx"
         )
-        return _transcribe_faster_whisper(wav_path, display, model_name, device, compute_type)
-    raise RuntimeError(
-        "WhisperX not found in parallax environment.\n"
-        "  Install: uv tool run --from parallax pip install whisperx\n"
-        "  Or skip:  add --no-whisperx to use faster-whisper (less precise timestamps)"
-    )
+    else:
+        log.info("whisper_backend: --no-whisperx set — using faster-whisper")
+    return _transcribe_faster_whisper(wav_path, display, model_name, device, compute_type)
 
 
 def _transcribe_whisperx(
