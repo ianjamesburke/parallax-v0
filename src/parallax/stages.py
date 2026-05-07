@@ -673,7 +673,15 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
         )
         audio_path = vo_result["audio_path"]
         words_path = vo_result["words_path"]
-        _log(settings, f"  audio: {Path(audio_path).name}  ({vo_result['total_duration_s']:.1f}s)")
+
+        from . import forced_align, whisper_backend
+        aligned_words = forced_align.align_words(audio_path)
+        vo_result["words"] = aligned_words
+        Path(words_path).write_text(
+            json.dumps({"words": aligned_words, "total_duration_s": vo_result["total_duration_s"]}, indent=2)
+        )
+        _align_backend = "WhisperX" if whisper_backend._HAS_WHISPERX else "faster-whisper"
+        _log(settings, f"  audio: {Path(audio_path).name}  ({vo_result['total_duration_s']:.1f}s, {_align_backend} aligned)")
 
     state.audio_path = audio_path
     state.words_path = words_path
