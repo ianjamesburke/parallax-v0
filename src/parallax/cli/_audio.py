@@ -50,9 +50,14 @@ def register_parser(sub: argparse._SubParsersAction) -> None:
         "cap-pauses",
         help=(
             "Cap inter-word gaps to a max length using WhisperX word boundaries — "
-            "trims long pauses without amplitude probing. Pure word-driven. "
-            "Note: removes silence only; cannot fix onset clipping. "
-            "Use `pad-onsets` to restore lead-in before word starts."
+            "trims long pauses without amplitude probing. Pure word-driven."
+        ),
+        description=(
+            "Cap inter-word gaps to a max length using WhisperX word boundaries — "
+            "trims long pauses without amplitude probing. Pure word-driven.\n\n"
+            "Note: cap-pauses removes silence only. It cannot fix onset clipping "
+            "(audible clipping at the start of a word). Use `pad-onsets` to restore "
+            "lead-in silence before word starts after a prior trim cut too close."
         ),
     )
     cap_p.add_argument("--input", "-i", required=True, help="Audio (or m4a/mp3) file to trim.")
