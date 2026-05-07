@@ -142,6 +142,14 @@ class PlanScene(BaseModel):
     def _reject_renamed_fields(cls, data: Any) -> Any:
         if isinstance(data, dict):
             _check_renamed(data, scope=f"scene {data.get('index', '?')}")
+            # Remap clip_offset_s → clip_trim_start_s (transparent alias)
+            if "clip_offset_s" in data:
+                if "clip_trim_start_s" in data:
+                    raise ValueError(
+                        f"scene {data.get('index', '?')}: specify either clip_offset_s or "
+                        "clip_trim_start_s, not both"
+                    )
+                data["clip_trim_start_s"] = data.pop("clip_offset_s")
         return data
 
     @field_validator("aspect")

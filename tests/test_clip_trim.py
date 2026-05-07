@@ -142,3 +142,63 @@ def test_ken_burns_assemble_clip_trim_auto_two_scenes(tmp_path):
     assembly.ken_burns_assemble(scenes, str(audio), str(out), "270x480")
     dur = _probe_format_duration(out)
     assert abs(dur - 4.0) < 0.5, f"expected ~4.0s output, got {dur:.2f}s"
+
+
+# ─── clip_offset_s alias ──────────────────────────────────────────────────────
+
+def test_plan_accepts_clip_offset_s(tmp_path):
+    p = tmp_path / "plan.yaml"
+    p.write_text(_minimal_plan_yaml("clip_offset_s: 1.5"))
+    plan = Plan.from_yaml(p)
+    assert plan.scenes[0].clip_trim_start_s == 1.5
+
+def test_plan_rejects_both_clip_offset_s_and_clip_trim_start_s(tmp_path):
+    p = tmp_path / "plan.yaml"
+    p.write_text(_minimal_plan_yaml("clip_offset_s: 1.5\n    clip_trim_start_s: 2.0"))
+    with pytest.raises(Exception, match="clip_offset_s or clip_trim_start_s"):
+        Plan.from_yaml(p)
+
+
+# ─── validate: offset + duration vs clip length ───────────────────────────────
+
+def test_validate_plan_errors_when_offset_exceeds_clip(tmp_path):
+    """validate_plan errors if clip_trim_start_s + duration_s > clip length."""
+    from parallax.validate import validate_plan
+
+    clip = tmp_path / "clip.mp4"
+    _make_color_video(clip, "blue", duration=5.0)
+
+    plan_path = tmp_path / "plan.yaml"
+    plan_path.write_text(f"""
+aspect: "9:16"
+scenes:
+  - index: 0
+    vo_text: "hello"
+    clip_path: "{clip}"
+    clip_offset_s: 3.5
+    duration_s: 3.0
+""")
+    result = validate_plan(plan_path, tmp_path)
+    assert not result["valid"]
+    assert any("clip_offset_s" in e["field"] for e in result["errors"])
+
+
+def test_validate_plan_ok_when_offset_within_clip(tmp_path):
+    """validate_plan passes when clip_offset_s + duration_s fits within clip."""
+    from parallax.validate import validate_plan
+
+    clip = tmp_path / "clip.mp4"
+    _make_color_video(clip, "blue", duration=10.0)
+
+    plan_path = tmp_path / "plan.yaml"
+    plan_path.write_text(f"""
+aspect: "9:16"
+scenes:
+  - index: 0
+    vo_text: "hello"
+    clip_path: "{clip}"
+    clip_offset_s: 2.0
+    duration_s: 3.0
+""")
+    result = validate_plan(plan_path, tmp_path)
+    assert result["valid"], result["errors"]

@@ -168,6 +168,8 @@ def validate_plan(plan_path: str | Path, folder: str | Path) -> dict:
     _check_path(plan.words_path, "words_path", folder, errors)
     _check_path(plan.character_image, "character_image", folder, errors)
 
+    from .ffmpeg_utils import probe_duration as _probe_duration
+
     # Per-scene locked paths
     for scene in plan.scenes:
         prefix = f"scenes[{scene.index}]"
@@ -180,6 +182,28 @@ def validate_plan(plan_path: str | Path, folder: str | Path) -> dict:
         if scene.video_references:
             for j, vr in enumerate(scene.video_references):
                 _check_path(vr, f"{prefix}.video_references[{j}]", folder, errors)
+
+        # Clip offset + duration must not exceed clip length
+        offset = scene.clip_trim_start_s
+        if (
+            scene.clip_path is not None
+            and isinstance(offset, (int, float))
+            and offset > 0.0
+            and scene.duration_s is not None
+        ):
+            cp = Path(scene.clip_path)
+            clip_full = cp if cp.is_absolute() else folder / cp
+            if clip_full.is_file():
+                clip_dur = _probe_duration(clip_full)
+                if clip_dur is not None and offset + scene.duration_s > clip_dur + 1e-3:
+                    errors.append({
+                        "field": f"scenes[{scene.index}].clip_offset_s",
+                        "message": (
+                            f"clip_offset_s ({offset}s) + duration_s ({scene.duration_s}s) = "
+                            f"{offset + scene.duration_s:.3f}s exceeds clip length "
+                            f"({clip_dur:.3f}s)"
+                        ),
+                    })
 
     return _result(errors, warnings)
 
