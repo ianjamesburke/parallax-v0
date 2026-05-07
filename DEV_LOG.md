@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-06 — [FIX] Provided assets copied to internal cache before use (PR #141 → alpha)
+`crop_to_aspect` was writing resized variants alongside the user's source file and then deleting the original — so `strawberry_ref.png` became `strawberry_ref_a720x1280.png` after the first produce run, breaking subsequent runs. Root cause: `crop_to_aspect` had no awareness of "user file vs internal file". Fix: `settings.py` now copies any `character_image`/`product_image` into `parallax/assets/cache/` before returning `Settings`. All downstream code (including `crop_to_aspect`) works on the cache copy. Original is never touched.
+**Breaks if:** After `produce`, the user's original `character_ref` file has been renamed, moved, or deleted; or a `_a720x1280.png` variant appears next to the original instead of inside `parallax/assets/cache/`.
+
 ## 2026-05-06 — [CHANGED] --words flag for cap-pauses/transcribe; vo_words.json caching in produce (PR #140 → alpha)
 `parallax audio cap-pauses --words <path>` and `parallax audio transcribe --words <path>` now accept pre-computed word-boundary JSON and skip WhisperX/forced_align entirely. `stage_voiceover` also checks for a sibling `vo_words.json` before calling `forced_align.align_words` when `audio_path` is locked but `words_path` is not — avoids re-transcribing on repeated produce runs.
 **Breaks if:** `parallax audio cap-pauses --words words.json --input audio.wav --output out.wav` exits non-zero or outputs a file shorter than expected; or a produce run with locked `audio_path` and a sibling `vo_words.json` still logs "forced_align → ..." instead of "reusing cached words".
