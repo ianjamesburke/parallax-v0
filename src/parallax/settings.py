@@ -27,7 +27,24 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .plan import Plan
 
+import shutil
+
 from .ffmpeg_utils import parse_resolution, probe_resolution
+
+
+def _cache_provided_asset(resolved: Path, cache_dir: Path) -> Path:
+    """Copy a user-provided asset into the internal cache dir.
+
+    Returns the cache path. No-ops if `resolved` is already inside `cache_dir`.
+    The original file is never modified, moved, or deleted.
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    dest = cache_dir / resolved.name
+    if resolved.resolve() == dest.resolve():
+        return dest
+    if not dest.exists():
+        shutil.copy2(resolved, dest)
+    return dest
 
 # Aspect ratio is the user-facing knob. When `resolution:` is unset on the
 # plan and there are no clips to probe, the resolution is derived from this
@@ -286,6 +303,8 @@ def _resolve_settings_from_plan(
     words_per_chunk: int | str = wpc_raw if isinstance(wpc_raw, str) else int(wpc_raw)
     skip_captions = str(plan.captions or "").lower() == "skip"
 
+    asset_cache_dir = folder / "parallax" / "assets" / "cache"
+
     char_image_raw = plan.character_image
     character_image: str | None = None
     if char_image_raw:
@@ -296,8 +315,12 @@ def _resolve_settings_from_plan(
             if variants:
                 resolved = variants[0]
             else:
-                raise FileNotFoundError(f"character_image not found: {resolved}")
-        character_image = str(resolved)
+                raise FileNotFoundError(
+                    f"character_image not found: {resolved}. "
+                    f"If this file was renamed or deleted by a previous run, "
+                    f"restore the original file at that path."
+                )
+        character_image = str(_cache_provided_asset(resolved, asset_cache_dir))
 
     prod_image_raw = plan.product_image
     product_image: str | None = None
@@ -305,7 +328,7 @@ def _resolve_settings_from_plan(
         p = Path(prod_image_raw)
         resolved = p if p.is_absolute() else (folder / p)
         if resolved.is_file():
-            product_image = str(resolved)
+            product_image = str(_cache_provided_asset(resolved, asset_cache_dir))
 
     avatar_cfg: dict[str, Any] | None = None
     if plan.avatar is not None:
@@ -407,20 +430,25 @@ def _resolve_settings_from_dict(
     headline_bg = plan.get("headline_bg")
     headline_color = plan.get("headline_color")
 
+    asset_cache_dir = folder / "parallax" / "assets" / "cache"
+
     char_image_raw = plan.get("character_image")
     character_image: str | None = None
     if char_image_raw:
         p = Path(char_image_raw)
         resolved = p if p.is_absolute() else (folder / p)
         if not resolved.is_file():
-            # The original may have been deleted after crop_to_aspect wrote the
-            # _aWxH variant. Recover by matching any sibling with that suffix.
+            # Fallback for projects corrupted by earlier runs that deleted the original.
             variants = sorted(resolved.parent.glob(f"{resolved.stem}_a*x*.png"))
             if variants:
                 resolved = variants[0]
             else:
-                raise FileNotFoundError(f"character_image not found: {resolved}")
-        character_image = str(resolved)
+                raise FileNotFoundError(
+                    f"character_image not found: {resolved}. "
+                    f"If this file was renamed or deleted by a previous run, "
+                    f"restore the original file at that path."
+                )
+        character_image = str(_cache_provided_asset(resolved, asset_cache_dir))
 
     prod_image_raw = plan.get("product_image")
     product_image: str | None = None
@@ -428,7 +456,7 @@ def _resolve_settings_from_dict(
         p = Path(prod_image_raw)
         resolved = p if p.is_absolute() else (folder / p)
         if resolved.is_file():
-            product_image = str(resolved)
+            product_image = str(_cache_provided_asset(resolved, asset_cache_dir))
 
     return Settings(
         folder=folder,
