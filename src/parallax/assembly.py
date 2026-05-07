@@ -359,8 +359,6 @@ def _apply_debug_overlay(
 
     idx = scene_dict.get("index", "?")
     font_path = str(_FONTS_DIR / "Anton-Regular.ttf")
-    fontsize = 16
-    line_height = 22
 
     # Build (text, color) pairs
     entries: list[tuple[str, str]] = [(f"SCENE #{str(idx).zfill(2)}", "yellow")]
@@ -386,15 +384,30 @@ def _apply_debug_overlay(
         for r in refs[:3]:
             entries.append((Path(r).name, "0x90FF90"))
 
-    filters = []
+    # fontsize uses ffmpeg `h` expression (drawtext context); drawbox uses `ih`.
+    # Both scale with frame height so the overlay looks right at any resolution.
+    fs = "h/90"        # ~14px at 1280h, ~21px at 1920h
+    lh_px = 28         # fixed line-height in pixels (reasonable at all resolutions)
+    pad = 8
+    base_y = 30        # 20px lower than the original 10px
+
+    n = len(entries)
+    box_h = n * lh_px + 2 * pad
+    # drawbox must come first so text renders on top. Uses `ih` (not `h`) for height.
+    box_filter = (
+        f"drawbox=x={pad}:y={base_y - pad}"
+        f":w=iw*2/3:h={box_h}"
+        f":color=black@0.6:t=fill"
+    )
+    filters = [box_filter]
     for i, (text, color) in enumerate(entries):
         tf = str(Path(tmp_dir) / f"dbgtxt_{idx}_{i}.txt")
         Path(tf).write_text(text, encoding="utf-8")
-        y = 10 + i * line_height
+        y = base_y + i * lh_px
         filters.append(
             f"drawtext=fontfile='{font_path}':textfile='{tf}'"
-            f":fontcolor={color}:fontsize={fontsize}"
-            f":x=10:y={y}:box=1:boxcolor=black@0.55:boxborderw=3"
+            f":fontcolor={color}:fontsize={fs}"
+            f":x={pad + 2}:y={y}"
         )
 
     ffmpeg = _get_drawtext_ffmpeg()
