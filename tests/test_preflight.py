@@ -272,3 +272,131 @@ def test_prompt_proceed_shows_overwrite_warning(tmp_path, capsys):
     prompt_proceed(result, yes=True)
     captured = capsys.readouterr()
     assert "overwrite" in captured.out.lower()
+
+
+# ---------------------------------------------------------------------------
+# 11. Locked-audio silent no-op warnings
+# ---------------------------------------------------------------------------
+
+def test_voice_speed_warning_when_audio_locked():
+    plan = _make_plan(
+        scenes=[{"index": 0}],
+        audio_path="audio.mp3",
+        voice_speed=1.5,
+    )
+    result = compute_preflight(plan)
+    assert any("voice_speed" in w for w in result.warnings)
+    assert any("locked" in w for w in result.warnings)
+
+
+def test_no_voice_speed_warning_when_speed_is_default():
+    plan = _make_plan(
+        scenes=[{"index": 0}],
+        audio_path="audio.mp3",
+        voice_speed=1.0,
+    )
+    result = compute_preflight(plan)
+    assert not any("voice_speed" in w for w in result.warnings)
+
+
+def test_trim_pauses_warning_when_audio_locked():
+    plan = _make_plan(
+        scenes=[{"index": 0}],
+        audio_path="audio.mp3",
+        trim_pauses=True,
+    )
+    result = compute_preflight(plan)
+    assert any("trim_pauses" in w for w in result.warnings)
+    assert any("cap-pauses" in w for w in result.warnings)
+
+
+def test_trim_pauses_float_warning_when_audio_locked():
+    plan = _make_plan(
+        scenes=[{"index": 0}],
+        audio_path="audio.mp3",
+        trim_pauses=0.3,
+    )
+    result = compute_preflight(plan)
+    assert any("trim_pauses" in w for w in result.warnings)
+
+
+def test_no_trim_pauses_warning_when_disabled():
+    plan = _make_plan(
+        scenes=[{"index": 0}],
+        audio_path="audio.mp3",
+        trim_pauses=False,
+    )
+    result = compute_preflight(plan)
+    assert not any("trim_pauses" in w for w in result.warnings)
+
+
+def test_no_locked_audio_warnings_when_no_audio_path():
+    plan = _make_plan(
+        scenes=[{"index": 0}],
+        voice_speed=1.5,
+        trim_pauses=True,
+    )
+    result = compute_preflight(plan)
+    assert result.warnings == []
+
+
+def test_vo_text_hash_mismatch_warning():
+    import hashlib
+    original_text = "Hello world"
+    original_hash = hashlib.sha256(original_text.encode()).hexdigest()[:16]
+
+    plan = _make_plan(
+        scenes=[{"index": 0, "vo_text": "Changed text"}],
+        audio_path="audio.mp3",
+        vo_text_hashes={"0": original_hash},
+    )
+    result = compute_preflight(plan)
+    assert any("scene 0" in w and "vo_text" in w for w in result.warnings)
+    assert any("Clear audio_path" in w for w in result.warnings)
+
+
+def test_no_vo_text_warning_when_text_unchanged():
+    import hashlib
+    text = "Hello world"
+    text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
+
+    plan = _make_plan(
+        scenes=[{"index": 0, "vo_text": text}],
+        audio_path="audio.mp3",
+        vo_text_hashes={"0": text_hash},
+    )
+    result = compute_preflight(plan)
+    assert not any("vo_text" in w for w in result.warnings)
+
+
+def test_no_vo_text_warning_when_hashes_absent():
+    plan = _make_plan(
+        scenes=[{"index": 0, "vo_text": "Some text"}],
+        audio_path="audio.mp3",
+    )
+    result = compute_preflight(plan)
+    assert not any("vo_text" in w for w in result.warnings)
+
+
+def test_warnings_appear_in_format_preflight():
+    plan = _make_plan(
+        scenes=[{"index": 0}],
+        audio_path="audio.mp3",
+        voice_speed=1.5,
+    )
+    result = compute_preflight(plan)
+    text = format_preflight(result)
+    assert "voice_speed" in text
+    assert "WARNING" in text
+
+
+def test_warnings_visible_in_non_interactive_run(capsys):
+    plan = _make_plan(
+        scenes=[{"index": 0}],
+        audio_path="audio.mp3",
+        voice_speed=1.5,
+    )
+    result = compute_preflight(plan)
+    prompt_proceed(result, yes=True)
+    captured = capsys.readouterr()
+    assert "voice_speed" in captured.out

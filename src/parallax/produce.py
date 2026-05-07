@@ -109,6 +109,39 @@ def _apply_regenerate_flags(plan: dict, plan_path: Path) -> None:
                        sort_keys=False, width=10000)
 
 
+def _init_vo_text_hashes(plan: dict, plan_path: Path) -> None:
+    """Store vo_text hashes when audio_path is first locked.
+
+    Called once per run before preflight. If audio_path is set and
+    vo_text_hashes is absent, compute and write hashes to disk so subsequent
+    runs can detect vo_text drift and warn.
+    """
+    import hashlib as _hashlib
+
+    if not plan.get("audio_path"):
+        return
+    if plan.get("vo_text_hashes"):
+        return
+
+    hashes = {
+        str(s["index"]): _hashlib.sha256(s.get("vo_text", "").encode()).hexdigest()[:16]
+        for s in plan.get("scenes", [])
+        if "index" in s
+    }
+    plan["vo_text_hashes"] = hashes
+
+    try:
+        with plan_path.open("r", encoding="utf-8") as f:
+            disk_plan = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        return
+
+    disk_plan["vo_text_hashes"] = hashes
+    with plan_path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(disk_plan, f, default_flow_style=False, allow_unicode=True,
+                       sort_keys=False, width=10000)
+
+
 def run_plan(
     folder: str | Path,
     plan_path: str | Path,
@@ -145,6 +178,7 @@ def run_plan(
     plan: dict[str, Any] = typed_plan.to_dict()
 
     _apply_regenerate_flags(plan, plan_path)
+    _init_vo_text_hashes(plan, plan_path)
 
     if aspect is not None:
         plan["aspect"] = aspect
