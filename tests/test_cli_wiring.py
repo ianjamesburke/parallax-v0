@@ -1,5 +1,8 @@
 """Tests for the Phase 1.7 CLI wiring — `plan`, `ingest`, and `produce --brief`.
 
+Layer: INTEGRATION — exercises full pipeline routing with monkeypatched callables.
+Uses PARALLAX_TEST_MODE-free mocking. For pure CLI parsing, see test_cli_contract.py.
+
 Each test exercises the argparse-routed entry point (`parallax.cli.main`) so
 that argument parsing, dispatch, and error surfaces are all covered.
 """
