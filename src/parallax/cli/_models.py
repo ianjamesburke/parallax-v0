@@ -1,39 +1,40 @@
 from __future__ import annotations
 
-import argparse
 import sys
+from typing import Optional
+
+import typer
 
 
-def register_parser(sub: argparse._SubParsersAction) -> None:
-    models_p = sub.add_parser(
-        "models", help="Browse the model catalog (image / video / tts aliases)."
-    )
-    models_sub = models_p.add_subparsers(dest="models_command", required=True)
-
-    models_list_p = models_sub.add_parser("list", help="List every alias grouped by kind.")
-    models_list_p.add_argument(
-        "--kind", choices=("image", "video", "tts"), default=None,
-        help="Filter to a single kind.",
-    )
-    models_list_p.add_argument(
-        "--json", action="store_true", help="Emit machine-readable JSON instead of a table."
-    )
-
-    models_show_p = models_sub.add_parser("show", help="Show capabilities for one alias.")
-    models_show_p.add_argument("alias", help="Model alias (e.g. 'mid', 'kling', 'tts-mini').")
-    models_show_p.add_argument(
-        "--kind", choices=("image", "video", "tts"), default=None,
-        help="Disambiguate when an alias exists in multiple kinds.",
-    )
+models_app = typer.Typer(
+    help="Browse the model catalog (image / video / tts aliases).",
+    invoke_without_command=True,
+    no_args_is_help=True,
+)
 
 
-def run(args) -> int:
+@models_app.command("list")
+def models_list(
+    kind: Optional[str] = typer.Option(None, "--kind", help="Filter to a single kind."),
+    json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON instead of a table."),
+) -> int:
+    if kind is not None and kind not in ("image", "video", "tts"):
+        typer.echo(f"Error: invalid --kind '{kind}'. Choose from: image, video, tts", err=True)
+        return 2
     from .. import models as _models_pkg
-    if args.models_command == "list":
-        return _print_models_list(_models_pkg, kind=args.kind, as_json=args.json)
-    if args.models_command == "show":
-        return _print_model_show(_models_pkg, alias=args.alias, kind=args.kind)
-    return 1
+    return _print_models_list(_models_pkg, kind=kind, as_json=json)
+
+
+@models_app.command("show")
+def models_show(
+    alias: str = typer.Argument(..., help="Model alias (e.g. 'mid', 'kling', 'tts-mini')."),
+    kind: Optional[str] = typer.Option(None, "--kind", help="Disambiguate when an alias exists in multiple kinds."),
+) -> int:
+    if kind is not None and kind not in ("image", "video", "tts"):
+        typer.echo(f"Error: invalid --kind '{kind}'. Choose from: image, video, tts", err=True)
+        return 2
+    from .. import models as _models_pkg
+    return _print_model_show(_models_pkg, alias=alias, kind=kind)
 
 
 def _print_models_list(models_pkg, kind: str | None, as_json: bool) -> int:

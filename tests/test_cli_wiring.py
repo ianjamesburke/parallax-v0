@@ -3,7 +3,7 @@
 Layer: INTEGRATION — exercises full pipeline routing with monkeypatched callables.
 Uses PARALLAX_TEST_MODE-free mocking. For pure CLI parsing, see test_cli_contract.py.
 
-Each test exercises the argparse-routed entry point (`parallax.cli.main`) so
+Each test exercises the Typer-routed entry point (`parallax.cli.main`) so
 that argument parsing, dispatch, and error surfaces are all covered.
 """
 from __future__ import annotations
@@ -270,17 +270,16 @@ def test_produce_rejects_brief_and_plan_together(
     tmp_path: Path,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    """argparse must reject passing both --brief and --plan."""
+    """must reject passing both --brief and --plan."""
     brief_path = tmp_path / "brief.yaml"
     plan_path = tmp_path / "plan.yaml"
     brief_path.write_text("goal: x\nscript:\n  scenes: []\n")
     plan_path.write_text("scenes: []\n")
 
-    with pytest.raises(SystemExit) as excinfo:
-        cli.main([
-            "produce",
-            "--folder", str(tmp_path),
-            "--brief", str(brief_path),
-            "--plan", str(plan_path),
-        ])
-    assert excinfo.value.code == 2
+    rc = cli.main([
+        "produce",
+        "--folder", str(tmp_path),
+        "--brief", str(brief_path),
+        "--plan", str(plan_path),
+    ])
+    assert rc == 2

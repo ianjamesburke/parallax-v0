@@ -1,60 +1,38 @@
 from __future__ import annotations
 
-import argparse
 import sys
+from typing import Optional
+
+import typer
 
 
-def register_parser(sub: argparse._SubParsersAction) -> None:
-    log_p = sub.add_parser(
-        "log",
-        help="Inspect run logs — summary view by default, or `log list` for all runs.",
-        description=(
-            "parallax log <spec>            view one run (spec: latest | <short> | <run_id>)\n"
-            "parallax log list              tabulate recent runs from the index"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    log_p.add_argument(
-        "spec", nargs="?", default="latest",
-        help="Run spec: 'latest' (default), 6-hex short id, full run_id, or 'list'.",
-    )
-    log_p.add_argument(
-        "--level", choices=("info", "debug"), default="info",
-        help="Minimum level to include (default: info — drops DEBUG events).",
-    )
-    log_p.add_argument(
-        "--summary", dest="summary", action="store_true", default=True,
-        help="Operator-readable digest (default).",
-    )
-    log_p.add_argument(
-        "--no-summary", dest="summary", action="store_false",
-        help="Emit raw NDJSON (level-filtered).",
-    )
-    log_p.add_argument(
-        "--follow", "-f", action="store_true",
-        help="Stream new events live (forces --no-summary).",
-    )
-    log_p.add_argument("--limit", type=int, default=20, help="`log list` row cap (default: 20).")
-    log_p.add_argument(
-        "--since", default=None,
-        help="`log list` time filter, e.g. '1d', '6h', '30m'.",
-    )
+def register_log(app: typer.Typer) -> None:
+    app.command("log")(_log_cmd)
 
 
-def run(args) -> int:
+def _log_cmd(
+    spec: str = typer.Argument("latest", help="Run spec: 'latest' (default), 6-hex short id, full run_id, or 'list'."),
+    level: str = typer.Option("info", "--level", help="Minimum level to include (default: info — drops DEBUG events)."),
+    summary: bool = typer.Option(True, "--summary/--no-summary", help="Operator-readable digest (default)."),
+    follow: bool = typer.Option(False, "--follow", "-f", help="Stream new events live (forces --no-summary)."),
+    limit: int = typer.Option(20, "--limit", help="`log list` row cap (default: 20)."),
+    since: Optional[str] = typer.Option(None, "--since", help="`log list` time filter, e.g. '1d', '6h', '30m'."),
+) -> int:
+    if level not in ("info", "debug"):
+        typer.echo(f"Error: invalid level '{level}'. Choose: info, debug", err=True)
+        return 2
     from pathlib import Path
     from .. import runlog
 
-    if args.spec == "list":
-        return _print_log_list(limit=args.limit, since=args.since)
+    if spec == "list":
+        return _print_log_list(limit=limit, since=since)
 
-    spec = args.spec or "latest"
     row = runlog.find_run(spec)
     if row is None:
         print(f"Error: no run found for spec {spec!r}", file=sys.stderr)
         return 1
 
-    if args.follow:
+    if follow:
         return runlog.tail(spec, follow=True)
 
     out_dir = row.get("output_dir")
@@ -67,10 +45,10 @@ def run(args) -> int:
         return 1
 
     events = _load_events(log_path)
-    if args.summary:
-        _print_log_summary(row, events, level=args.level)
+    if summary:
+        _print_log_summary(row, events, level=level)
         return 0
-    return _print_log_raw(events, level=args.level)
+    return _print_log_raw(events, level=level)
 
 
 def _load_events(path) -> list[dict]:
