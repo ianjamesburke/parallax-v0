@@ -19,7 +19,7 @@ pr-install pr:
     echo "Installed parallax-pr{{pr}}"
     echo "Test with: parallax-pr{{pr}} --help"
 
-# Remove isolated PR install (run from worktrees/alpha/)
+# Remove isolated PR install (run from the repo root)
 pr-clean pr:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -45,17 +45,17 @@ bump part="patch":
     git commit -m "chore: bump version to $new"
     echo "Bumped $current → $new"
 
-# Bump version + regenerate CHANGELOG via git-cliff, then commit (run from worktrees/alpha/)
+# Bump version + regenerate CHANGELOG via git-cliff, then commit (run from the repo root)
 # Usage: just release [patch|minor|major]
 release part="patch":
     bash scripts/release-version.sh "{{part}}"
 
-# Promote to next channel: alpha→beta or beta→main (run from worktrees/alpha/ or worktrees/beta/)
+# Promote to next channel: alpha→beta or beta→main (run from the repo root or worktrees/beta/)
 # Usage: just promote [beta|main]
 promote to="":
     bash scripts/promote.sh "{{to}}"
 
-# Bump patch version and reinstall main parallax CLI (run from worktrees/alpha/)
+# Bump patch version and reinstall main parallax CLI (run from the repo root)
 bump-and-install:
     #!/usr/bin/env bash
     set -euo pipefail
