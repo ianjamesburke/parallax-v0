@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-07 — [CHANGED] Seedance fallback chain → kling; 480p native resolution disclosed at preflight (PR #144 → alpha)
+Seedance (`seedance` and `draft` aliases) fallback changed from `wan` to `kling`/`mid` — Kling is proven and stable; Wan was a step down in quality AND reliability. `ModelSpec` gains `native_resolution` field; video.yaml sets `"480p"` for seedance entries. Preflight clip rows now show `seedance 480p → 720p` (or `→ 1080p`) when the model generates at a lower resolution than the output. `produce.py` passes `settings.resolution` explicitly to `compute_preflight` — without this the plan dict's `resolution` key is absent when resolution is inferred from aspect, so the upscale annotation would be silently suppressed.
+**Breaks if:** `parallax produce` on a seedance plan shows a clip row without the `480p →` upscale annotation; or a seedance failure falls back to `wan` instead of `kling`.
+
 ## 2026-05-07 — [CHANGED] Warn when no reference images found for a scene still (PR #142 → alpha)
 `_resolve_still_refs` now prints `[WARNING] scene N: no reference images found` when it returns `None`. Previously the failure was silent — projects without a `media/` dir (e.g. assets in project root or Google Drive) would silently generate stills with no character reference. Warning is print-only; return value is unchanged.
 **Breaks if:** A produce run on a project with no `media/`, no `reference_images`, no `character_image`, and no `product_image` completes without printing `[WARNING] ... no reference images found` for the affected scenes.
