@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-07 — [CHANGED] CLI contract test layer — 102 tests across all 10 CLI modules (PR #158 → alpha)
+Adds `tests/test_cli_contract.py` as the regression harness for the argparse → Typer rewrite (issue #100). One test class per CLI module; covers `--help` exits 0, required-flag enforcement, mutual-exclusion rejection, and happy paths — all pipeline entry points monkeypatched (no API calls, no PARALLAX_TEST_MODE). Runs in <1s. Also adds layer header comments to `test_cli_wiring.py` (INTEGRATION) and `test_schema.py` (CONTRACT).
+**Breaks if:** `uv run pytest tests/test_cli_contract.py -q` fails or takes >5s; or any of the 10 CLI module classes (TestModels, TestSchema, TestLog, TestUsage, TestCredits, TestCompletions, TestValidate, TestVerify, TestAudio, TestVideo, TestImage, TestPlan, TestIngest, TestProduce) reports a failure.
+
 ## 2026-05-07 — [CHANGED] --debug N flag — burn scene overlay onto assembled video (PR #150 → alpha)
 `parallax produce --debug N` burns a semi-transparent debug overlay (top-left, Anton font, dark box) onto every scene in the final assembled video. Level 1: scene index. Level 2: + full prompt (word-wrapped at 45 chars). Level 3: + reference image/video filenames. Hook fires inside `ken_burns_assemble` after each per-scene clip is built (still or animated), applies an ffmpeg drawtext pass to a temp file, then uses that instead — original stills on disk are never touched, no extra artifacts on disk. `reference_images` added to `SceneRuntime` so it flows through `aligned_json` to assembly. `PipelineState.debug_level` threads the value from CLI → produce → stage_assemble → ken_burns_assemble.
 **Breaks if:** `parallax produce --debug 1` on any plan produces a video where scene clips do NOT have a `SCENE #NN` label visible in the top-left; or `parallax produce` (no flag) changes behavior vs. pre-PR; or `--debug 4` doesn't exit non-zero with an invalid-choice error.
