@@ -1902,7 +1902,7 @@ wheels = [
 
 [[package]]
 name = "parallax"
-version = "0.5.26"
+version = "0.5.27"
 source = { editable = "." }
 dependencies = [
     { name = "faster-whisper" },
