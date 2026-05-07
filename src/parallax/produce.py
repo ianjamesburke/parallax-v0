@@ -200,7 +200,7 @@ def run_plan(
                 })
 
         from .preflight import compute_preflight, prompt_proceed as _prompt_proceed
-        _pf_result = compute_preflight(plan, balance_usd=_credits_balance, folder=folder)
+        _pf_result = compute_preflight(plan, balance_usd=_credits_balance, folder=folder, output_resolution=settings.resolution)
         if not _prompt_proceed(_pf_result, yes=yes):
             return ProductionResult(
                 status="cancelled", run_id=None, output_dir=None,

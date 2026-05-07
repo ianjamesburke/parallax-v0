@@ -64,6 +64,7 @@ def _print_models_list(models_pkg, kind: str | None, as_json: bool) -> int:
                     "end_frame": s.end_frame,
                     "inputs": list(s.inputs),
                     "voices": list(s.voices),
+                    "native_resolution": s.native_resolution,
                     "description": s.description,
                 }
                 for s in table.values()
@@ -102,6 +103,8 @@ def _print_model_show(models_pkg, alias: str, kind: str | None) -> int:
     if spec.kind == "video":
         print(f"start_frame:    {spec.start_frame}")
         print(f"end_frame:      {spec.end_frame}")
+        if spec.native_resolution:
+            print(f"native_res:     {spec.native_resolution} (generates at this resolution; upscaled to output during assembly)")
     if spec.kind == "tts":
         print(f"tts_backend:    {spec.tts_backend}")
         if spec.voices:

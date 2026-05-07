@@ -20,10 +20,11 @@
   cost: 0.054
   unit: second
   description: "ByteDance Seedance 2.0 Fast. Resolution-tiered: $0.054/s at 480p (default), $0.121/s at 720p, $0.272/s at 1080p."
-  fallback: wan
+  fallback: mid
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1"]
     resolutions: ["480p", "720p", "1080p"]
+    native_resolution: "480p"
     start_frame: true
     end_frame: true
   inputs: []
@@ -63,10 +64,11 @@
   cost: 0.054
   unit: second
   description: "ByteDance Seedance 2.0 Fast. Resolution-tiered: $0.054/s at 480p (default), $0.121/s at 720p, $0.272/s at 1080p."
-  fallback: wan
+  fallback: kling
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1"]
     resolutions: ["480p", "720p", "1080p"]
+    native_resolution: "480p"
     start_frame: true
     end_frame: true
   inputs: []
