@@ -55,7 +55,7 @@ def transcribe_wav(wav_path: str, label: str = "", no_whisperx: bool = False) ->
         log.warning(
             "whisper_backend: WhisperX not installed — falling back to faster-whisper "
             "(timestamps will be less precise). "
-            "For better precision: uv tool run --from parallax pip install whisperx"
+            "For better precision: uv tool install 'parallax[whisperx]'"
         )
     else:
         log.info("whisper_backend: --no-whisperx set — using faster-whisper")
