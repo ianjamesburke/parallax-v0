@@ -386,10 +386,10 @@ def _apply_debug_overlay(
 
     # fontsize uses ffmpeg `h` expression (drawtext context); drawbox uses `ih`.
     # Both scale with frame height so the overlay looks right at any resolution.
-    fs = "h/90"        # ~14px at 1280h, ~21px at 1920h
-    lh_px = 28         # fixed line-height in pixels (reasonable at all resolutions)
-    pad = 8
-    base_y = 30        # 20px lower than the original 10px
+    fs = "h/120"       # ~11px at 1280h, ~16px at 1920h
+    lh_px = 22         # fixed line-height in pixels
+    pad = 6
+    base_y = 50        # position from top
 
     n = len(entries)
     box_h = n * lh_px + 2 * pad
