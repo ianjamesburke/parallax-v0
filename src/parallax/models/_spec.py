@@ -46,6 +46,10 @@ class ModelSpec:
     # (gpt-audio-mini); "speech" = /api/v1/audio/speech endpoint (Gemini TTS).
     # Defaults to "chat_audio" so existing entries are unchanged.
     tts_backend: TtsBackend = "chat_audio"
+    # Native generation resolution when it differs from the output resolution.
+    # Only set for models that generate at a fixed lower resolution and get
+    # upscaled during ffmpeg assembly (e.g. "480p" for Seedance).
+    native_resolution: str | None = None
 
     @property
     def supports_reference(self) -> bool:

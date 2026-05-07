@@ -50,6 +50,7 @@ def _to_spec(entry: dict[str, Any], kind: Kind) -> ModelSpec:
         inputs=inputs,
         voices=voices,
         tts_backend=entry.get("tts_backend", "chat_audio"),
+        native_resolution=caps.get("native_resolution") or None,
     )
 
 

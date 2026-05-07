@@ -31,6 +31,10 @@ class PreflightScene:
     locked: bool
     cost_usd: float
     will_overwrite: bool = False
+    # Set when the model generates at a lower resolution than the output (e.g.
+    # Seedance generates at 480p and is upscaled to the output resolution).
+    native_resolution: str | None = None
+    output_resolution: str | None = None
 
 
 @dataclass
@@ -62,6 +66,7 @@ def compute_preflight(
     image_model = plan.get("image_model", "mid")
     video_model = plan.get("video_model", "mid")
     voice_model = plan.get("voice_model", "tts-mini")
+    output_resolution = plan.get("resolution") or None
 
     assets_dir = (Path(folder) / "parallax" / "assets") if folder is not None else None
 
@@ -103,8 +108,11 @@ def compute_preflight(
             duration = float(s.get("duration_s") or 5.0)
             if clip_locked:
                 clip_cost = 0.0
+                clip_native_res = None
             else:
-                clip_cost = resolve(clip_alias, kind="video").cost_usd * duration
+                clip_spec = resolve(clip_alias, kind="video")
+                clip_cost = clip_spec.cost_usd * duration
+                clip_native_res = clip_spec.native_resolution
 
             clip_overwrite = (
                 not clip_locked
@@ -120,6 +128,8 @@ def compute_preflight(
                 locked=clip_locked,
                 cost_usd=clip_cost,
                 will_overwrite=clip_overwrite,
+                native_resolution=clip_native_res,
+                output_resolution=output_resolution,
             ))
             log.info("preflight scene %d: clip (%s, %.0fs) locked=%s overwrite=%s ~$%.3f",
                      idx, clip_alias, duration, clip_locked, clip_overwrite, clip_cost)
@@ -143,6 +153,15 @@ def compute_preflight(
         balance_usd=balance_usd,
         has_overwrites=has_overwrites,
     )
+
+
+def _short_res(res: str) -> str:
+    """Convert internal resolution string (e.g. "1080x1920") to short label (e.g. "1080p").
+
+    Uses the width (first component) which matches how Seedance and OpenRouter
+    label their resolution tiers for portrait (9:16) video.
+    """
+    return f"{res.split('x')[0]}p"
 
 
 def format_preflight(result: PreflightResult) -> str:
@@ -169,8 +188,15 @@ def format_preflight(result: PreflightResult) -> str:
                 f"       ~${s.cost_usd:.3f}   {status}"
             )
         else:
+            res_note = ""
+            if (
+                s.native_resolution
+                and s.output_resolution
+                and s.native_resolution != _short_res(s.output_resolution)
+            ):
+                res_note = f" {s.native_resolution} → {_short_res(s.output_resolution)}"
             row = (
-                f"    scene {s.index} — clip ({s.model_alias}, {s.duration_s:.0f}s)"
+                f"    scene {s.index} — clip ({s.model_alias}{res_note}, {s.duration_s:.0f}s)"
                 f"  ~${s.cost_usd:.3f}   {status}"
             )
         lines.append(row)
