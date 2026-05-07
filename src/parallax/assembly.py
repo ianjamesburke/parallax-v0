@@ -29,16 +29,30 @@ def _norm_word(w: str) -> str:
     return re.sub(r'[^\w]', '', w).lower()
 
 
-def _find_scene_end(words: list[dict], cursor: int, plan_words: list[str], window_cap: int | None = None) -> int | None:
+def _find_scene_end(
+    words: list[dict],
+    cursor: int,
+    plan_words: list[str],
+    window_cap: int | None = None,
+    freq_map: dict[str, int] | None = None,
+    min_start_idx: int | None = None,
+) -> int | None:
     """Find the TTS word index where a scene ends by matching its last content word.
 
     Searches forward from *cursor* in a window proportional to the expected
     word count.  Falls back to second-to-last word if the last one isn't found
     (handles TTS mangling proper nouns like "Shilajit" → "Shiligid").
 
+    When freq_map is supplied, anchor selection is uniqueness-weighted: the
+    rarest content word appearing exactly once in the full transcript is tried
+    first (unambiguous by construction). If no unique word exists, the last-
+    word strategy is used with n-gram context verification (2 preceding words
+    must also match) to reduce false positives on common vocabulary.
+
     window_cap: hard upper bound on the search window (prevents cross-scene
-    word stealing when adjacent scenes share vocabulary). Computed from
-    proportional word distribution by the caller.
+    word stealing when adjacent scenes share vocabulary).
+    min_start_idx: when set, only accept matches at or after this index.
+    Used by the fallback recovery path to skip past a known bad anchor.
     """
     content_words = [w for w in plan_words if _norm_word(w)]
     if not content_words:
@@ -49,9 +63,47 @@ def _find_scene_end(words: list[dict], cursor: int, plan_words: list[str], windo
     if window_cap is not None:
         window_end = min(window_end, window_cap)
 
+    lo = max(min_start_idx if min_start_idx is not None else 0, cursor)
+    normed_content = [_norm_word(w) for w in content_words]
+
+    if freq_map is not None:
+        # Prefer the latest unique (freq=1) content word as the anchor — it
+        # is unambiguous by construction and requires no context verification.
+        unique_candidates = [
+            (i, nw) for i, nw in enumerate(normed_content)
+            if freq_map.get(nw, 0) == 1
+        ]
+        if unique_candidates:
+            ci, target = max(unique_candidates, key=lambda x: x[0])
+            is_last = ci == len(normed_content) - 1
+            offset = len(normed_content) - 1 - ci
+            for i in range(window_end - 1, max(lo - 1, -1), -1):
+                if _norm_word(words[i]["word"]) == target:
+                    return i if is_last else min(i + offset, len(words) - 1)
+        else:
+            # No unique word — fall back to last-word strategy but verify
+            # up to 2 preceding words also match before accepting.
+            for ci in range(len(normed_content) - 1, max(len(normed_content) - 4, -1), -1):
+                target = normed_content[ci]
+                is_last = ci == len(normed_content) - 1
+                offset = len(normed_content) - 1 - ci
+                for i in range(window_end - 1, max(lo - 1, -1), -1):
+                    if _norm_word(words[i]["word"]) == target:
+                        ctx_ok = True
+                        for k in range(1, min(3, ci + 1)):
+                            wi, pi = i - k, ci - k
+                            if wi < lo or wi < 0 or pi < 0:
+                                break
+                            if _norm_word(words[wi]["word"]) != normed_content[pi]:
+                                ctx_ok = False
+                                break
+                        if ctx_ok:
+                            return i if is_last else min(i + offset, len(words) - 1)
+
+    # Original strategy: last word then second-to-last (no context check).
     for target_word in reversed(content_words[-2:]):
         target = _norm_word(target_word)
-        for i in range(window_end - 1, max(cursor - 1, -1), -1):
+        for i in range(window_end - 1, max(lo - 1, -1), -1):
             if _norm_word(words[i]["word"]) == target:
                 if target_word is content_words[-1]:
                     return i
@@ -141,8 +193,15 @@ def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> li
 
     Returns updated scenes list.
     """
+    from collections import Counter
+
     payload = words_payload
     words: list[dict] = payload if isinstance(payload, list) else payload.get("words", [])
+
+    # Corpus frequency map for uniqueness-weighted anchor selection.
+    freq_map: dict[str, int] = Counter(
+        nw for w in words if (nw := _norm_word(w["word"]))
+    )
 
     # Pre-compute proportional word-count caps so _find_scene_end can't steal
     # words from an adjacent scene that shares vocabulary (Bug 2 fix).
@@ -174,7 +233,7 @@ def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> li
         plan_words = re.sub(r'\[[^\]]*\]', '', vo_text).split()
         content_count = len([w for w in plan_words if _norm_word(w)])
 
-        end_idx = _find_scene_end(words, cursor, plan_words, window_cap=window_cap)
+        end_idx = _find_scene_end(words, cursor, plan_words, window_cap=window_cap, freq_map=freq_map)
         if end_idx is None:
             if cursor + content_count > len(words):
                 log.warning("Scene %s: no match and only %d words remain; extending to end",
@@ -188,15 +247,31 @@ def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> li
         scene["start_s"] = round(word_start_s, 3)
         scene["end_s"] = round(words[end_idx]["end"], 3)
 
-        # Short-scene sanity warning (Bug 2 symptom detection).
+        # Short-scene sanity check: warn and attempt fallback anchor recovery.
         detected_dur = scene["end_s"] - scene["start_s"]
         expected_min_dur = content_count * avg_word_dur * 0.5
         if content_count > 1 and detected_dur < expected_min_dur:
             log.warning(
                 "Scene %s: detected duration %.2fs may be too short for %d words "
-                "(expected ~%.2fs+); check for shared-vocabulary adjacent-scene misalignment",
+                "(expected ~%.2fs+); attempting fallback anchor search",
                 scene.get("index", "?"), detected_dur, content_count, expected_min_dur,
             )
+            fallback_idx = _find_scene_end(
+                words, cursor, plan_words,
+                window_cap=window_cap,
+                freq_map=freq_map,
+                min_start_idx=end_idx + 1,
+            )
+            if fallback_idx is not None:
+                fallback_end_s = round(words[fallback_idx]["end"], 3)
+                fallback_dur = fallback_end_s - scene["start_s"]
+                if fallback_dur >= expected_min_dur:
+                    log.info(
+                        "aligner fallback applied for scene %s: moved boundary from %.2fs to %.2fs",
+                        scene.get("index", "?"), scene["end_s"], fallback_end_s,
+                    )
+                    end_idx = fallback_idx
+                    scene["end_s"] = fallback_end_s
 
         # Bug 1 fix: when duration_s is pinned on this scene, advance the
         # cursor to the first word at/after the pinned end so the next scene's
