@@ -27,7 +27,7 @@ def models_list(
 
 @models_app.command("show")
 def models_show(
-    alias: str = typer.Argument(..., help="Model alias (e.g. 'mid', 'kling', 'tts-mini')."),
+    alias: str = typer.Argument(..., help="Model alias (e.g. 'mid', 'kling', 'tts-mini', 'elevenlabs')."),
     kind: Optional[str] = typer.Option(None, "--kind", help="Disambiguate when an alias exists in multiple kinds."),
 ) -> int:
     if kind is not None and kind not in ("image", "video", "tts"):
