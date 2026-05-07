@@ -52,6 +52,7 @@ def compute_preflight(
     plan: dict[str, Any],
     balance_usd: float | None = None,
     folder: Path | None = None,
+    output_resolution: str | None = None,
 ) -> PreflightResult:
     """Compute per-scene cost estimates from a plan dict.
 
@@ -62,11 +63,16 @@ def compute_preflight(
     ``folder/parallax/assets/`` for existing files that would be silently
     overwritten. Scenes with existing files get ``will_overwrite=True`` and
     the result carries ``has_overwrites=True``.
+
+    ``output_resolution`` is the resolved final output resolution (e.g.
+    "1080x1920"). Pass it from Settings.resolution so the preflight can
+    show native-resolution upscale disclosures (e.g. "seedance 480p → 1080p").
+    Falls back to plan.get("resolution") if not provided.
     """
     image_model = plan.get("image_model", "mid")
     video_model = plan.get("video_model", "mid")
     voice_model = plan.get("voice_model", "tts-mini")
-    output_resolution = plan.get("resolution") or None
+    output_resolution = output_resolution or plan.get("resolution") or None
 
     assets_dir = (Path(folder) / "parallax" / "assets") if folder is not None else None
 
