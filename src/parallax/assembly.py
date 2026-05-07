@@ -343,14 +343,30 @@ def _resolve_auto_trim(scenes: list[dict]) -> list[dict]:
     return result
 
 
+def _wrap_text(text: str, max_chars: int = 45) -> list[str]:
+    words = text.split()
+    lines: list[str] = []
+    cur: list[str] = []
+    for w in words:
+        if sum(len(x) + 1 for x in cur) + len(w) > max_chars:
+            lines.append(" ".join(cur))
+            cur = [w]
+        else:
+            cur.append(w)
+    if cur:
+        lines.append(" ".join(cur))
+    return lines
+
+
 def _apply_debug_overlay(
     clip_in: str,
     clip_out: str,
     scene_dict: dict,
     debug_level: int,
     tmp_dir: str,
+    resolution: str = "1080x1920",
 ) -> None:
-    """Burn scene-index/prompt/refs overlay onto clip_in → clip_out."""
+    """Burn scene-index/prompt/script/action overlay onto clip_in → clip_out."""
     if not _ffmpeg_has_drawtext():
         log.warning("debug overlay skipped — ffmpeg lacks drawtext (libfreetype)")
         shutil.copy2(clip_in, clip_out)
@@ -359,40 +375,43 @@ def _apply_debug_overlay(
     idx = scene_dict.get("index", "?")
     font_path = str(_FONTS_DIR / "Anton-Regular.ttf")
 
-    # Build (text, color) pairs
+    # Scale layout proportionally to frame height.
+    try:
+        frame_h = int(resolution.split("x")[1])
+    except (IndexError, ValueError):
+        frame_h = 1920
+    lh_px = max(18, frame_h // 55)   # ~19px at 1080h, ~34px at 1920h, ~18px at 720h
+    pad = max(6, frame_h // 180)
+    base_y = max(40, frame_h // 25)
+
+    # Build (text, color) pairs — sections separated by labeled headers.
     entries: list[tuple[str, str]] = [(f"SCENE #{str(idx).zfill(2)}", "yellow")]
 
     if debug_level >= 2:
-        prompt = scene_dict.get("prompt", "")
-        words = prompt.split()
-        lines: list[str] = []
-        cur: list[str] = []
-        for w in words:
-            if sum(len(x) + 1 for x in cur) + len(w) > 45:
-                lines.append(" ".join(cur))
-                cur = [w]
-            else:
-                cur.append(w)
-        if cur:
-            lines.append(" ".join(cur))
-        for line in lines[:6]:
+        entries.append(("PROMPT:", "0x00CFFF"))
+        for line in _wrap_text(scene_dict.get("prompt", ""))[:6]:
             entries.append((line, "white"))
 
     if debug_level >= 3:
-        refs = list(scene_dict.get("reference_images") or []) + list(scene_dict.get("video_references") or [])
-        for r in refs[:3]:
-            entries.append((Path(r).name, "0x90FF90"))
+        vo = scene_dict.get("vo_text", "").strip()
+        if vo:
+            entries.append(("", "white"))  # blank spacer
+            entries.append(("SCRIPT:", "0x00CFFF"))
+            for line in _wrap_text(vo)[:6]:
+                entries.append((line, "white"))
 
-    # fontsize uses ffmpeg `h` expression (drawtext context); drawbox uses `ih`.
-    # Both scale with frame height so the overlay looks right at any resolution.
-    fs = "h/120"       # ~11px at 1280h, ~16px at 1920h
-    lh_px = 22         # fixed line-height in pixels
-    pad = 6
-    base_y = 50        # position from top
+        action = scene_dict.get("motion_prompt", "").strip()
+        if action:
+            entries.append(("", "white"))  # blank spacer
+            entries.append(("ACTION:", "0xFFAA00"))
+            for line in _wrap_text(action)[:4]:
+                entries.append((line, "0xFFDD88"))
+
+    # fontsize uses ffmpeg `h` expression; drawbox uses `ih`.
+    fs = "h/120"   # ~9px at 1080h, ~16px at 1920h, ~6px at 720h
 
     n = len(entries)
     box_h = n * lh_px + 2 * pad
-    # drawbox must come first so text renders on top. Uses `ih` (not `h`) for height.
     box_filter = (
         f"drawbox=x={pad}:y={base_y - pad}"
         f":w=iw*2/3:h={box_h}"
@@ -400,6 +419,8 @@ def _apply_debug_overlay(
     )
     filters = [box_filter]
     for i, (text, color) in enumerate(entries):
+        if not text:
+            continue  # skip blank spacers (they only contribute height)
         tf = str(Path(tmp_dir) / f"dbgtxt_{idx}_{i}.txt")
         Path(tf).write_text(text, encoding="utf-8")
         y = base_y + i * lh_px
@@ -512,7 +533,7 @@ def ken_burns_assemble(
 
             if debug_level > 0:
                 dbg_out = str(Path(tmp_dir) / f"dbg_{i:04d}.mp4")
-                _apply_debug_overlay(clip_out, dbg_out, scene, debug_level, tmp_dir)
+                _apply_debug_overlay(clip_out, dbg_out, scene, debug_level, tmp_dir, resolution=resolution)
                 clip_paths.append(dbg_out)
             else:
                 clip_paths.append(clip_out)
