@@ -1,4 +1,7 @@
-"""Tests for `parallax schema` — self-documenting CLI subcommand."""
+"""Tests for `parallax schema` — self-documenting CLI subcommand.
+
+Layer: CONTRACT — validates schema subcommand parsing and Pydantic JSON Schema output.
+No pipeline calls; no PARALLAX_TEST_MODE required."""
 from __future__ import annotations
 
 import json
