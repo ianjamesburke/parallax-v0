@@ -114,17 +114,19 @@ def generate_voiceover_dict(
     import shutil as _shutil
     raw_suffix = Path(raw_path).suffix or ".mp3"
     audio_path = dest / f"voiceover{raw_suffix}"
+    trim_gap_count = 0
+    trim_removed_s = 0.0
     if trim_pauses is False:
         log.info("voiceover: trim_pauses=false — skipping silence removal")
         _shutil.copy2(raw_path, audio_path)
         words_trimmed = list(words_with_ends)
         duration = max(words_trimmed[-1]["end"], raw_audio_duration) if words_trimmed else raw_audio_duration
     elif isinstance(trim_pauses, float) and not isinstance(trim_pauses, bool):
-        words_trimmed, duration = _trim_long_pauses(
+        words_trimmed, duration, trim_gap_count, trim_removed_s = _trim_long_pauses(
             Path(raw_path), list(words_with_ends), audio_path, max_gap_s=trim_pauses,
         )
     else:
-        words_trimmed, duration = _trim_long_pauses(
+        words_trimmed, duration, trim_gap_count, trim_removed_s = _trim_long_pauses(
             Path(raw_path), list(words_with_ends), audio_path,
         )
     words_trimmed = _restore_pronunciations(words_trimmed, pronunciations)
@@ -143,6 +145,8 @@ def generate_voiceover_dict(
         "words_path": str(words_path),
         "words": words_trimmed,
         "total_duration_s": duration,
+        "trim_pauses_gaps": trim_gap_count,
+        "trim_pauses_removed_s": round(trim_removed_s, 3),
     }
 
 
@@ -178,7 +182,7 @@ def _trim_long_pauses(
     out_path: Path,
     max_gap_s: float = 0.4,
     keep_gap_s: float = 0.1,
-) -> tuple[list[dict], float]:
+) -> tuple[list[dict], float, int, float]:
     """Remove inter-word gaps > max_gap_s, trimming each to keep_gap_s.
 
     Uses ffmpeg atrim+concat for surgical cuts driven by word timestamps.
@@ -204,7 +208,7 @@ def _trim_long_pauses(
 
     if not gaps:
         shutil.copy2(audio_path, out_path)
-        return list(words), max(words[-1]["end"], total_dur) if words else total_dur
+        return list(words), max(words[-1]["end"], total_dur) if words else total_dur, 0, 0.0
 
     # Build the audio segments to keep
     keep: list[tuple[float, float]] = []
@@ -235,7 +239,7 @@ def _trim_long_pauses(
     if result.returncode != 0:
         log.warning("_trim_long_pauses: ffmpeg failed (%s), keeping original", result.stderr[:200])
         shutil.copy2(audio_path, out_path)
-        return list(words), words[-1]["end"] if words else 0.0
+        return list(words), words[-1]["end"] if words else 0.0, 0, 0.0
 
     # Shift timestamps: each word shifts back by total gap removed before it
     shifts = [0.0] * len(words)
@@ -264,7 +268,7 @@ def _trim_long_pauses(
         duration_before_s=round(total_dur, 3),
         duration_after_s=round(new_dur, 3),
     )
-    return adjusted, new_dur
+    return adjusted, new_dur, len(gaps), total_removed
 
 
 def _mock_voiceover(text: str, dest: Path) -> str:

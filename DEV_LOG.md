@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-07 — [CHANGED] produce: surface trim_pauses result in ==> output stream (PR #170 → alpha)
+`_trim_long_pauses` now returns a 4-tuple `(words, duration, gap_count, removed_s)`. `generate_voiceover_dict` includes `trim_pauses_gaps` and `trim_pauses_removed_s` in its return dict. `stage_voiceover` appends trim stats to the audio `==>` line when gaps > 0: `(45.2s, WhisperX aligned, trimmed 3.1s silence across 4 gaps)`. When `trim_pauses=False` or no gaps found, the line is unchanged.
+**Breaks if:** `parallax produce` with `trim_pauses: true` and silence gaps present does not show `trimmed Xs silence across N gaps` in the `==>` audio line; or the audio line changes format when no gaps are found.
+
 ## 2026-05-07 — [CHANGED] Aligner: uniqueness-weighted anchor + fallback recovery (PR #166 → alpha)
 `_find_scene_end` now accepts a `freq_map` (corpus word frequency Counter built once in `align_scenes_obj`). When a content word appears exactly once in the full transcript, it's used as the anchor instead of the last word — unambiguous by construction. If no unique word exists, the last-word strategy is retained but with a 2-word preceding n-gram context check to reduce false positives on common vocabulary. A `min_start_idx` parameter lets the recovery path skip past a known bad anchor. `align_scenes_obj` retries with `min_start_idx=end_idx+1` when `detected_dur < expected_min_dur`, replacing the boundary and logging `aligner fallback applied for scene N: moved boundary from Xs to Ys`.
 **Breaks if:** scenes with a brand name or unique term (appears once in transcript) are anchored on the wrong word; or `parallax produce` logs `aligner fallback applied` unexpectedly on scenes that previously aligned correctly.

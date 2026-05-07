@@ -89,8 +89,10 @@ def test_trim_long_pauses_no_gaps_passthrough(tmp_path):
         {"word": "b", "start": 0.4, "end": 0.7},  # 0.1s gap, below default 0.4
     ]
     out_path = tmp_path / "out.mp3"
-    adjusted, dur = voiceover._trim_long_pauses(audio, words, out_path)
+    adjusted, dur, gaps, removed = voiceover._trim_long_pauses(audio, words, out_path)
     assert adjusted == words
+    assert gaps == 0
+    assert removed == 0.0
     assert out_path.exists()
 
 
@@ -104,10 +106,12 @@ def test_trim_long_pauses_collapses_2s_gap(tmp_path):
         {"word": "c", "start": 3.0, "end": 4.0},
     ]
     out_path = tmp_path / "out.mp3"
-    adjusted, dur = voiceover._trim_long_pauses(
+    adjusted, dur, gaps, removed = voiceover._trim_long_pauses(
         audio, words, out_path, max_gap_s=0.4, keep_gap_s=0.1,
     )
 
+    assert gaps == 1
+    assert removed > 1.5
     assert adjusted[0]["start"] == 0.0
     assert adjusted[0]["end"] == 0.5
     assert abs(adjusted[1]["start"] - 0.6) < 0.01
@@ -122,9 +126,10 @@ def test_trim_long_pauses_empty_words(tmp_path):
     audio = tmp_path / "in.mp3"
     _make_silent_mp3(audio, 0.5)
     out_path = tmp_path / "out.mp3"
-    adjusted, dur = voiceover._trim_long_pauses(audio, [], out_path)
+    adjusted, dur, gaps, removed = voiceover._trim_long_pauses(audio, [], out_path)
     assert adjusted == []
     assert dur >= 0.4  # probes actual file duration, not word-based
+    assert gaps == 0
     assert out_path.exists()
 
 
@@ -225,9 +230,10 @@ def test_trim_long_pauses_no_gaps_uses_probed_duration(tmp_path):
         {"word": "b", "start": 0.4, "end": 1.2},  # last word ends at 1.2 but audio runs to 1.5
     ]
     out_path = tmp_path / "out.mp3"
-    adjusted, dur = voiceover._trim_long_pauses(audio, words, out_path)
+    adjusted, dur, gaps, removed = voiceover._trim_long_pauses(audio, words, out_path)
     assert adjusted == words
     assert dur >= 1.4, f"expected dur >= 1.4 (probed), got {dur}"
+    assert gaps == 0
 
 
 def test_generate_voiceover_dict_trim_pauses_false_uses_audio_duration(tmp_path, monkeypatch):
@@ -272,7 +278,7 @@ def test_generate_voiceover_dict_trim_pauses_false_skips_trim(tmp_path, monkeypa
         trim_called.append(True)
         import shutil
         shutil.copy2(audio_path, out_path)
-        return list(words), words[-1]["end"] if words else 0.0
+        return list(words), words[-1]["end"] if words else 0.0, 0, 0.0
 
     from parallax import openrouter
     monkeypatch.setattr(openrouter, "generate_tts", fake_tts)
@@ -353,7 +359,7 @@ def test_generate_voiceover_dict_trim_pauses_float_uses_custom_max_gap(tmp_path,
         captured_max_gap.append(max_gap_s)
         import shutil
         shutil.copy2(audio_path, out_path)
-        return list(words), words[-1]["end"] if words else 0.0
+        return list(words), words[-1]["end"] if words else 0.0, 0, 0.0
 
     from parallax import openrouter
     monkeypatch.setattr(openrouter, "generate_tts", fake_tts)

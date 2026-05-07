@@ -681,7 +681,13 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
             json.dumps({"words": aligned_words, "total_duration_s": vo_result["total_duration_s"]}, indent=2)
         )
         _align_backend = "WhisperX" if whisper_backend._HAS_WHISPERX else "faster-whisper"
-        _log(settings, f"  audio: {Path(audio_path).name}  ({vo_result['total_duration_s']:.1f}s, {_align_backend} aligned)")
+        _trim_suffix = ""
+        if vo_result.get("trim_pauses_gaps", 0) > 0:
+            _trim_suffix = (
+                f", trimmed {vo_result['trim_pauses_removed_s']:.1f}s silence"
+                f" across {vo_result['trim_pauses_gaps']} gap{'s' if vo_result['trim_pauses_gaps'] != 1 else ''}"
+            )
+        _log(settings, f"  audio: {Path(audio_path).name}  ({vo_result['total_duration_s']:.1f}s, {_align_backend} aligned{_trim_suffix})")
 
     state.audio_path = audio_path
     state.words_path = words_path
