@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-07 — [CHANGED] Warn at preflight when voice_speed, trim_pauses, vo_text silently no-op on locked audio (PR #145 → alpha)
+Three fields silently stopped having effect when `audio_path` is locked: `voice_speed` (speed adjustment skipped), `trim_pauses` (silence removal skipped), and `vo_text` changes (alignment against stale audio produces garbage timing). All three were observed in production (Banana Man, Mars Men). Fix: warnings fire in `compute_preflight` before any stage runs — always visible, not TTY-gated. `vo_text` drift detection uses SHA-256 hashes stored in `vo_text_hashes` on first lock and compared on every subsequent run. Hashes are written to plan YAML by `_init_vo_text_hashes` in `produce.py` (same pattern as `_apply_regenerate_flags`), not by preflight (preflight stays pure/read-only).
+**Breaks if:** `parallax produce` with `audio_path` set and `voice_speed: 1.5` runs without printing "voice_speed ignored — audio is locked" in the preflight output; or a plan with changed `vo_text` against a locked `audio_path` runs without warning.
+
 ## 2026-05-07 — [CHANGED] Seedance fallback chain → kling; 480p native resolution disclosed at preflight (PR #144 → alpha)
 Seedance (`seedance` and `draft` aliases) fallback changed from `wan` to `kling`/`mid` — Kling is proven and stable; Wan was a step down in quality AND reliability. `ModelSpec` gains `native_resolution` field; video.yaml sets `"480p"` for seedance entries. Preflight clip rows now show `seedance 480p → 720p` (or `→ 1080p`) when the model generates at a lower resolution than the output. `produce.py` passes `settings.resolution` explicitly to `compute_preflight` — without this the plan dict's `resolution` key is absent when resolution is inferred from aspect, so the upscale annotation would be silently suppressed.
 **Breaks if:** `parallax produce` on a seedance plan shows a clip row without the `480p →` upscale annotation; or a seedance failure falls back to `wan` instead of `kling`.
