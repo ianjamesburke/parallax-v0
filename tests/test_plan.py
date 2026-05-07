@@ -56,7 +56,7 @@ def test_defaults_apply_when_optional_fields_omitted(tmp_path):
     assert plan.voice == "nova"
     assert plan.voice_speed == 1.0
     assert plan.image_model == "mid"
-    assert plan.video_model == "mid"
+    assert plan.video_model == "draft"
     assert plan.voice_model == "tts-mini"
     assert plan.scenes[0].shot_type == "broll"
     assert plan.scenes[0].animate is False

@@ -38,6 +38,11 @@ def register_parser(sub: argparse._SubParsersAction) -> None:
         "--yes", "-y", action="store_true",
         help="Skip the pre-flight confirmation prompt (non-interactive mode).",
     )
+    produce_p.add_argument(
+        "--hq", action="store_true",
+        help="Use premium-tier models: image=premium (Gemini 3 Pro), video=mid (Kling). "
+             "Per-scene model overrides in the plan still take precedence.",
+    )
 
     plan_p = sub.add_parser("plan", help="Translate a brief.yaml into a plan.yaml.")
     plan_p.add_argument("--folder", required=True, help="Project root.")
@@ -121,6 +126,7 @@ def _run_produce(args) -> int:
     result = run_plan(
         folder=args.folder, plan_path=plan_path,
         aspect=args.aspect, yes=getattr(args, "yes", False),
+        hq=getattr(args, "hq", False),
     )
     if result.status == "cancelled":
         print("produce cancelled.", flush=True)

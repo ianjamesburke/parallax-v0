@@ -148,6 +148,7 @@ def run_plan(
     aspect: str | None = None,
     mode: "ProductionMode | None" = None,
     yes: bool = False,
+    hq: bool = False,
 ) -> ProductionResult:
     """Run the full plan-driven production pipeline.
 
@@ -180,6 +181,10 @@ def run_plan(
     _apply_regenerate_flags(plan, plan_path)
     _init_vo_text_hashes(plan, plan_path)
 
+    if hq:
+        plan["image_model"] = "premium"
+        plan["video_model"] = "mid"
+
     if aspect is not None:
         plan["aspect"] = aspect
         # CLI override means "render at this aspect" — drop any plan-pinned
@@ -197,7 +202,7 @@ def run_plan(
     # Pass the typed Plan to resolve_settings so it reads validated fields
     # directly. When an aspect CLI override is present, fall back to the dict
     # path (aspect has been mutated and resolution dropped on the dict above).
-    settings_input: Plan | dict[str, Any] = plan if aspect is not None else typed_plan
+    settings_input: Plan | dict[str, Any] = plan if (aspect is not None or hq) else typed_plan
     try:
         settings = resolve_settings(settings_input, folder, plan_path, mode=mode)
     except FileNotFoundError as e:

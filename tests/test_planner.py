@@ -84,7 +84,7 @@ def test_happy_path_writes_plan(tmp_path):
     assert plan["voice"] == "nova"
     assert plan["voice_speed"] == 1.0
     assert plan["image_model"] == "mid"
-    assert plan["video_model"] == "mid"
+    assert plan["video_model"] == "draft"
     assert plan["voice_model"] == "tts-mini"
     assert plan["caption_style"] == "anton"
     assert "character_image" in plan

@@ -182,7 +182,7 @@ class Plan(BaseModel):
 
     # Models
     image_model: str = "mid"
-    video_model: str = "mid"
+    video_model: str = "draft"
 
     # Captions
     caption_style: str | dict[str, Any] = "bangers"
