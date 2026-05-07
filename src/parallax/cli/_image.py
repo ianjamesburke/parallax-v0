@@ -1,61 +1,51 @@
 from __future__ import annotations
 
-import argparse
 import sys
+from types import SimpleNamespace
+from typing import List, Optional
+
+import typer
 
 
-def register_parser(sub: argparse._SubParsersAction) -> None:
-    image_p = sub.add_parser("image", help="Image generation utilities.")
-    image_sub = image_p.add_subparsers(dest="image_command", required=True)
-
-    img_gen_p = image_sub.add_parser("generate", help="Generate an image from a prompt.")
-    img_gen_p.add_argument("prompt", help="Generation prompt.")
-    img_gen_p.add_argument(
-        "--model", default="mid",
-        help="Model alias (draft/mid/premium or a named alias). Default: mid.",
-    )
-    img_gen_p.add_argument(
-        "--aspect", default=None,
-        help="Aspect ratio, e.g. '9:16', '16:9', '1:1'. Default: model default.",
-    )
-    img_gen_p.add_argument(
-        "--size", default=None,
-        help="Explicit WxH, e.g. '1080x1920'. Overrides --aspect for sizing.",
-    )
-    img_gen_p.add_argument(
-        "--ref", action="append", dest="refs", metavar="PATH",
-        help="Reference image path (can repeat). Model must support references.",
-    )
-    img_gen_p.add_argument(
-        "--out", default=None,
-        help=(
-            "Output path. If it ends with a recognized image extension "
-            "(.png .jpg .jpeg .webp), the image is written to that exact file. "
-            "Otherwise it is treated as an output directory and the image is "
-            "written there with an auto-generated filename. Default: current directory."
-        ),
-    )
-
-    img_analyze_p = image_sub.add_parser(
-        "analyze", help="Describe or answer questions about an image using a vision model."
-    )
-    img_analyze_p.add_argument("path", help="Image file to analyze.")
-    img_analyze_p.add_argument(
-        "question", nargs="?", default=None,
-        help="Optional question or instruction. Default: describe the image.",
-    )
-    img_analyze_p.add_argument(
-        "--model", default="google/gemini-2.5-flash-preview",
-        help="Vision model ID or alias. Default: google/gemini-2.5-flash-preview.",
-    )
+image_app = typer.Typer(
+    help="Image generation utilities.",
+    invoke_without_command=True,
+    no_args_is_help=True,
+)
 
 
-def run(args) -> int:
-    if args.image_command == "generate":
-        return _run_generate(args)
-    if args.image_command == "analyze":
-        return _run_analyze(args)
-    return 2
+@image_app.command("generate")
+def image_generate(
+    prompt: str = typer.Argument(..., help="Generation prompt."),
+    model: str = typer.Option("mid", "--model", help="Model alias (draft/mid/premium or a named alias). Default: mid."),
+    aspect: Optional[str] = typer.Option(None, "--aspect", help="Aspect ratio, e.g. '9:16', '16:9', '1:1'. Default: model default."),
+    size: Optional[str] = typer.Option(None, "--size", help="Explicit WxH, e.g. '1080x1920'. Overrides --aspect for sizing."),
+    refs: Optional[List[str]] = typer.Option(None, "--ref", metavar="PATH", help="Reference image path (can repeat). Model must support references."),
+    out: Optional[str] = typer.Option(None, "--out", help="Output path. If it ends with a recognized image extension, written to that exact file. Otherwise treated as output directory."),
+) -> int:
+    return _run_generate(SimpleNamespace(
+        image_command="generate",
+        prompt=prompt,
+        model=model,
+        aspect=aspect,
+        size=size,
+        refs=refs,
+        out=out,
+    ))
+
+
+@image_app.command("analyze")
+def image_analyze(
+    path: str = typer.Argument(..., help="Image file to analyze."),
+    question: Optional[str] = typer.Argument(default=None, help="Optional question or instruction. Default: describe the image."),
+    model: str = typer.Option("google/gemini-2.5-flash-preview", "--model", help="Vision model ID or alias."),
+) -> int:
+    return _run_analyze(SimpleNamespace(
+        image_command="analyze",
+        path=path,
+        question=question,
+        model=model,
+    ))
 
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}

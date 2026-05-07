@@ -1,92 +1,87 @@
 from __future__ import annotations
 
-import argparse
-import logging
 import sys
+from typing import Optional
+
+import typer
 
 from .. import __version__
-from ..log import configure as configure_logging
 from . import _audio, _image, _log, _meta, _models, _produce, _schema, _validate, _video
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="parallax", description="Agentic creative production CLI.")
-    parser.add_argument("--version", action="version", version=f"parallax {__version__}")
-    parser.add_argument(
-        "-v", "--verbose", action="count", default=0,
-        help="Increase log verbosity: -v=INFO, -vv=DEBUG. Overrides PARALLAX_LOG_LEVEL.",
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
+app = typer.Typer(
+    name="parallax",
+    help="Agentic creative production CLI.",
+    no_args_is_help=False,
+    invoke_without_command=True,
+)
 
-    _produce.register_parser(sub)
-    _models.register_parser(sub)
-    _audio.register_parser(sub)
-    _video.register_parser(sub)
-    _image.register_parser(sub)
-    _log.register_parser(sub)
-    _meta.register_parser(sub)
-    _schema.register_parser(sub)
-    _validate.register_parser(sub)
 
-    _enable_help_on_empty(parser)
+def _version_callback(value: bool) -> None:
+    if value:
+        print(f"parallax {__version__}")
+        raise typer.Exit()
 
-    try:
-        import argcomplete
-        argcomplete.autocomplete(parser)
-    except ImportError:
-        pass
 
-    args = parser.parse_args(argv)
-
-    if getattr(args, "_help_on_empty", None) is not None:
-        args._help_on_empty()
-        return 0
-
+@app.callback()
+def main_callback(
+    ctx: typer.Context,
+    version: Optional[bool] = typer.Option(
+        None, "--version", callback=_version_callback, is_eager=True,
+        help="Show version and exit.",
+    ),
+    verbose: int = typer.Option(
+        0, "--verbose", "-v", count=True,
+        help="Increase log verbosity: -v=INFO, -vv=DEBUG.",
+    ),
+) -> None:
+    from ..log import configure as configure_logging
+    import logging
     level: int | None = None
-    if args.verbose >= 2:
+    if verbose >= 2:
         level = logging.DEBUG
-    elif args.verbose == 1:
+    elif verbose == 1:
         level = logging.INFO
     configure_logging(level)
 
-    _dispatch = {
-        "produce": _produce.run,
-        "plan": _produce.run,
-        "ingest": _produce.run,
-        "models": _models.run,
-        "audio": _audio.run,
-        "video": _video.run,
-        "image": _image.run,
-        "log": _log.run,
-        "usage": _meta.run,
-        "credits": _meta.run,
-        "update": _meta.run,
-        "completions": _meta.run,
-        "verify": _meta.run,
-        "schema": _schema.run,
-        "validate": _validate.run,
-    }
-    handler = _dispatch.get(args.command)
-    if handler:
-        return handler(args)
-    return 2
+
+# Register sub-typers
+app.add_typer(_audio.audio_app, name="audio")
+app.add_typer(_video.video_app, name="video")
+app.add_typer(_image.image_app, name="image")
+app.add_typer(_models.models_app, name="models")
+
+# Register top-level commands from modules
+_produce.register_produce(app)
+_log.register_log(app)
+_meta.register_meta(app)
+_schema.register_schema(app)
+_validate.register_validate(app)
 
 
-def _enable_help_on_empty(parser: argparse.ArgumentParser) -> None:
-    """Walk the parser tree: any parser with subparsers prints its help when
-    invoked with no subcommand, instead of erroring. Each ancestor stamps its
-    own print_help into args._help_on_empty; the deepest matched parser wins.
-    Leaf parsers clear the default so concrete subcommands run normally."""
-    has_subparsers = False
-    for action in parser._actions:
-        if isinstance(action, argparse._SubParsersAction):
-            has_subparsers = True
-            action.required = False
-            parser.set_defaults(_help_on_empty=parser.print_help)
-            for subparser in action.choices.values():
-                _enable_help_on_empty(subparser)
-    if not has_subparsers:
-        parser.set_defaults(_help_on_empty=None)
+def main(argv: list[str] | None = None) -> int:
+    import click
+    try:
+        result = app(standalone_mode=False, args=argv)
+        return result if isinstance(result, int) else 0
+    except SystemExit as e:
+        return int(e.code) if e.code is not None else 0
+    except click.exceptions.Exit as e:
+        code = getattr(e, "code", 0)
+        return int(code) if code is not None else 0
+    except click.exceptions.NoArgsIsHelpError:
+        # Bare sub-group invocation prints help — treat as success
+        return 0
+    except click.UsageError as e:
+        e.show(file=sys.stderr)
+        return 2
+    except click.Abort:
+        return 130
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception("unhandled error in main")
+        print(f"\nError: {type(e).__name__}: {e}\n", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

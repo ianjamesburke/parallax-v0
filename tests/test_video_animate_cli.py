@@ -91,11 +91,11 @@ def test_animate_end_without_start_errors(mock_image, tmp_path, capsys):
 
 
 def test_animate_start_and_ref_mutually_exclusive(mock_image):
-    with pytest.raises(SystemExit):
-        _run(["video", "animate",
-              "--prompt", "test",
-              "--start", str(mock_image),
-              "--ref", str(mock_image)])
+    rc = _run(["video", "animate",
+               "--prompt", "test",
+               "--start", str(mock_image),
+               "--ref", str(mock_image)])
+    assert rc == 2
 
 
 def test_animate_duration_and_model(mock_image, tmp_path):

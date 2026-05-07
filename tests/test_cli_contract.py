@@ -21,15 +21,13 @@ from parallax import cli
 # ---------------------------------------------------------------------------
 
 def _help_exits_zero(*args: str) -> None:
-    with pytest.raises(SystemExit) as exc:
-        cli.main(list(args) + ["--help"])
-    assert exc.value.code == 0
+    rc = cli.main(list(args) + ["--help"])
+    assert rc == 0, f"Expected 0 for {args!r} --help, got {rc}"
 
 
 def _rejects_args(*args: str) -> None:
-    with pytest.raises(SystemExit) as exc:
-        cli.main(list(args))
-    assert exc.value.code == 2
+    rc = cli.main(list(args))
+    assert rc == 2, f"Expected 2 for {args!r}, got {rc}"
 
 
 # ---------------------------------------------------------------------------

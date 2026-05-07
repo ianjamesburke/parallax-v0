@@ -153,20 +153,29 @@ class TestStageVoiceoverReusesCachedVoWords:
 # ---------------------------------------------------------------------------
 
 class TestCliCapPausesAcceptsWordsArg:
-    def test_words_arg_parsed(self) -> None:
-        from parallax.cli._audio import register_parser
-
-        top = argparse.ArgumentParser()
-        sub = top.add_subparsers(dest="command")
-        register_parser(sub)
-
-        args = top.parse_args([
-            "audio", "cap-pauses",
-            "--input", "/tmp/in.wav",
-            "--output", "/tmp/out.wav",
-            "--words", "/tmp/foo.json",
-        ])
-        assert args.words == "/tmp/foo.json"
+    def test_words_arg_parsed(self, tmp_path) -> None:
+        from parallax import cli
+        dummy_in = tmp_path / "in.wav"
+        dummy_in.write_bytes(b"")
+        dummy_out = tmp_path / "out.wav"
+        words_file = tmp_path / "foo.json"
+        words_file.write_text("[]")
+        import parallax.audio as audio_mod
+        import unittest.mock as mock
+        def fake_cap_pauses(**kw):
+            captured["words"] = kw.get("words")
+            return {"gaps_trimmed": 0, "max_gap_s": 0.75,
+                    "original_duration_s": 1.0, "new_duration_s": 1.0,
+                    "seconds_removed": 0.0, "output": str(dummy_out)}
+        captured = {}
+        with mock.patch.object(audio_mod, "cap_pauses", side_effect=fake_cap_pauses):
+            rc = cli.main([
+                "audio", "cap-pauses",
+                "--input", str(dummy_in),
+                "--output", str(dummy_out),
+                "--words", str(words_file),
+            ])
+        assert rc == 0
 
 
 # ---------------------------------------------------------------------------
@@ -174,17 +183,21 @@ class TestCliCapPausesAcceptsWordsArg:
 # ---------------------------------------------------------------------------
 
 class TestCliTranscribeAcceptsWordsArg:
-    def test_words_arg_parsed(self) -> None:
-        from parallax.cli._audio import register_parser
-
-        top = argparse.ArgumentParser()
-        sub = top.add_subparsers(dest="command")
-        register_parser(sub)
-
-        args = top.parse_args([
-            "audio", "transcribe",
-            "/tmp/in.wav",
-            "--out", "/tmp/words.json",
-            "--words", "/tmp/foo.json",
-        ])
-        assert args.words == "/tmp/foo.json"
+    def test_words_arg_parsed(self, tmp_path) -> None:
+        from parallax import cli
+        dummy_in = tmp_path / "in.wav"
+        dummy_in.write_bytes(b"")
+        out_path = tmp_path / "words.json"
+        words_file = tmp_path / "foo.json"
+        words_file.write_text('[{"word": "hi", "start": 0.0, "end": 0.4}]')
+        import parallax.audio as audio_mod
+        import unittest.mock as mock
+        with mock.patch.object(audio_mod, "transcribe_words",
+                               return_value=[{"word": "hi", "start": 0.0, "end": 0.4}]):
+            rc = cli.main([
+                "audio", "transcribe",
+                str(dummy_in),
+                "--out", str(out_path),
+                "--words", str(words_file),
+            ])
+        assert rc == 0

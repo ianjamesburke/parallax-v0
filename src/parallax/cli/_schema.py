@@ -1,52 +1,57 @@
 """parallax schema — prints brief.yaml and plan.yaml field reference."""
 from __future__ import annotations
 
-import argparse
 import json
 import sys
+from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
+import typer
 
 
-def register_parser(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser(
-        "schema",
-        help="Emit JSON Schema for brief.yaml / plan.yaml. Omit target for a human-readable overview of both.",
-    )
-    p.add_argument(
-        "target",
-        nargs="?",
-        choices=("brief", "plan"),
-        default=None,
-        help="Which schema to emit. Omit to print a human-readable field overview of both.",
-    )
-    p.add_argument(
-        "--output",
-        metavar="FILE",
-        default=None,
-        help="Write schema to FILE instead of stdout (requires a target).",
-    )
+class SchemaTarget(str, Enum):
+    brief = "brief"
+    plan = "plan"
+    cli = "cli"
 
 
-def run(args: argparse.Namespace) -> int:
+def register_schema(app: typer.Typer) -> None:
+    app.command("schema")(_schema_cmd)
+
+
+def _schema_cmd(
+    target: Optional[SchemaTarget] = typer.Argument(default=None, help="Which schema to emit. Omit to print a human-readable field overview of both."),
+    output: Optional[str] = typer.Option(None, "--output", metavar="FILE", help="Write schema to FILE instead of stdout (requires a target)."),
+) -> int:
     from ..brief import Brief
     from ..plan import Plan
 
-    output: str | None = getattr(args, "output", None)
-
-    if output is not None and args.target is None:
+    if output is not None and target is None:
         print(
             "error: --output requires a target: `parallax schema brief --output f.json` or `parallax schema plan --output f.json`",
             file=sys.stderr,
         )
         return 1
 
-    if args.target is not None:
-        model = Brief if args.target == "brief" else Plan
+    if target == SchemaTarget.cli:
+        import json as _json
+        import click as _click
+        import typer as _typer
+        # Lazy import to avoid circular dependency
+        from parallax import cli as _cli_mod
+        click_group = _typer.main.get_group(_cli_mod.app)
+        with _click.Context(click_group) as ctx:
+            info = click_group.to_info_dict(ctx)
+        print(_json.dumps(info, indent=2))
+        return 0
+
+    if target is not None:
+        model = Brief if target == SchemaTarget.brief else Plan
         text = json.dumps(model.model_json_schema(), indent=2)
         if output is not None:
             Path(output).write_text(text)
-            print(f"Wrote {args.target} schema to {output}", file=sys.stderr)
+            print(f"Wrote {target.value} schema to {output}", file=sys.stderr)
         else:
             print(text)
         return 0

@@ -1,143 +1,114 @@
 from __future__ import annotations
 
-import argparse
 import shutil
 import subprocess
 import sys
+from enum import Enum
+from typing import Optional
+
+import typer
 
 
-def register_parser(sub: argparse._SubParsersAction) -> None:
-    usage_p = sub.add_parser("usage", help="Per-model / per-session cost summary.")
-    usage_p.add_argument(
-        "--include-test", action="store_true",
-        help="Include PARALLAX_TEST_MODE records (excluded by default).",
-    )
+completions_app = typer.Typer(
+    help="Manage shell tab completion.",
+    invoke_without_command=True,
+    no_args_is_help=True,
+)
 
-    sub.add_parser("credits", help="OpenRouter balance.")
-
-    sub.add_parser("update", help="Upgrade parallax via uv.")
-
-    completions_p = sub.add_parser("completions", help="Manage shell tab completion.")
-    completions_sub = completions_p.add_subparsers(dest="completions_command", required=True)
-
-    completions_install_p = completions_sub.add_parser(
-        "install",
-        help="Write the completion stub to a cache file and print the line to add to your shell config.",
-    )
-    completions_install_p.add_argument(
-        "--shell", choices=["zsh", "bash"], default=None,
-        help="Target shell (default: detect from $SHELL).",
-    )
-    completions_install_p.add_argument(
-        "--path", default=None,
-        help="Output path (default: ~/.cache/<shell>/parallax-completion.<shell>).",
-    )
-
-    completions_print_p = completions_sub.add_parser(
-        "print",
-        help="Print the completion stub to stdout (escape hatch — prefer `install`).",
-    )
-    completions_print_p.add_argument("shell", choices=["zsh", "bash"])
-
-    verify_p = sub.add_parser("verify", help="Run or scaffold verify suite cases.")
-    verify_sub = verify_p.add_subparsers(dest="verify_command", required=True)
-
-    verify_suite_p = verify_sub.add_parser(
-        "suite",
-        help="Run case folders against expected.yaml.",
-        description=(
-            "Each case subfolder must contain a plan.yaml + expected.yaml. "
-            "expected.yaml schema (every block optional): "
-            "final.{resolution,duration_s,audio_video_diff_s_max,scene_count}, "
-            "stages.<name>.{files_must_exist,resolution,contiguous_cover}, "
-            "manifest.{keys_required,scene_keys_required}, "
-            "run_log.{must_not_contain,must_contain}, cost_usd_max, paid."
-        ),
-    )
-    verify_suite_p.add_argument("suite_dir", help="Directory containing one or more case subfolders.")
-    verify_suite_p.add_argument(
-        "--paid", action="store_true",
-        help="Run cases marked paid: true (default skips them).",
-    )
-    verify_suite_p.add_argument(
-        "--case", default=None,
-        help="Run only a single case subfolder by name (default: all).",
-    )
-
-    verify_init_p = verify_sub.add_parser(
-        "init",
-        help="Scaffold a new verify suite case.",
-        description=(
-            "Creates a new case folder at <target>. With --from <existing>, "
-            "copies that case verbatim and optionally rewrites the resolution. "
-            "Without --from, writes a minimal one-scene starter that points "
-            "at the canonical reference case for the full schema."
-        ),
-    )
-    verify_init_p.add_argument("target", help="Path to the new case folder.")
-    verify_init_p.add_argument(
-        "--from", dest="from_dir", default=None,
-        help="Copy from an existing case folder (must contain plan.yaml + expected.yaml).",
-    )
-    verify_init_p.add_argument(
-        "--resolution", default=None,
-        help="WxH (e.g. 480x854). Rewrites plan.yaml's resolution and expected.final.resolution.",
-    )
-    verify_init_p.add_argument(
-        "--force", action="store_true",
-        help="Overwrite the target if it already exists (default: refuse).",
-    )
+verify_app = typer.Typer(
+    help="Run or scaffold verify suite cases.",
+    invoke_without_command=True,
+    no_args_is_help=True,
+)
 
 
-def run(args) -> int:
-    if args.command == "usage":
-        from .. import usage
-        _print_usage(usage.summarize(include_test=args.include_test))
+class ShellChoice(str, Enum):
+    zsh = "zsh"
+    bash = "bash"
+
+
+def register_meta(app: typer.Typer) -> None:
+    app.command("usage")(_usage_cmd)
+    app.command("credits")(_credits_cmd)
+    app.command("update")(_update_cmd)
+    app.add_typer(completions_app, name="completions")
+    app.add_typer(verify_app, name="verify")
+
+
+def _usage_cmd(
+    include_test: bool = typer.Option(False, "--include-test", help="Include PARALLAX_TEST_MODE records (excluded by default)."),
+) -> int:
+    from .. import usage
+    _print_usage(usage.summarize(include_test=include_test))
+    return 0
+
+
+def _credits_cmd() -> int:
+    from ..openrouter import InsufficientCreditsError, check_credits
+    try:
+        balance = check_credits(min_balance_usd=0.0)
+        print(
+            f"OpenRouter credits — total ${balance.total:.2f}, "
+            f"used ${balance.used:.2f}, remaining ${balance.remaining:.2f}"
+        )
+        if balance.remaining < 0.50:
+            print("  ⚠ Low. Top up at https://openrouter.ai/settings/credits", file=sys.stderr)
+            return 1
         return 0
-
-    if args.command == "credits":
-        from ..openrouter import InsufficientCreditsError, check_credits
-        try:
-            balance = check_credits(min_balance_usd=0.0)
-            print(
-                f"OpenRouter credits — total ${balance.total:.2f}, "
-                f"used ${balance.used:.2f}, remaining ${balance.remaining:.2f}"
-            )
-            if balance.remaining < 0.50:
-                print("  ⚠ Low. Top up at https://openrouter.ai/settings/credits", file=sys.stderr)
-                return 1
-            return 0
-        except InsufficientCreditsError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return 1
-        except Exception as e:
-            print(f"Error: could not fetch credits ({type(e).__name__}: {e})", file=sys.stderr)
-            return 1
-
-    if args.command == "update":
-        return _run_update()
-
-    if args.command == "completions":
-        if args.completions_command == "install":
-            return _run_completions_install(args.shell, args.path)
-        if args.completions_command == "print":
-            return _run_completions_print(args.shell)
-
-    if args.command == "verify":
-        if args.verify_command == "suite":
-            from ..verify_suite import cli_run
-            return cli_run(args.suite_dir, paid=args.paid, case=args.case)
-        if args.verify_command == "init":
-            from ..verify_suite import cli_init
-            return cli_init(
-                args.target,
-                from_dir=args.from_dir,
-                resolution=args.resolution,
-                force=args.force,
-            )
+    except InsufficientCreditsError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error: could not fetch credits ({type(e).__name__}: {e})", file=sys.stderr)
         return 1
 
-    return 2
+
+def _update_cmd() -> int:
+    return _run_update()
+
+
+@completions_app.command("install")
+def completions_install(
+    shell: Optional[str] = typer.Option(None, "--shell", help="Target shell (default: detect from $SHELL)."),
+    path: Optional[str] = typer.Option(None, "--path", help="Output path (default: ~/.cache/<shell>/parallax-completion.<shell>)."),
+) -> int:
+    if shell is not None and shell not in ("zsh", "bash"):
+        typer.echo(f"Error: invalid shell '{shell}'. Choose from: zsh, bash", err=True)
+        return 2
+    return _run_completions_install(shell, path)
+
+
+@completions_app.command("print")
+def completions_print(
+    shell: ShellChoice = typer.Argument(..., help="Shell to print completion for."),
+) -> int:
+    return _run_completions_print(shell.value)
+
+
+@verify_app.command("suite")
+def verify_suite(
+    suite_dir: str = typer.Argument(..., help="Directory containing one or more case subfolders."),
+    paid: bool = typer.Option(False, "--paid", help="Run cases marked paid: true (default skips them)."),
+    case: Optional[str] = typer.Option(None, "--case", help="Run only a single case subfolder by name (default: all)."),
+) -> int:
+    from ..verify_suite import cli_run
+    return cli_run(suite_dir, paid=paid, case=case)
+
+
+@verify_app.command("init")
+def verify_init(
+    target: str = typer.Argument(..., help="Path to the new case folder."),
+    from_dir: Optional[str] = typer.Option(None, "--from", help="Copy from an existing case folder."),
+    resolution: Optional[str] = typer.Option(None, "--resolution", help="WxH (e.g. 480x854). Rewrites plan.yaml's resolution."),
+    force: bool = typer.Option(False, "--force", help="Overwrite the target if it already exists (default: refuse)."),
+) -> int:
+    from ..verify_suite import cli_init
+    return cli_init(
+        target,
+        from_dir=from_dir,
+        resolution=resolution,
+        force=force,
+    )
 
 
 def _print_usage(summary: dict) -> None:
@@ -228,12 +199,6 @@ def _update_skill() -> None:
         print(f"  Skill update failed: {result.stderr.strip()}", file=sys.stderr)
 
 
-def _run_completions_print(shell: str) -> int:
-    import argcomplete
-    print(argcomplete.shellcode(["parallax"], shell=shell))  # type: ignore[attr-defined]
-    return 0
-
-
 def _detect_shell() -> str:
     import os
     name = os.path.basename(os.environ.get("SHELL", ""))
@@ -242,8 +207,16 @@ def _detect_shell() -> str:
     return "zsh"
 
 
+def _run_completions_print(shell: str) -> int:
+    prog = "parallax"
+    if shell == "zsh":
+        print(f'eval "$(_PARALLAX_COMPLETE=zsh_source {prog})"')
+    elif shell == "bash":
+        print(f'eval "$(_PARALLAX_COMPLETE=bash_source {prog})"')
+    return 0
+
+
 def _run_completions_install(shell: str | None, path: str | None) -> int:
-    import argcomplete
     from pathlib import Path
 
     target_shell = shell or _detect_shell()
@@ -257,12 +230,11 @@ def _run_completions_install(shell: str | None, path: str | None) -> int:
         out = Path.home() / ".cache" / target_shell / f"parallax-completion.{target_shell}"
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(argcomplete.shellcode(["parallax"], shell=target_shell))  # type: ignore[attr-defined]
-
-    print(f"Wrote {target_shell} completion stub to {out}")
-    print()
-    print("Add this line to your shell config (e.g. ~/.zshrc or ~/dotfiles/zshrc):")
-    print(f"  source {out}")
-    print()
-    print(f"Then restart your shell. To refresh later: rm {out} && parallax completions install")
+    prog = "parallax"
+    var = f"_{prog.upper()}_COMPLETE"
+    content = f'eval "$({var}={target_shell}_source {prog})"'
+    out.write_text(content + "\n")
+    print(f"Wrote {target_shell} completion to {out}")
+    print(f"\nAdd to your ~/.{target_shell}rc:\n  source {out}")
+    print(f"\nOr source completion directly:\n  eval \"$({var}={target_shell}_source {prog})\"")
     return 0
