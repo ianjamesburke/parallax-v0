@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-07 — [CHANGED] voice_postprocess block — auto-chain cap-pauses + speed after VO (PR #148 → alpha)
+Adds `voice_postprocess:` block to plan.yaml (`cap_pauses`, `max_gap_s`, `speed`). After VO generation, the stage runs cap_pauses and/or atempo speed on the audio, writes `vo_postprocessed.wav`, and locks `audio_path`/`words_path` into plan.yaml — future runs skip automatically. `cap_pauses` now returns `adjusted_words` (computed via `_adjust_words`) so downstream word timestamps stay aligned after gap removal. `voice_postprocess.speed` replaces `voice_speed` (deprecated); preflight warns on conflict. Skips in test mode — mock audio has no real word timestamps; `stage_speed_adjust` still applies `voice_speed` in test mode but locks correctly in production.
+**Breaks if:** A produce run with `voice_postprocess: {cap_pauses: true}` does not write `vo_postprocessed.wav` to the audio dir; or `audio_path` is not locked in plan.yaml after the first real-mode run; or a plan with `audio_path` locked and `voice_postprocess` set does not print "voice_postprocess ignored — audio is locked" in preflight.
+
 ## 2026-05-07 — [CHANGED] Default video model → draft; add --hq flag (PR #147 → alpha)
 Default `video_model` changed from `mid` (Kling, $0.112/s) to `draft` (Seedance, $0.054/s) — cheap path is the path of least resistance. `--hq` on `parallax produce` overrides the run to `image=premium` + `video=mid`; per-scene `image_model`/`video_model` fields in plan.yaml still take precedence. Multi-ref advisory fires on `parallax image generate` when 2+ `--ref` flags are passed to a non-premium model. `parallax models list` shows `[default]` and `[hq]` markers.
 **Breaks if:** A `parallax produce` run on a plan with no explicit `video_model` generates clips with Kling instead of Seedance; or `parallax produce --hq` doesn't show `premium` in the preflight cost table; or `parallax models list` lacks `[default]`/`[hq]` labels.
