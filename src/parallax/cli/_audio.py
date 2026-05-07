@@ -50,7 +50,9 @@ def register_parser(sub: argparse._SubParsersAction) -> None:
         "cap-pauses",
         help=(
             "Cap inter-word gaps to a max length using WhisperX word boundaries — "
-            "trims long pauses without amplitude probing. Pure word-driven."
+            "trims long pauses without amplitude probing. Pure word-driven. "
+            "Note: removes silence only; cannot fix onset clipping. "
+            "Use `pad-onsets` to restore lead-in before word starts."
         ),
     )
     cap_p.add_argument("--input", "-i", required=True, help="Audio (or m4a/mp3) file to trim.")
@@ -70,6 +72,22 @@ def register_parser(sub: argparse._SubParsersAction) -> None:
     cap_p.add_argument(
         "--words", default=None,
         help="Path to existing words JSON — skips WhisperX alignment.",
+    )
+
+    pad_p = audio_sub.add_parser(
+        "pad-onsets",
+        help=(
+            "Ensure each word onset has at least --pad seconds of lead-in silence. "
+            "Inserts silence before any word whose gap from the previous word is too short. "
+            "Pairs naturally with cap-pauses in a post-trim pipeline."
+        ),
+    )
+    pad_p.add_argument("--input", "-i", required=True, help="Audio (or m4a/mp3) file to process.")
+    pad_p.add_argument("--output", "-o", required=True, help="Output wav path.")
+    pad_p.add_argument("--words", required=True, help="Path to words JSON (word-level timestamps).")
+    pad_p.add_argument(
+        "--pad", type=float, default=0.05,
+        help="Minimum lead-in silence before each word onset, in seconds (default: 0.05).",
     )
 
     vo_p = audio_sub.add_parser(
@@ -222,6 +240,25 @@ def run(args) -> int:
         print(
             f"  duration: {result['original_duration_s']:.2f}s → {result['new_duration_s']:.2f}s "
             f"({result['seconds_removed']:.2f}s removed)"
+        )
+        print(f"  output  → {result['output']}")
+        return 0
+
+    if args.audio_command == "pad-onsets":
+        import json as _json
+        from pathlib import Path
+        from ..audio import pad_onsets
+        data = _json.loads(Path(args.words).read_text())
+        words = data if isinstance(data, list) else data.get("words", [])
+        result = pad_onsets(
+            input_path=args.input,
+            output_path=args.output,
+            words=words,
+            pad_s=args.pad,
+        )
+        print(f"pad-onsets: {result['onsets_padded']} onsets padded (+{result['seconds_added']:.3f}s)")
+        print(
+            f"  duration: {result['original_duration_s']:.2f}s → {result['new_duration_s']:.2f}s"
         )
         print(f"  output  → {result['output']}")
         return 0

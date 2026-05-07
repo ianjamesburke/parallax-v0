@@ -476,3 +476,130 @@ def cap_pauses(
         "seconds_removed": round(removed, 3),
         "max_gap_s": max_gap_s, "crossfade_s": cf,
     }
+
+
+# ---------------------------------------------------------------------------
+# Onset padding — ensure each word has at least pad_s of lead-in silence
+# ---------------------------------------------------------------------------
+
+def pad_onsets(
+    input_path: str,
+    output_path: str,
+    words: list[dict],
+    pad_s: float = 0.05,
+) -> dict:
+    """Insert silence before any word onset whose lead-in is shorter than pad_s.
+
+    Complements cap_pauses: where cap_pauses removes excess silence, pad_onsets
+    adds silence to restore minimum lead-in after a prior trim clipped too close
+    to a word boundary. Requires a pre-existing words JSON (e.g. from
+    `parallax audio transcribe`) — raw onset detection from audio is not supported.
+
+    Output is written as a mono 44100 Hz wav. Segments are concatenated via
+    ffmpeg filter_complex; the original audio is never decoded to Python arrays.
+
+    Returns a summary dict: input, output, original_duration_s, new_duration_s,
+    onsets_padded, seconds_added.
+    """
+    src = Path(input_path).expanduser().resolve()
+    dst = Path(output_path).expanduser().resolve()
+    if not src.is_file():
+        raise FileNotFoundError(f"pad_onsets: input not found: {src}")
+    if not words:
+        raise ValueError("pad_onsets: words list is empty")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+
+    probe = run_ffmpeg(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(src)],
+        capture_output=True, text=True,
+    )
+    total_dur = float(probe.stdout.strip()) if probe.stdout.strip() else words[-1]["end"]
+
+    # Find each word whose lead-in gap is below pad_s.
+    # Insertion point is at prev_end (end of previous word, or 0) — we extend
+    # the gap there rather than cutting into the word itself.
+    insertions: list[tuple[float, float]] = []
+    for i, word in enumerate(words):
+        prev_end = words[i - 1]["end"] if i > 0 else 0.0
+        lead_in = word["start"] - prev_end
+        if lead_in < pad_s - 1e-6:
+            insertions.append((prev_end, round(pad_s - lead_in, 6)))
+
+    if not insertions:
+        run_ffmpeg(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-i", str(src), "-ar", "44100", "-ac", "1", str(dst)],
+            check=True, capture_output=True,
+        )
+        return {
+            "input": str(src), "output": str(dst),
+            "original_duration_s": round(total_dur, 3),
+            "new_duration_s": round(total_dur, 3),
+            "onsets_padded": 0, "seconds_added": 0.0,
+        }
+
+    # Partition the original audio at each insertion point and interleave silence.
+    # For N insertions at times p0 < p1 < ..., we get N+1 audio segments:
+    #   [0, p0), [p0, p1), ..., [p_(N-1), total_dur)
+    # interleaved with N silence clips:
+    #   output = seg0 + sil0 + seg1 + sil1 + ... + segN
+    split_points = [ins[0] for ins in insertions]
+
+    seg_bounds: list[tuple[float, float]] = []
+    prev = 0.0
+    for p in split_points:
+        seg_bounds.append((prev, p))
+        prev = p
+    seg_bounds.append((prev, total_dur))
+
+    sample_rate = 44100
+    filter_parts: list[str] = []
+    all_labels: list[str] = []
+
+    seg_idx = 0
+    for i, (s, e) in enumerate(seg_bounds):
+        if e > s + 1e-6:
+            label = f"seg{seg_idx}"
+            filter_parts.append(
+                f"[0:a]atrim=start={s:.6f}:end={e:.6f},asetpts=PTS-STARTPTS[{label}]"
+            )
+            all_labels.append(label)
+            seg_idx += 1
+
+        if i < len(insertions):
+            sil_dur = insertions[i][1]
+            sil_label = f"sil{i}"
+            filter_parts.append(
+                f"aevalsrc=0:s={sample_rate}:d={sil_dur:.6f}[{sil_label}]"
+            )
+            all_labels.append(sil_label)
+
+    n_streams = len(all_labels)
+    labels_str = "".join(f"[{lb}]" for lb in all_labels)
+    filter_parts.append(f"{labels_str}concat=n={n_streams}:v=0:a=1[out]")
+    filter_str = ";".join(filter_parts)
+
+    run_ffmpeg(
+        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+         "-i", str(src),
+         "-filter_complex", filter_str,
+         "-map", "[out]",
+         "-ar", str(sample_rate), "-ac", "1",
+         str(dst)],
+        check=True, capture_output=True,
+    )
+
+    seconds_added = sum(ins[1] for ins in insertions)
+    new_total = total_dur + seconds_added
+    log.info(
+        "pad_onsets: %d onsets padded (+%.3fs total, %.2fs → %.2fs)",
+        len(insertions), seconds_added, total_dur, new_total,
+    )
+    return {
+        "input": str(src), "output": str(dst),
+        "original_duration_s": round(total_dur, 3),
+        "new_duration_s": round(new_total, 3),
+        "onsets_padded": len(insertions),
+        "seconds_added": round(seconds_added, 3),
+    }
