@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-07 — [CHANGED] Default video model → draft; add --hq flag (PR #147 → alpha)
+Default `video_model` changed from `mid` (Kling, $0.112/s) to `draft` (Seedance, $0.054/s) — cheap path is the path of least resistance. `--hq` on `parallax produce` overrides the run to `image=premium` + `video=mid`; per-scene `image_model`/`video_model` fields in plan.yaml still take precedence. Multi-ref advisory fires on `parallax image generate` when 2+ `--ref` flags are passed to a non-premium model. `parallax models list` shows `[default]` and `[hq]` markers.
+**Breaks if:** A `parallax produce` run on a plan with no explicit `video_model` generates clips with Kling instead of Seedance; or `parallax produce --hq` doesn't show `premium` in the preflight cost table; or `parallax models list` lacks `[default]`/`[hq]` labels.
+
 ## 2026-05-07 — [CHANGED] New pad-onsets command; cap-pauses help updated (PR #146 → alpha)
 Adds `parallax audio pad-onsets --input <wav> --words <json> --pad 0.05`. Inserts silence before any word onset whose lead-in gap (from previous word end, or 0 for the first word) is shorter than `--pad`. Implemented via ffmpeg `filter_complex` with `aevalsrc` silence generation + `atrim` segments + `concat` — no Python-level audio decoding. Also adds `description=` to `cap-pauses` argparse parser so `cap-pauses --help` explicitly states it cannot address onset clipping and directs users to `pad-onsets`. Note: `aevalsrc` uses `s=<rate>` not `r=<rate>` in this ffmpeg version — `r` raises "Option not found" at runtime.
 **Breaks if:** `parallax audio pad-onsets --help` exits non-zero or missing any of --input/--output/--words/--pad; or `parallax audio cap-pauses --help` no longer mentions "onset clipping".
