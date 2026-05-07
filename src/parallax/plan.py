@@ -80,6 +80,15 @@ class Avatar(BaseModel):
     crop_px: int = 0
 
 
+class VoicePostprocess(BaseModel):
+    """Auto-chain cap-pauses + speed after VO generation, then lock audio_path."""
+    model_config = ConfigDict(extra="forbid")
+
+    cap_pauses: bool = False
+    max_gap_s: float = 0.5
+    speed: float = 1.0
+
+
 class PlanScene(BaseModel):
     """One scene as authored in the plan. Per-scene `image_model`,
     `video_model`, and `voice_model` overrides win over the plan-level
@@ -216,6 +225,7 @@ class Plan(BaseModel):
     # Pipeline behavior
     stills_only: bool = False
     trim_pauses: bool | float = True
+    voice_postprocess: VoicePostprocess | None = None
     titles: list[dict[str, Any]] | None = None
 
     # Transitions

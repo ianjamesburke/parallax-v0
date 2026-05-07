@@ -416,6 +416,7 @@ def cap_pauses(
             "new_duration_s": round(total_dur, 3),
             "gaps_trimmed": 0, "seconds_removed": 0.0,
             "max_gap_s": max_gap_s, "crossfade_s": crossfade_s,
+            "adjusted_words": list(words),  # no segments removed, timestamps unchanged
         }
 
     # Build keep-segments — the inverse of the cuts.
@@ -468,6 +469,7 @@ def cap_pauses(
         "cap_pauses: %d gaps capped to %.2fs (removed %.2fs total, %.2fs → %.2fs)",
         len(cuts), max_gap_s, removed, total_dur, new_total,
     )
+    adjusted_words = _adjust_words(words, cuts)
     return {
         "input": str(src), "output": str(dst),
         "original_duration_s": round(total_dur, 3),
@@ -475,6 +477,7 @@ def cap_pauses(
         "gaps_trimmed": len(cuts),
         "seconds_removed": round(removed, 3),
         "max_gap_s": max_gap_s, "crossfade_s": cf,
+        "adjusted_words": adjusted_words,
     }
 
 
