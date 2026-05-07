@@ -74,6 +74,17 @@ class TestModels:
         rc = cli.main(["models"])
         assert rc == 0
 
+    def test_show_elevenlabs_alias(self, monkeypatch, capsys):
+        from parallax.cli import _models as _m
+        monkeypatch.setattr(
+            _m,
+            "_print_elevenlabs_voices",
+            lambda: (print("ElevenLabs voices (premade):") or 0),
+        )
+        rc = cli.main(["models", "show", "elevenlabs"])
+        assert rc == 0
+        assert "ElevenLabs" in capsys.readouterr().out
+
 
 # ---------------------------------------------------------------------------
 # schema

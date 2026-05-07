@@ -87,6 +87,38 @@ def _chars_to_words(
     return words
 
 
+def list_voices(category: str = "premade") -> list[dict]:
+    """Fetch available ElevenLabs voices from the v2 API, paginating until exhausted."""
+    import httpx
+
+    key = _api_key()
+    headers = {"xi-api-key": key}
+    url = "https://api.elevenlabs.io/v2/voices"
+    params: dict = {"category": category}
+    voices: list[dict] = []
+
+    while True:
+        resp = httpx.get(url, headers=headers, params=params, timeout=30.0)
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"ElevenLabs voices request failed ({resp.status_code}): {resp.text[:500]}"
+            )
+        data = resp.json()
+        for v in data.get("voices", []):
+            labels = v.get("labels") or {}
+            voices.append({
+                "voice_id": v.get("voice_id", ""),
+                "name": v.get("name", ""),
+                "description": v.get("description") or "",
+                "labels": labels,
+            })
+        if not data.get("has_more"):
+            break
+        params["next_page_token"] = data["next_page_token"]
+
+    return voices
+
+
 def generate_tts(
     text: str,
     *,

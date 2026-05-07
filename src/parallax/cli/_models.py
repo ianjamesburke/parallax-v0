@@ -27,7 +27,7 @@ def models_list(
 
 @models_app.command("show")
 def models_show(
-    alias: str = typer.Argument(..., help="Model alias (e.g. 'mid', 'kling', 'tts-mini')."),
+    alias: str = typer.Argument(..., help="Model alias (e.g. 'mid', 'kling', 'tts-mini', 'elevenlabs')."),
     kind: Optional[str] = typer.Option(None, "--kind", help="Disambiguate when an alias exists in multiple kinds."),
 ) -> int:
     if kind is not None and kind not in ("image", "video", "tts"):
@@ -92,7 +92,25 @@ def _print_models_list(models_pkg, kind: str | None, as_json: bool) -> int:
     return 0
 
 
+def _print_elevenlabs_voices() -> int:
+    from .. import elevenlabs as _el
+    try:
+        voices = _el.list_voices()
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    print(f"ElevenLabs voices (premade):")
+    for v in voices:
+        labels = v.get("labels") or {}
+        label_str = ", ".join(str(val).title() for val in labels.values() if val)
+        desc = v.get("description") or label_str or "—"
+        print(f"  {v['voice_id']}  {v['name']:<14} — {desc}")
+    return 0
+
+
 def _print_model_show(models_pkg, alias: str, kind: str | None) -> int:
+    if alias == "elevenlabs":
+        return _print_elevenlabs_voices()
     try:
         spec = models_pkg.resolve(alias, kind=kind)
     except ValueError as e:
