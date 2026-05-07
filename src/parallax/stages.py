@@ -278,6 +278,15 @@ def _resolve_still_refs(s: dict[str, Any], settings: Settings) -> list[str] | No
             )
             refs = [str(p) for p in candidates[:4]] or None
 
+    if refs is None:
+        scene_idx = s.get("index", "?")
+        print(
+            f"  [WARNING] scene {scene_idx}: no reference images found — "
+            "stills may not match your hero. "
+            "Add images to media/ or set reference_images in the plan.",
+            flush=True,
+        )
+
     return refs
 
 

@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from parallax.settings import ProductionMode, Settings
-from parallax.stages import PipelineState, _extract_character_image_frame, stage_stills
+from parallax.stages import PipelineState, _extract_character_image_frame, _resolve_still_refs, stage_stills
 
 
 # ---------------------------------------------------------------------------
@@ -285,3 +285,33 @@ def test_broll_scene_without_reference_uses_media_heuristic(tmp_path):
     refs = captured[0].get("reference_images")
     assert refs is not None
     assert str(media_img) in refs
+    assert str(media_img) in refs
+
+
+# ---------------------------------------------------------------------------
+# warning when no reference images found
+# ---------------------------------------------------------------------------
+
+def test_warn_when_no_media_dir_and_no_explicit_refs(tmp_path, capsys):
+    """A warning is printed when refs resolve to None (no media/ dir, no explicit refs)."""
+    settings = _make_settings_with_char(tmp_path)  # no character_image, no product_image
+    scene = {"index": 3, "shot_type": "broll"}
+    result = _resolve_still_refs(scene, settings)
+    assert result is None
+    out = capsys.readouterr().out
+    assert "[WARNING]" in out
+    assert "scene 3" in out
+    assert "no reference images found" in out
+
+
+def test_no_warn_when_media_dir_has_images(tmp_path, capsys):
+    """No warning when media/ supplies references."""
+    media_dir = tmp_path / "project" / "media"
+    media_dir.mkdir(parents=True)
+    (media_dir / "hero.png").write_bytes(b"\x89PNG")
+    settings = _make_settings_with_char(tmp_path)
+    scene = {"index": 0, "shot_type": "broll"}
+    result = _resolve_still_refs(scene, settings)
+    assert result is not None
+    out = capsys.readouterr().out
+    assert "[WARNING]" not in out

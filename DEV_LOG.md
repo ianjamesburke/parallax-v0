@@ -2,10 +2,13 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-07 — [CHANGED] Warn when no reference images found for a scene still (PR #142 → alpha)
+`_resolve_still_refs` now prints `[WARNING] scene N: no reference images found` when it returns `None`. Previously the failure was silent — projects without a `media/` dir (e.g. assets in project root or Google Drive) would silently generate stills with no character reference. Warning is print-only; return value is unchanged.
+**Breaks if:** A produce run on a project with no `media/`, no `reference_images`, no `character_image`, and no `product_image` completes without printing `[WARNING] ... no reference images found` for the affected scenes.
+
 ## 2026-05-07 — [CHANGED] clip_offset_s alias and validate offset+duration check (PR #143 → alpha)
 `clip_offset_s` is accepted in plan.yaml and transparently remapped to `clip_trim_start_s` in the before model_validator, so all downstream assembly code (which reads `clip_trim_start_s`) works unchanged. `parallax validate` now errors if `offset + duration_s` exceeds the clip's probed duration. Specifying both `clip_offset_s` and `clip_trim_start_s` is an error.
 **Breaks if:** `clip_offset_s: 2.0` in plan.yaml fails schema validation; or `parallax validate` accepts an offset+duration that overruns the clip; or `clip_trim_start_s` stops working (regression).
-
 ## 2026-05-06 — [FIX] Provided assets copied to internal cache before use (PR #141 → alpha)
 `crop_to_aspect` was writing resized variants alongside the user's source file and then deleting the original — so `strawberry_ref.png` became `strawberry_ref_a720x1280.png` after the first produce run, breaking subsequent runs. Root cause: `crop_to_aspect` had no awareness of "user file vs internal file". Fix: `settings.py` now copies any `character_image`/`product_image` into `parallax/assets/cache/` before returning `Settings`. All downstream code (including `crop_to_aspect`) works on the cache copy. Original is never touched.
 **Breaks if:** After `produce`, the user's original `character_ref` file has been renamed, moved, or deleted; or a `_a720x1280.png` variant appears next to the original instead of inside `parallax/assets/cache/`.
