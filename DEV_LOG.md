@@ -2,10 +2,13 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-07 — [CHANGED] CLI rewritten in Typer — schema export and MCP introspection (PR #164 → alpha)
+Rewrites all 9 `src/parallax/cli/` modules from argparse to Typer. Adds `parallax schema cli` which emits the full CLI surface as JSON via Click's `to_info_dict()` — enabling MCP server wrappers to discover tools at runtime. Removes `argcomplete`; completions now use Click's native `eval "$(_PARALLAX_COMPLETE=<shell>_source parallax)"` pattern. `cli.main([...])` now returns `int` directly (no `SystemExit` propagated), which simplified the contract test helpers. Mutual exclusion (argparse native) is now validated manually in command functions. Duck-typed `_run_generate(args)` / `_run_analyze(args)` preserved so `test_image_out_flag.py` needed no changes.
+**Breaks if:** `parallax schema cli` exits nonzero or returns invalid JSON; any bare group command (`parallax audio`, `parallax video`, etc.) exits nonzero instead of 0; `parallax completions print zsh` imports argcomplete (removed) and crashes; `uv run pytest tests/test_cli_contract.py -q` fails.
+
 ## 2026-05-07 — [CHANGED] produce: run WhisperX alignment after every fresh TTS synthesis (PR #162 → alpha)
 `stage_voiceover` now calls `forced_align.align_words` after `generate_voiceover_dict` and overwrites `vo_words.json` with wav2vec2-aligned timestamps. Previously provider timestamps (ElevenLabs character-level, Gemini word-level) were used directly — unreliable enough that `cap-pauses` reported 0 gaps when 14 existed. The faster-whisper fallback remains but is planned for removal (see issue #163 — make WhisperX a hard dependency).
 **Breaks if:** `parallax produce` with a fresh ElevenLabs or OpenRouter voiceover does not log `WhisperX aligned` or `faster-whisper aligned` after the audio line.
-
 ## 2026-05-07 — [FIX] whisper_backend: corrected WhisperX install hint to use uv extras syntax (issue #155 → alpha v0.5.24)
 Warning message previously said `uv tool run --from parallax pip install whisperx` — that command creates a temporary venv and discards it; WhisperX never ends up in the parallax env. Correct command is `uv tool install 'parallax[whisperx]'` (replaces the existing tool install with extras included). `--reinstall` is not needed; `uv tool install` auto-replaces. There is no `uv tool upgrade --extra` command (uv issue #14746).
 **Breaks if:** `parallax audio transcribe` without WhisperX installed does not print `uv tool install 'parallax[whisperx]'` in the warning.
