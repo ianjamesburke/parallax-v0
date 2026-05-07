@@ -20,6 +20,7 @@ from .ffmpeg_utils import _get_ffmpeg, _ffmpeg_has_drawtext, _get_drawtext_ffmpe
 from .log import get_logger
 from .shim import is_test_mode, output_dir
 from .captions.styles import _FONTS_DIR
+from .text_expand import expand_digits
 
 log = get_logger(__name__)
 
@@ -209,7 +210,7 @@ def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> li
     scene_word_counts = []
     for scene in scenes:
         vo = scene.get("vo_text", "").strip()
-        pw = re.sub(r'\[[^\]]*\]', '', vo).split() if vo else []
+        pw = re.sub(r'\[[^\]]*\]', '', expand_digits(vo)).split() if vo else []
         scene_word_counts.append(len([w for w in pw if _norm_word(w)]))
     total_plan_words = sum(scene_word_counts)
     window_caps: list[int] = []
@@ -230,7 +231,7 @@ def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> li
         vo_text = scene.get("vo_text", "").strip()
         if not vo_text:
             continue
-        plan_words = re.sub(r'\[[^\]]*\]', '', vo_text).split()
+        plan_words = re.sub(r'\[[^\]]*\]', '', expand_digits(vo_text)).split()
         content_count = len([w for w in plan_words if _norm_word(w)])
 
         end_idx = _find_scene_end(words, cursor, plan_words, window_cap=window_cap, freq_map=freq_map)

@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-07 — [CHANGED] Auto-expand digits in vo_text before TTS (PR #171 → alpha)
+`expand_digits()` in `text_expand.py` converts digit tokens to spoken form before the TTS script is built in `stage_voiceover` and before `plan_words`/`scene_word_counts` are computed in `align_scenes_obj`. Root cause: `120,000` in Mars Men scene 16 counted as 1 word in `plan_words` but rendered as 4 TTS words — causing `_find_scene_end` to anchor in the wrong region and drift all downstream boundaries. Handles: comma-formatted integers, currency ($99), bare 0–999. Skips 4-digit numbers (years, model numbers) and numbers adjacent to letters (3D, B2B). `vo_text` in the plan is never mutated — captions still display the original form.
+**Breaks if:** `parallax produce` with `120,000` in any scene's `vo_text` generates audio where the aligner drifts boundaries starting from that scene; or `from parallax.text_expand import expand_digits` raises ImportError.
+
 ## 2026-05-07 — [CHANGED] models show elevenlabs — live voice list from ElevenLabs API (PR #169 → alpha)
 `parallax models show elevenlabs` is now a recognized alias that bypasses `models_pkg.resolve` and calls `elevenlabs.list_voices(category="premade")` instead. The function hits `GET https://api.elevenlabs.io/v2/voices`, paginates via `next_page_token`/`has_more`, and returns `[{voice_id, name, description, labels}]`. Output format matches the existing `voices (N):` block style — voice ID, name, and label summary per line.
 **Breaks if:** `parallax models show elevenlabs` exits nonzero or prints no voice lines when `ELEVENLABS_API_KEY` is set; or `parallax models show mid` regresses (existing alias path broken).
