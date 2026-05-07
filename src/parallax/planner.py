@@ -171,7 +171,7 @@ def plan_from_brief(
     out_path: str | Path | None = None,
     *,
     image_model: str = "mid",
-    video_model: str = "mid",
+    video_model: str = "draft",
     voice_model: str = "tts-mini",
     caption_style: str = "anton",
 ) -> PlanResult:

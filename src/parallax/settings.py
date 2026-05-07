@@ -382,7 +382,7 @@ def _resolve_settings_from_dict(
 ) -> Settings:
     """Legacy dict path — used by test_scene and any caller that hasn't migrated to Plan."""
     image_model = plan.get("image_model", "mid")
-    video_model = plan.get("video_model", "mid")
+    video_model = plan.get("video_model", "draft")
     voice = plan.get("voice", "nova")
     voice_model = plan.get("voice_model", "tts-mini")
     # TTS pacing is controlled via `style` (e.g. rapid_fire); leave the

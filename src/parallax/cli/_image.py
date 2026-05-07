@@ -76,11 +76,18 @@ def _run_generate(args) -> int:
             out_dir.mkdir(parents=True, exist_ok=True)
     else:
         out_dir = Path.cwd()
+    refs = args.refs or []
+    if len(refs) >= 2 and args.model != "premium":
+        print(
+            f"Advisory: multiple reference images work best with --model premium (Gemini 3 Pro).\n"
+            f"Current: {args.model}. Add --hq or --model premium to upgrade.",
+            flush=True,
+        )
     try:
         path = generate_image(
             args.prompt,
             args.model,
-            reference_images=args.refs or [],
+            reference_images=refs,
             out_dir=out_dir,
             out_file=out_file,
             size=args.size,

@@ -72,6 +72,9 @@ def _print_models_list(models_pkg, kind: str | None, as_json: bool) -> int:
         print(_json.dumps(out, indent=2))
         return 0
 
+    _DEFAULT_ALIAS: dict[str, str] = {"image": "mid", "video": "draft", "tts": "tts-mini"}
+    _HQ_ALIAS: dict[str, str] = {"image": "premium", "video": "mid", "tts": "tts-gemini"}
+
     for k, table in tables:
         print(f"\n{k.upper()}:")
         print(f"  {'alias':<18} {'tier':<8} {'cost':<10} {'fallback':<14} description")
@@ -79,7 +82,12 @@ def _print_models_list(models_pkg, kind: str | None, as_json: bool) -> int:
         for s in table.values():
             cost = f"${s.cost_usd:.3f}/{s.cost_unit}"
             fb = s.fallback_alias or "—"
-            print(f"  {s.alias:<18} {s.tier:<8} {cost:<10} {fb:<14} {s.description}")
+            markers = ""
+            if s.alias == _DEFAULT_ALIAS.get(k):
+                markers = " [default]"
+            elif s.alias == _HQ_ALIAS.get(k):
+                markers = " [hq]"
+            print(f"  {s.alias:<18} {s.tier:<8} {cost:<10} {fb:<14} {s.description}{markers}")
     return 0
 
 
