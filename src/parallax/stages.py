@@ -173,6 +173,33 @@ def _lock_field_in_plan(plan_path: Path, plan: dict, scene_idx: int, field_name:
             raise RuntimeError(f"plan lock failed: could not write {plan_path}: {exc}") from exc
 
 
+def _lock_plan_fields(plan_path: Path, plan: dict, folder: Path, **fields: str) -> None:
+    """Write plan-level asset paths back into plan.yaml (e.g. audio_path, words_path)."""
+    import yaml
+    normalized: dict[str, str] = {}
+    for k, v in fields.items():
+        try:
+            normalized[k] = str(Path(v).relative_to(folder))
+        except ValueError:
+            normalized[k] = v
+
+    with _plan_lock:
+        plan.update(normalized)
+        try:
+            with plan_path.open("r", encoding="utf-8") as f:
+                disk_plan = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            disk_plan = {}
+        disk_plan.update(normalized)
+        try:
+            with plan_path.open("w", encoding="utf-8") as f:
+                yaml.safe_dump(disk_plan, f, default_flow_style=False, allow_unicode=True,
+                               sort_keys=False, width=10000)
+        except Exception as exc:
+            runlog.event("plan.lock.error", level="ERROR", fields=list(normalized.keys()), error=str(exc))
+            raise RuntimeError(f"plan lock failed: could not write {plan_path}: {exc}") from exc
+
+
 # --------------------------------------------------------------------------
 # Stage callables
 # --------------------------------------------------------------------------
@@ -647,6 +674,114 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
     state.audio_path = audio_path
     state.words_path = words_path
     state.vo_result = vo_result
+    return plan
+
+
+def stage_voice_postprocess(plan: dict[str, Any], settings: Settings, state: PipelineState) -> dict[str, Any]:
+    """Run cap_pauses and/or speed on the voiceover, then lock audio_path in plan.yaml.
+
+    Skips if:
+    - No voice_postprocess block in plan
+    - audio_path is already locked (post-processed audio is the locked file)
+    - Running in test mode (mock audio has no real word timestamps)
+    - No voiceover was generated this run
+
+    Breaks if: plan.yaml lacks audio_path after this stage when voice_postprocess is configured.
+    """
+    vp = plan.get("voice_postprocess")
+    if not vp:
+        return plan
+
+    # Locked audio means the post-processed artifact is already in place.
+    if plan.get("audio_path"):
+        _log(settings, "voice_postprocess: skipped — audio_path is locked")
+        return plan
+
+    # Test mode: mock audio has no real word timestamps; skip to avoid noise.
+    from .shim import _test_mode_override as _tmo
+    if _tmo.get():
+        return plan
+
+    if state.vo_result is None or not state.audio_path:
+        return plan
+
+    from . import audio as _audio
+
+    audio_path = Path(state.audio_path)
+    words: list[dict[str, Any]] = list(state.vo_result.get("words", []))
+
+    out_path = audio_path.parent / "vo_postprocessed.wav"
+    did_anything = False
+
+    # Step 1: cap_pauses
+    cap = bool(vp.get("cap_pauses", False))
+    max_gap_s = float(vp.get("max_gap_s", 0.5))
+    if cap:
+        _log(settings, f"voice_postprocess: cap_pauses(max_gap_s={max_gap_s})")
+        result = _audio.cap_pauses(
+            str(audio_path),
+            str(out_path),
+            max_gap_s=max_gap_s,
+            words=words if words else None,
+        )
+        words = result.get("adjusted_words", words)
+        audio_path = out_path
+        did_anything = True
+
+    # Step 2: speed
+    speed = float(vp.get("speed", 1.0))
+    if abs(speed - 1.0) > 1e-3:
+        _log(settings, f"voice_postprocess: speedup(rate={speed:.3f})")
+        sped_out = audio_path.parent / (audio_path.stem + "_sped" + audio_path.suffix)
+        _audio.speedup(audio_path, sped_out, speed)
+        # Always write to vo_postprocessed.wav (canonical postprocess artifact)
+        sped_out.replace(out_path)
+        audio_path = out_path
+        scale = 1.0 / speed
+        words = [
+            {"word": w["word"],
+             "start": round(w["start"] * scale, 3),
+             "end": round(w["end"] * scale, 3)}
+            for w in words
+        ]
+        did_anything = True
+
+    if not did_anything:
+        return plan
+
+    # Probe final duration from the actual file — word timestamps can drift.
+    _probe = run_ffmpeg(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)],
+        capture_output=True, text=True,
+    )
+    total_dur = (
+        float(_probe.stdout.strip())
+        if _probe.stdout.strip()
+        else (words[-1]["end"] if words else 0.0)
+    )
+
+    # Write updated word timestamps alongside the postprocessed audio.
+    words_path = audio_path.parent / "vo_words_postprocessed.json"
+    words_path.write_text(
+        json.dumps({"words": words, "total_duration_s": round(total_dur, 3)}, indent=2)
+    )
+
+    # Update in-flight state so downstream stages (align, assemble) use the new audio.
+    state.audio_path = str(audio_path)
+    state.words_path = str(words_path)
+    vo_result = dict(state.vo_result)
+    vo_result["audio_path"] = str(audio_path)
+    vo_result["words_path"] = str(words_path)
+    vo_result["words"] = words
+    vo_result["total_duration_s"] = total_dur
+    state.vo_result = vo_result
+
+    # Lock audio_path and words_path into plan.yaml — future runs skip postprocessing.
+    _lock_plan_fields(settings.plan_path, plan, settings.folder,
+                      audio_path=str(audio_path), words_path=str(words_path))
+
+    _log(settings, f"voice_postprocess: locked → {audio_path.name} ({total_dur:.1f}s)")
     return plan
 
 
@@ -1263,6 +1398,7 @@ STAGES = [_wrap_stage(s) for s in (
     stage_stills,
     stage_animate,
     stage_voiceover,
+    stage_voice_postprocess,
     stage_speed_adjust,
     stage_align,
     stage_manifest,

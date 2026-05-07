@@ -165,6 +165,13 @@ def compute_preflight(
                 f"Run: parallax audio cap-pauses {audio_path_val} to apply manually."
             )
 
+        vp = plan.get("voice_postprocess")
+        if vp:
+            vp_cap = bool(vp.get("cap_pauses", False))
+            vp_speed = float(vp.get("speed", 1.0))
+            if vp_cap or abs(vp_speed - 1.0) > 1e-3:
+                locked_audio_warnings.append("voice_postprocess ignored — audio is locked")
+
         stored_hashes: dict = plan.get("vo_text_hashes") or {}
         if stored_hashes:
             for scene in plan.get("scenes", []):
@@ -176,6 +183,17 @@ def compute_preflight(
                             f"vo_text for scene {idx} has changed but audio_path is locked — "
                             f"alignment may be incorrect. Clear audio_path to regenerate."
                         )
+
+    vp = plan.get("voice_postprocess")
+    if vp:
+        vp_speed = float(vp.get("speed", 1.0))
+        plan_speed = float(plan.get("voice_speed", 1.0))
+        if abs(vp_speed - 1.0) > 1e-3 and abs(plan_speed - 1.0) > 1e-3 and abs(vp_speed - plan_speed) > 1e-3:
+            locked_audio_warnings.append(
+                f"voice_postprocess.speed ({vp_speed}) and voice_speed ({plan_speed}) "
+                "both set with different values — voice_postprocess.speed takes precedence; "
+                "remove voice_speed to silence this warning"
+            )
 
     estimated_total = sum(sc.cost_usd for sc in scenes) + vo_cost
     balance_str = f"${balance_usd:.2f}" if balance_usd is not None else "unknown"
