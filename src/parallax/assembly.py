@@ -274,6 +274,16 @@ def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> li
                     end_idx = fallback_idx
                     scene["end_s"] = fallback_end_s
 
+        # Word coverage check: warn when TTS silently skipped this scene's text.
+        # Fires before assembly so the user can catch it and rewrite/regen audio.
+        assigned_count = end_idx - cursor + 1
+        if content_count - assigned_count > 2:
+            log.warning(
+                "[WARNING] scene %s: expected %d words, transcript matched %d — "
+                "likely TTS skip. Review audio before proceeding.",
+                scene.get("index", "?"), content_count, assigned_count,
+            )
+
         # Bug 1 fix: when duration_s is pinned on this scene, advance the
         # cursor to the first word at/after the pinned end so the next scene's
         # word search starts at the correct audio position.
