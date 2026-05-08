@@ -44,9 +44,10 @@ git status --porcelain
 
 If alpha is dirty: **stop**. Ask whether to commit first or carry changes into the new branch.
 
-Mark the issue in progress:
+Mark the issue in progress and set the pane title:
 ```bash
 gh issue edit <number> --add-label "in progress"
+plexi pane set-title "#<number> — <short-title>"
 ```
 
 ---
@@ -150,6 +151,7 @@ Build the testing plan — every command copy-pasteable, no placeholders:
 - Use `/tmp/parallax-pr<N>-test/` as test folder — include `mkdir` and plan.yaml write steps
 - Set `PARALLAX_TEST_MODE=1`, `PARALLAX_LOG_DIR=/tmp/parallax-pr<N>-logs`, and `PARALLAX_USAGE_LOG=/tmp/parallax-pr<N>-usage.ndjson` inline on every produce command
 - Cover every CLI path the change touches (new flags, subcommands, output formats, edge cases) — not just a smoke test
+- When testing dependency removal, verify against `pyproject.toml` (the source of truth), not the installed venv — transitive deps of kept packages will always be present in the venv.
 
 **Dispatch a Sonnet subagent to execute the full testing plan.** Give it:
 - The installed command name: `parallax-pr<N>`
@@ -216,7 +218,8 @@ After DEV_LOG is committed on the feature branch. Run without stopping:
    git -C /Users/ianburke/Documents/GitHub/parallax-v0 pull origin alpha
    git -C worktrees/<branch> rebase origin/alpha
    ```
-   If conflicts: resolve, then `git -C worktrees/<branch> push --force-with-lease origin HEAD`. DEV_LOG.md conflicts are the most common: always resolve by placing the new entry ABOVE the conflicting HEAD block (DEV_LOG is newest-first). If rebase meaningfully changes the feature, re-surface the testing block before merging.
+   If pull diverges (local alpha has unpushed commits): run `git show origin/alpha --stat` — if the local-only commits appear in the squash merge, `git -C /Users/ianburke/Documents/GitHub/parallax-v0 reset --hard origin/alpha` is safe. If they don't appear, surface to user before resetting.
+   If conflicts on rebase: resolve, then `git -C worktrees/<branch> push --force-with-lease origin HEAD`. DEV_LOG.md conflicts are the most common: always resolve by placing the new entry ABOVE the conflicting HEAD block (DEV_LOG is newest-first). If rebase meaningfully changes the feature, re-surface the testing block before merging.
 
 1. `gh pr merge <number> --squash` — never pass `--delete-branch`
 2. `just pr-clean <pr-number>` — run from the repo root
