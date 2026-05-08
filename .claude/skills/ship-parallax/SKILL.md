@@ -263,6 +263,22 @@ Output:
 
 Then run `/improve` to surface friction from this session.
 
+**After `/improve` — commit any meta-file changes directly to alpha (no PR needed):**
+
+Check for changes in CLAUDE.md, skills, or other config files:
+```bash
+git status --porcelain
+```
+
+If any meta files are dirty, commit them directly to alpha and push:
+```bash
+git add CLAUDE.md .claude/skills/ <other changed meta files>
+git commit -m "docs: improve notes from PR #<n> session"
+git push origin alpha
+```
+
+If the changes are in `~/.claude/` (global skills, settings), commit them to the dotfiles repo instead — they don't belong in this repo.
+
 ---
 
 ## Rules
@@ -274,6 +290,9 @@ Then run `/improve` to surface friction from this session.
 - `just pr-install` runs from the **feature worktree**
 - `just pr-clean` and `just bump-and-install` run from the **repo root**
 - Never pass `--delete-branch` to `gh pr merge` — git refuses to delete a branch checked out by a worktree
+- **Build verification in worktrees:** always use `cargo build --manifest-path <worktree>/Cargo.toml` — never rely on CWD
+- **Cross-repo changes:** when a ship cycle modifies files outside this repo (dotfiles, global skills, etc.), commit those to their own repo as a separate step before marking [COMPLETE]
+- **Spawn-queue ≠ process down:** `PLEXI_SOCKET` unset means "outside a Plexi pane" — not that the host is absent; never write messaging implying Plexi is not running when taking the queue fallback path
 - Alpha must be clean when the cycle ends
 - Subagents stage only — orchestrator owns the commit and the PR
 - Never dispatch a subagent without first producing the Phase 3 implementation spec
