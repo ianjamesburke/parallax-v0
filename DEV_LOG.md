@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-07 — [CHANGED] Post-TTS word coverage check in align_scenes_obj (PR #173 → alpha)
+Inside `align_scenes_obj`, after each scene's aligner boundary is finalized, `assigned_count = end_idx - cursor + 1` is compared against `content_count` (expected words from plan). If the shortfall exceeds 2, a `[WARNING] scene N: expected X words, transcript matched Y — likely TTS skip. Review audio before proceeding.` is emitted. Fires before assembly so the user can catch it, rewrite the line, and regen audio without wasting video generation credits. Threshold of >2 (not >0) avoids false positives from minor word-count discrepancies caused by contractions or punctuation splits.
+**Breaks if:** `parallax produce` on a plan where ElevenLabs skipped a full phrase (e.g. Mars Men scene 16) does not log `[WARNING] scene N: expected ... likely TTS skip` before assembly begins.
+
 ## 2026-05-07 — [CHANGED] WhisperX is now a required dependency — faster-whisper fallback removed (PR #172 → alpha)
 `whisper_backend.py` now has a single transcription path (WhisperX). `_HAS_WHISPERX`, `_transcribe_faster_whisper`, and the `no_whisperx` parameter are gone. `whisperx` moved from optional extras to core `[project.dependencies]`; `faster-whisper` removed as a direct dep (still present as a transitive dep of whisperx itself). `parallax audio transcribe --no-whisperx` now errors with "No such option."
 **Breaks if:** `parallax audio transcribe --help` still shows `--no-whisperx`; or `parallax produce` logs `faster-whisper` anywhere in its output.

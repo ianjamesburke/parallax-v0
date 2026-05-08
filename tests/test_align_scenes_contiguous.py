@@ -494,3 +494,52 @@ def test_duration_s_written_with_2_decimal_places():
         dur = s["duration_s"]
         # Must be 2dp: str representation should have at most 2 decimal digits
         assert round(dur, 2) == dur, f"duration_s {dur} is not 2dp"
+
+
+# ─── Word coverage check ─────────────────────────────────────────────────
+
+
+def test_word_coverage_warning_fires_on_tts_skip(caplog):
+    """When a scene's transcript words are far fewer than expected, warn."""
+    import logging
+
+    scenes = [
+        {"index": 15, "vo_text": "Men have already made the switch to Mars."},  # 8 content words
+        {"index": 16, "vo_text": "Welcome home."},
+    ]
+    # Simulate ElevenLabs skipping scene 15 entirely — transcript has only 2 of its words.
+    words = [
+        _word("Men", 0.0, 0.2), _word("have", 0.2, 0.4),
+        # scene 15's remaining 6 words are missing from the transcript
+        _word("Welcome", 1.0, 1.3), _word("home", 1.3, 1.6),
+    ]
+    payload = {"words": words, "total_duration_s": 2.0}
+    with caplog.at_level(logging.WARNING, logger="parallax.assembly"):
+        align_scenes_obj(scenes, payload)
+
+    assert any(
+        "scene 15" in r.message and "likely TTS skip" in r.message
+        for r in caplog.records
+    ), f"Expected TTS skip warning for scene 15. Got: {[r.message for r in caplog.records]}"
+
+
+def test_word_coverage_no_warning_when_counts_close(caplog):
+    """Small word-count differences (≤2) must not trigger the warning."""
+    import logging
+
+    scenes = [
+        {"index": 0, "vo_text": "Hello there how are you doing today."},  # 7 words
+        {"index": 1, "vo_text": "All good thanks."},
+    ]
+    # 5 words assigned to scene 0 — 2 short, should NOT warn
+    words = [
+        _word("Hello", 0.0, 0.2), _word("there", 0.2, 0.4),
+        _word("how", 0.4, 0.6), _word("are", 0.6, 0.8), _word("you", 0.8, 1.0),
+        _word("All", 1.5, 1.7), _word("good", 1.7, 1.9), _word("thanks", 1.9, 2.1),
+    ]
+    payload = {"words": words, "total_duration_s": 2.5}
+    with caplog.at_level(logging.WARNING, logger="parallax.assembly"):
+        align_scenes_obj(scenes, payload)
+
+    tts_skip_warnings = [r for r in caplog.records if "likely TTS skip" in r.message]
+    assert not tts_skip_warnings, f"Unexpected TTS skip warning: {[r.message for r in tts_skip_warnings]}"
