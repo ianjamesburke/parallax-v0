@@ -290,9 +290,6 @@ If the changes are in `~/.claude/` (global skills, settings), commit them to the
 - `just pr-install` runs from the **feature worktree**
 - `just pr-clean` and `just bump-and-install` run from the **repo root**
 - Never pass `--delete-branch` to `gh pr merge` — git refuses to delete a branch checked out by a worktree
-- **Build verification in worktrees:** always use `cargo build --manifest-path <worktree>/Cargo.toml` — never rely on CWD
-- **Cross-repo changes:** when a ship cycle modifies files outside this repo (dotfiles, global skills, etc.), commit those to their own repo as a separate step before marking [COMPLETE]
-- **Spawn-queue ≠ process down:** `PLEXI_SOCKET` unset means "outside a Plexi pane" — not that the host is absent; never write messaging implying Plexi is not running when taking the queue fallback path
 - Alpha must be clean when the cycle ends
 - Subagents stage only — orchestrator owns the commit and the PR
 - Never dispatch a subagent without first producing the Phase 3 implementation spec
