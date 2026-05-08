@@ -76,7 +76,7 @@ If they don't match: delete the worktree and branch, redo from the repo root. Ne
 Before writing any code, read the issue and relevant source to produce a tight implementation spec. This step is mandatory — it is what makes subagent dispatch reliable.
 
 **Read in parallel:**
-- Full issue body: `gh issue view <number> --json title,body,labels`
+- Full issue body: `gh issue view <number> --json title,body,labels,comments`
 - DEV_LOG header: `head -100 DEV_LOG.md`
 - Current CLI surface: `parallax --help && parallax schema`
 - Relevant source files: grep for affected modules, then read them
@@ -128,11 +128,12 @@ Construct the subagent prompt with everything it needs — do not make it explor
 ```bash
 git -C worktrees/<branch> add <files>
 git -C worktrees/<branch> commit -m "<message>"
+git -C worktrees/<branch> push origin HEAD
 ```
 
-Open a PR targeting `alpha`:
+Open a PR targeting `alpha` — always pass `--head` explicitly (gh fails with "Head sha can't be blank" if branch isn't on remote):
 ```bash
-gh pr create --base alpha --title "<title>" --body "..."
+gh pr create --base alpha --head feature/<branch> --title "<title>" --body "..."
 ```
 
 ---
@@ -222,11 +223,24 @@ After DEV_LOG is committed on the feature branch. Run without stopping:
    If conflicts on rebase: resolve, then `git -C worktrees/<branch> push --force-with-lease origin HEAD`. DEV_LOG.md conflicts are the most common: always resolve by placing the new entry ABOVE the conflicting HEAD block (DEV_LOG is newest-first). If rebase meaningfully changes the feature, re-surface the testing block before merging.
 
 1. `gh pr merge <number> --squash` — never pass `--delete-branch`
-2. `just pr-clean <pr-number>` — run from the repo root
-3. `git -C /Users/ianburke/Documents/GitHub/parallax-v0 pull origin alpha`
-4. `wtp remove --force <branch>` then `git push origin --delete <branch>`
-5. `just bump-and-install` — from the repo root
-6. `git push origin alpha` — keeps local and remote alpha in sync; prevents divergence next cycle
+
+   Then check for post-merge hook changes before bumping:
+   ```bash
+   git -C /Users/ianburke/Documents/GitHub/parallax-v0 status --porcelain
+   ```
+   If dirty: commit or stash before continuing — `just bump-and-install` will fail on a dirty tree.
+
+2. Steps 2-6 all run from the repo root — cd once, then chain:
+   ```bash
+   cd /Users/ianburke/Documents/GitHub/parallax-v0
+   just pr-clean <pr-number>
+   git pull origin alpha
+   wtp remove --force <branch>
+   git push origin --delete <branch>
+   just bump-and-install
+   git push origin alpha
+   ```
+   (`git push origin alpha` keeps local and remote in sync — prevents divergence next cycle)
 
 ---
 
