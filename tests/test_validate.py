@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 import yaml
 
 
@@ -227,3 +226,187 @@ def test_validate_plan_quoted_colon_ok(tmp_path):
     from parallax.validate import validate_plan
     result = validate_plan(plan, tmp_path)
     assert result["valid"] is True
+
+
+# ──────────────────────── #177 / #178: new pre-spend gate checks ────────────────────────
+
+
+def test_validate_plan_voice_model_mismatch_tts_mini(tmp_path):
+    """tts-gemini voice used with tts-mini → error."""
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "voice": "Charon",
+        "voice_model": "tts-mini",
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene"}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is False
+    assert any("Charon" in e["message"] and "tts-gemini" in e["message"] for e in result["errors"])
+
+
+def test_validate_plan_voice_model_mismatch_tts_gemini(tmp_path):
+    """tts-mini voice used with tts-gemini → error."""
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "voice": "nova",
+        "voice_model": "tts-gemini",
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene"}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is False
+    assert any("nova" in e["message"] and "tts-mini" in e["message"] for e in result["errors"])
+
+
+def test_validate_plan_voice_model_match_ok(tmp_path):
+    """Matching voice+voice_model → no error."""
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "voice": "Kore",
+        "voice_model": "tts-gemini",
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene"}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_validate_plan_unknown_voice_warns(tmp_path):
+    """Unknown voice name → warning, not error."""
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "voice": "CustomVoiceXYZ",
+        "voice_model": "tts-mini",
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene"}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is True
+    assert any("CustomVoiceXYZ" in w["message"] for w in result["warnings"])
+
+
+def test_validate_plan_animate_no_motion_prompt(tmp_path):
+    """animate: true with no motion_prompt → error."""
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene", "animate": True}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is False
+    assert any("motion_prompt" in e["message"] for e in result["errors"])
+
+
+def test_validate_plan_animate_with_motion_prompt_ok(tmp_path):
+    """animate: true with motion_prompt → no error."""
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene", "animate": True,
+                    "motion_prompt": "slow zoom"}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_validate_plan_reference_true_no_character_image(tmp_path):
+    """reference: true on character scene with no character_image → error."""
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "scenes": [{"index": 0, "shot_type": "character", "vo_text": "hi",
+                    "prompt": "scene", "reference": True}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is False
+    assert any("reference" in e["message"] and "character_image" in e["message"] for e in result["errors"])
+
+
+def test_validate_plan_reference_true_with_character_image_ok(tmp_path):
+    """reference: true with character_image set → no error for this check."""
+    char_img = tmp_path / "char.png"
+    char_img.write_bytes(b"fake")
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "character_image": "char.png",
+        "scenes": [{"index": 0, "shot_type": "character", "vo_text": "hi",
+                    "prompt": "scene", "reference": True}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_validate_plan_reference_true_with_reference_images_ok(tmp_path):
+    """reference: true with reference_images → no error (character_image not needed)."""
+    ref_img = tmp_path / "ref.png"
+    ref_img.write_bytes(b"fake")
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "scenes": [{"index": 0, "shot_type": "character", "vo_text": "hi",
+                    "prompt": "scene", "reference": True,
+                    "reference_images": ["ref.png"]}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_validate_plan_invalid_image_model(tmp_path):
+    """Unknown image_model alias → error."""
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "image_model": "nonexistent-model",
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene"}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is False
+    assert any("image_model" in e["field"] for e in result["errors"])
+
+
+def test_validate_plan_invalid_video_model(tmp_path):
+    """Unknown video_model alias → error."""
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "video_model": "bad-video-alias",
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene"}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is False
+    assert any("video_model" in e["field"] for e in result["errors"])
+
+
+def test_validate_plan_invalid_voice_model(tmp_path):
+    """Unknown voice_model alias → error."""
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "voice_model": "bad-tts-alias",
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene"}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is False
+    assert any("voice_model" in e["field"] for e in result["errors"])
+
+
+def test_validate_plan_valid_all_models(tmp_path):
+    """Valid known model aliases → no model errors."""
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "image_model": "mid",
+        "video_model": "draft",
+        "voice_model": "tts-mini",
+        "voice": "nova",
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene"}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is True
+    assert result["errors"] == []

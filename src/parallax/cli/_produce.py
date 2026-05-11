@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+import re
 import sys
 from typing import Optional
 
 import typer
+
+
+_RESOLUTION_RE = re.compile(r"^\d+x\d+$")
+
+
+def _validate_resolution(resolution: Optional[str]) -> None:
+    """Raise ValueError if resolution is non-None and not in WxH format."""
+    if resolution is None:
+        return
+    if not _RESOLUTION_RE.match(resolution):
+        raise ValueError(
+            f"invalid resolution '{resolution}' — expected WxH format, e.g. 480x854"
+        )
 
 
 def register_produce(app: typer.Typer) -> None:
@@ -21,6 +35,7 @@ def _produce_cmd(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the pre-flight confirmation prompt (non-interactive mode)."),
     hq: bool = typer.Option(False, "--hq", help="Use premium-tier models."),
     debug: int = typer.Option(0, "--debug", help="Burn debug overlay on every scene: 1=scene index, 2=+prompt, 3=+refs. Default: 0 (off)."),
+    resolution: Optional[str] = typer.Option(None, "--resolution", help="Override output resolution, e.g. 480x854 or 1080x1920."),
 ) -> int:
     if plan is None and brief is None:
         typer.echo("Error: one of --plan or --brief is required", err=True)
@@ -35,7 +50,12 @@ def _produce_cmd(
     if debug not in (0, 1, 2, 3):
         typer.echo("Error: --debug must be 0, 1, 2, or 3", err=True)
         return 2
-    return _run_produce(folder, plan, brief, aspect, scene, yes, hq, debug)
+    try:
+        _validate_resolution(resolution)
+    except ValueError as e:
+        typer.echo(f"Error: {e}", err=True)
+        return 2
+    return _run_produce(folder, plan, brief, aspect, scene, yes, hq, debug, resolution)
 
 
 def _plan_cmd(
@@ -44,8 +64,14 @@ def _plan_cmd(
     out: Optional[str] = typer.Option(None, "--out", help="Override plan.yaml output path."),
     model: str = typer.Option("mid", "--model", help="Image model alias for the plan (default: mid)."),
     caption_style: str = typer.Option("anton", "--caption-style", help="Caption preset name written into the plan (default: anton)."),
+    resolution: Optional[str] = typer.Option(None, "--resolution", help="Set output resolution in the generated plan, e.g. 480x854."),
 ) -> int:
-    return _run_plan_command(folder, brief, out, model, caption_style)
+    try:
+        _validate_resolution(resolution)
+    except ValueError as e:
+        typer.echo(f"Error: {e}", err=True)
+        return 2
+    return _run_plan_command(folder, brief, out, model, caption_style, resolution)
 
 
 def _ingest_cmd(
@@ -58,6 +84,17 @@ def _ingest_cmd(
     return _run_ingest_command(path, out, visual, estimate, parallel)
 
 
+def _inject_resolution(plan_path: str, resolution: str) -> None:
+    """Load plan YAML, set resolution:, write back."""
+    import yaml as _yaml
+    from pathlib import Path as _Path
+
+    p = _Path(plan_path)
+    data = _yaml.safe_load(p.read_text()) or {}
+    data["resolution"] = resolution
+    p.write_text(_yaml.dump(data, sort_keys=False, allow_unicode=True))
+
+
 def _run_produce(
     folder: str,
     plan: Optional[str],
@@ -67,6 +104,7 @@ def _run_produce(
     yes: bool,
     hq: bool,
     debug: int,
+    resolution: Optional[str] = None,
 ) -> int:
     from pathlib import Path
     from ..produce import run_plan, test_scene
@@ -96,6 +134,9 @@ def _run_produce(
     else:
         assert plan is not None  # validated: brief/plan mutex, at least one is required
         plan_path = plan
+
+    if resolution is not None:
+        _inject_resolution(plan_path, resolution)
 
     if scene is not None:
         return test_scene(
@@ -133,6 +174,7 @@ def _run_plan_command(
     out: Optional[str],
     model: str,
     caption_style: str,
+    resolution: Optional[str] = None,
 ) -> int:
     from pathlib import Path
     from ..planner import plan_from_brief
@@ -168,6 +210,9 @@ def _run_plan_command(
         for p in result.missing_assets:
             print(f"  - {p}", file=sys.stderr)
         return 1
+
+    if resolution is not None:
+        _inject_resolution(str(result.plan_path), resolution)
 
     print(f"✓ Wrote plan.yaml ({result.scene_count} scenes) → {result.plan_path}")
     return 0

@@ -163,6 +163,43 @@ def validate_plan(plan_path: str | Path, folder: str | Path) -> dict:
 
     log.info("validate: plan parsed, %d scene(s)", len(plan.scenes))
 
+    # Model alias validation
+    from . import models as _models
+    from .models._spec import Kind as _Kind
+    from typing import cast as _cast
+
+    for field_name, kind in (("image_model", "image"), ("video_model", "video"), ("voice_model", "tts")):
+        alias = getattr(plan, field_name, None)
+        if alias is not None:
+            try:
+                _models.resolve(alias, kind=_cast(_Kind, kind))
+            except ValueError as exc:
+                errors.append({"field": field_name, "message": str(exc)})
+
+    # Voice / voice_model mismatch check
+    _check_voice_model(plan.voice, plan.voice_model, errors, warnings)
+
+    # Per-scene checks: animate + reference
+    for scene in plan.scenes:
+        if scene.animate and not scene.motion_prompt:
+            errors.append({
+                "field": f"scenes[{scene.index}].animate",
+                "message": f"scene {scene.index}: animate: true requires a motion_prompt",
+            })
+        if (
+            scene.shot_type == "character"
+            and scene.reference is True
+            and plan.character_image is None
+            and scene.reference_images is None
+        ):
+            errors.append({
+                "field": f"scenes[{scene.index}].reference",
+                "message": (
+                    f"scene {scene.index}: reference: true requires character_image "
+                    "or reference_images"
+                ),
+            })
+
     # Top-level locked paths
     _check_path(plan.audio_path, "audio_path", folder, errors)
     _check_path(plan.words_path, "words_path", folder, errors)
@@ -206,6 +243,71 @@ def validate_plan(plan_path: str | Path, folder: str | Path) -> dict:
                     })
 
     return _result(errors, warnings)
+
+
+def _check_voice_model(
+    voice: str | None,
+    voice_model: str | None,
+    errors: list[dict],
+    warnings: list[dict],
+) -> None:
+    """Validate that `voice` is compatible with `voice_model`.
+
+    - If the voice belongs to the OTHER model's list → error.
+    - If the voice is in the CURRENT model's list → pass.
+    - If the voice is unknown to both lists → warning.
+    """
+    if not voice or not voice_model:
+        return
+    from . import models as _models
+
+    mini_voices: set[str] = set()
+    gemini_voices: set[str] = set()
+    try:
+        mini_spec = _models.resolve("tts-mini", kind="tts")
+        mini_voices = set(mini_spec.voices)
+    except ValueError:
+        pass
+    try:
+        gemini_spec = _models.resolve("tts-gemini", kind="tts")
+        gemini_voices = set(gemini_spec.voices)
+    except ValueError:
+        pass
+
+    if voice_model == "tts-mini":
+        if voice in gemini_voices:
+            errors.append({
+                "field": "voice",
+                "message": (
+                    f"voice {voice!r} requires voice_model: tts-gemini "
+                    f"(current: tts-mini)"
+                ),
+            })
+        elif voice not in mini_voices:
+            warnings.append({
+                "field": "voice",
+                "message": (
+                    f"voice {voice!r} is not in the known tts-mini voice list — "
+                    "proceeding anyway (custom or future voice)"
+                ),
+            })
+    elif voice_model == "tts-gemini":
+        if voice in mini_voices:
+            errors.append({
+                "field": "voice",
+                "message": (
+                    f"voice {voice!r} requires voice_model: tts-mini "
+                    f"(current: tts-gemini)"
+                ),
+            })
+        elif voice not in gemini_voices:
+            warnings.append({
+                "field": "voice",
+                "message": (
+                    f"voice {voice!r} is not in the known tts-gemini voice list — "
+                    "proceeding anyway (custom or future voice)"
+                ),
+            })
 
 
 def _check_path(value: str | None, field: str, folder: Path, errors: list) -> None:

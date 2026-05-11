@@ -2,6 +2,12 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-11 — [FIX] cost.json $0.00 / --resolution flag / expanded validate gate (PR #179 → alpha)
+**#175 cost.json always $0.00**: `ContextVar` values don't propagate into `ThreadPoolExecutor` workers. `stage_stills` and `stage_animate_scenes` now wrap `pool.submit()` in `contextvars.copy_context().run()` so each worker inherits the active `run_id` and usage records are attributed correctly.
+**#176 --resolution flag**: `parallax plan` and `parallax produce` now accept `--resolution WxH`. Validates format at CLI entry, then injects `resolution:` into plan.yaml after planning, before production begins.
+**#177/#178 validate pre-spend gate**: `validate_plan` now catches voice/model mismatches (e.g. Charon + tts-mini), `animate: true` with no `motion_prompt`, `reference: true` with no `character_image`, and unknown model aliases for `image_model`, `video_model`, `voice_model`.
+**Breaks if:** (a) `parallax produce` completes a real run and `cost.json` still shows `cost_usd: 0.0`; (b) `parallax plan --resolution 480x854` doesn't write `resolution: 480x854` into plan.yaml; (c) `parallax validate` passes a plan with `voice: Charon` + `voice_model: tts-mini`.
+
 ## 2026-05-07 — [CHANGED] Post-TTS word coverage check in align_scenes_obj (PR #173 → alpha)
 Inside `align_scenes_obj`, after each scene's aligner boundary is finalized, `assigned_count = end_idx - cursor + 1` is compared against `content_count` (expected words from plan). If the shortfall exceeds 2, a `[WARNING] scene N: expected X words, transcript matched Y — likely TTS skip. Review audio before proceeding.` is emitted. Fires before assembly so the user can catch it, rewrite the line, and regen audio without wasting video generation credits. Threshold of >2 (not >0) avoids false positives from minor word-count discrepancies caused by contractions or punctuation splits.
 **Breaks if:** `parallax produce` on a plan where ElevenLabs skipped a full phrase (e.g. Mars Men scene 16) does not log `[WARNING] scene N: expected ... likely TTS skip` before assembly begins.

@@ -8,7 +8,7 @@
   model_id: openrouter/openai/gpt-audio-mini
   tts_backend: chat_audio
   tier: default
-  cost: 0.0
+  cost: 0.0002
   unit: 1k_chars
   description: Default TTS. OpenAI gpt-audio-mini via OpenRouter (chat audio modality). Inline [emotional] tags are stripped before sending.
   fallback: null
@@ -31,7 +31,7 @@
   model_id: openrouter/google/gemini-3.1-flash-tts-preview
   tts_backend: speech
   tier: default
-  cost: 0.0
+  cost: 0.0002
   unit: 1k_chars
   description: |
     Expressive TTS. Gemini 3.1 Flash TTS via OpenRouter (/audio/speech endpoint).

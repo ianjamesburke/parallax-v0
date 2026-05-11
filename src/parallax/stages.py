@@ -14,6 +14,7 @@ activity for assertions.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import re
 import shutil
@@ -417,7 +418,7 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
                 vo_text = s.get("vo_text", "")
                 display_text = re.sub(r'\[[^\]]*\]', '', vo_text).strip()
                 _log(settings, f"  [{idx:02d}] {s.get('shot_type', 'broll')} — {display_text[:55]}... submitting")
-                fut = pool.submit(_generate_one_still, s, settings, state, plan)
+                fut = pool.submit(contextvars.copy_context().run, _generate_one_still, s, settings, state, plan)
                 futures[fut] = idx
             for fut in as_completed(futures):
                 idx = futures[fut]
@@ -570,7 +571,7 @@ def stage_animate(plan: dict[str, Any], settings: Settings, state: PipelineState
                      f" gen={scene_animate_res} → output={settings.resolution}"
                      + (f" + end_frame" if s.end_frame_path and Path(s.end_frame_path).exists() else "")
                      + (f" + {len(s.video_references)} ref(s)" if s.video_references else ""))
-                fut = pool.submit(_animate_one_scene, s, settings, state, plan_video_model)
+                fut = pool.submit(contextvars.copy_context().run, _animate_one_scene, s, settings, state, plan_video_model)
                 futures[fut] = s
             for fut in as_completed(futures):
                 s = futures[fut]

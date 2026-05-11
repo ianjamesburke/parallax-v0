@@ -263,6 +263,22 @@ Output:
 
 Then run `/improve` to surface friction from this session.
 
+**After `/improve` — commit any meta-file changes directly to alpha (no PR needed):**
+
+Check for changes in CLAUDE.md, skills, or other config files:
+```bash
+git status --porcelain
+```
+
+If any meta files are dirty, commit them directly to alpha and push:
+```bash
+git add CLAUDE.md .claude/skills/ <other changed meta files>
+git commit -m "docs: improve notes from PR #<n> session"
+git push origin alpha
+```
+
+If the changes are in `~/.claude/` (global skills, settings), commit them to the dotfiles repo instead — they don't belong in this repo.
+
 ---
 
 ## Rules
