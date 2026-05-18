@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-18 — [FIX] grok-image modalities=[image] — stop OpenRouter 404 fallback (PR #183 → alpha)
+`grok-imagine-image-quality` rejects `modalities: ["image", "text"]` with a 404; it only accepts `["image"]`. Added `image_modalities` field to `ModelSpec` (defaults to `("image", "text")` so all other models are unaffected). New `modalities:` key in `image.yaml` overrides per-model. `_image_real()` now reads `list(spec.image_modalities)` instead of a hardcoded list.
+**Breaks if:** `parallax image generate "test" --model grok-image` logs `WARNING parallax.openrouter: image alias grok-image failed (HTTPStatusError); falling back` — means modalities are still `["image", "text"]`.
+
 ## 2026-05-18 — [CHANGED] xAI Grok Imagine models added — video mid-tier + image quality alias (PR #181 → alpha)
 `mid` video tier now maps to `x-ai/grok-imagine-video` ($0.05/s, 480p/720p, start_frame only — no end_frame). Kling demoted to named alias only. `grok-image` alias added for `x-ai/grok-imagine-image-quality` ($0.05/image, accepts character/product reference images). Note: `parallax models show mid` without `--kind` resolves to image/mid (Gemini) — this is correct; use `--kind video` to surface grok-video.
 **Breaks if:** `parallax models list` VIDEO section shows Kling under `mid` (with `[hq]` marker) instead of Grok Imagine Video; or `parallax models show grok-video` exits nonzero; or `parallax models show kling` exits nonzero (Kling must remain as a named alias).
