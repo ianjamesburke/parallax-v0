@@ -55,7 +55,7 @@ release part="patch":
 promote to="":
     bash scripts/promote.sh "{{to}}"
 
-# Bump patch version and reinstall main parallax CLI (run from the repo root)
+# Bump patch version, commit, and reinstall main parallax CLI (run from the repo root)
 bump-and-install:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -67,3 +67,4 @@ bump-and-install:
     git add pyproject.toml uv.lock
     git commit -m "chore: bump version to $new"
     echo "Bumped $current → $new"
+    uv tool install --python python3.11 --reinstall .
