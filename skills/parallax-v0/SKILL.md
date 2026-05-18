@@ -340,4 +340,10 @@ my-project/
 - **STOP before calling `parallax image generate` with `--model draft` and a non-square aspect (9:16, 16:9, 3:4, 4:3):** `draft` sometimes ignores the aspect ratio. Use `grok-image` or `mid` instead.
 - For non-interactive / sub-agent runs, always pass `-y` to `parallax produce`
 - Run `parallax validate` before `parallax produce` to catch brief/plan errors without spending credits
-- Always quote paths that contain spaces
+- Output flag is `--out <path>`, never `--output` — that flag does not exist.
+- **macOS screenshot filenames use Unicode characters** (middle dots, narrow no-break spaces), not regular spaces — they cannot be constructed by hand. Always resolve via `find` and copy to `/tmp/` first:
+  ```bash
+  SRC=$(find . -maxdepth 1 -name "Screenshot*" -type f | head -1)
+  cp "$SRC" /tmp/source.png
+  ```
+  Then pass `/tmp/source.png` to `--ref`.

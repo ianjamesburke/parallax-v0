@@ -23,7 +23,7 @@ head -150 DEV_LOG.md
 gh issue list --state open --json number,title,labels,body --limit 10
 ```
 
-**Filter client-side — skip any issue labeled `in progress`, `blocked`, or `P0`.**
+**Filter client-side — skip any issue labeled `in progress` or `blocked`.**
 
 **`in progress` = another agent is actively working on that issue. Do NOT pick it up. Do NOT "continue" it. Treat every `in progress` issue as if it does not exist.**
 
