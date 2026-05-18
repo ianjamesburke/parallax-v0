@@ -50,6 +50,10 @@ class ModelSpec:
     # Only set for models that generate at a fixed lower resolution and get
     # upscaled during ffmpeg assembly (e.g. "480p" for Seedance).
     native_resolution: str | None = None
+    # OpenRouter modalities sent in the chat/completions request. Most image
+    # models accept ["image", "text"]; grok-imagine-image-quality rejects
+    # "text" and requires ["image"] only.
+    image_modalities: tuple[str, ...] = ("image", "text")
 
     @property
     def supports_reference(self) -> bool:

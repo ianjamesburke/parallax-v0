@@ -30,6 +30,9 @@ def _to_spec(entry: dict[str, Any], kind: Kind) -> ModelSpec:
     voices = entry.get("voices") or ()
     if isinstance(voices, list):
         voices = tuple(voices)
+    image_modalities = entry.get("modalities") or ("image", "text")
+    if isinstance(image_modalities, list):
+        image_modalities = tuple(image_modalities)
 
     # `portrait_args` is now empty by default — aspect ratio flows from the
     # caller (Settings → openrouter.generate_image/generate_video) rather
@@ -51,6 +54,7 @@ def _to_spec(entry: dict[str, Any], kind: Kind) -> ModelSpec:
         voices=voices,
         tts_backend=entry.get("tts_backend", "chat_audio"),
         native_resolution=caps.get("native_resolution") or None,
+        image_modalities=image_modalities,
     )
 
 

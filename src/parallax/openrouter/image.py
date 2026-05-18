@@ -266,7 +266,7 @@ def _image_real(
     body: dict[str, Any] = {
         "model": model_id,
         "messages": [{"role": "user", "content": user_content}],
-        "modalities": ["image", "text"],
+        "modalities": list(spec.image_modalities),
     }
     if aspect_ratio:
         body["aspect_ratio"] = aspect_ratio
