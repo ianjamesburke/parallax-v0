@@ -101,3 +101,18 @@
     - style_ref
     - product_ref
     - character_ref
+
+- alias: grok-image
+  model_id: openrouter/x-ai/grok-imagine-image-quality
+  tier: default
+  cost: 0.050
+  unit: image
+  description: "xAI Grok Imagine Image Quality. From $0.05/image. Accepts reference images for character/product identity continuity."
+  fallback: mid
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
+    max_refs: 4
+  inputs:
+    - style_ref
+    - product_ref
+    - character_ref

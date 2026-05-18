@@ -2,6 +2,10 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-05-18 — [CHANGED] xAI Grok Imagine models added — video mid-tier + image quality alias (PR #181 → alpha)
+`mid` video tier now maps to `x-ai/grok-imagine-video` ($0.05/s, 480p/720p, start_frame only — no end_frame). Kling demoted to named alias only. `grok-image` alias added for `x-ai/grok-imagine-image-quality` ($0.05/image, accepts character/product reference images). Note: `parallax models show mid` without `--kind` resolves to image/mid (Gemini) — this is correct; use `--kind video` to surface grok-video.
+**Breaks if:** `parallax models list` VIDEO section shows Kling under `mid` (with `[hq]` marker) instead of Grok Imagine Video; or `parallax models show grok-video` exits nonzero; or `parallax models show kling` exits nonzero (Kling must remain as a named alias).
+
 ## 2026-05-11 — [FIX] cost.json $0.00 / --resolution flag / expanded validate gate (PR #179 → alpha)
 **#175 cost.json always $0.00**: `ContextVar` values don't propagate into `ThreadPoolExecutor` workers. `stage_stills` and `stage_animate_scenes` now wrap `pool.submit()` in `contextvars.copy_context().run()` so each worker inherits the active `run_id` and usage records are attributed correctly.
 **#176 --resolution flag**: `parallax plan` and `parallax produce` now accept `--resolution WxH`. Validates format at CLI entry, then injects `resolution:` into plan.yaml after planning, before production begins.
