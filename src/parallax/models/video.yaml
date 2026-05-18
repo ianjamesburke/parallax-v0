@@ -8,11 +8,12 @@
 # generating at 480p (animate_resolution) and upscaling to the output
 # resolution during ffmpeg assembly. The `cost` below reflects the 480p rate.
 # Override animate_resolution: in the plan to change the generation resolution.
-#   Seedance 2.0 Fast:  480p = $0.054/s | 720p = $0.121/s | 1080p = $0.272/s
-#   Kling Video O1:     flat = $0.112/s (no resolution tiers)
-#   Veo 3.1:            1080p+audio = $0.40/s | 1080p no-audio = $0.20/s | 4K = $0.60/s
-#   Wan 2.7:            flat = $0.10/s
-#   Sora 2 Pro:         720p = $0.30/s | 1080p = $0.50/s
+#   Seedance 2.0 Fast:        480p = $0.054/s | 720p = $0.121/s | 1080p = $0.272/s
+#   Grok Imagine Video:       480p/720p = from $0.05/s
+#   Kling Video O1:           flat = $0.112/s (no resolution tiers)
+#   Veo 3.1:                  1080p+audio = $0.40/s | 1080p no-audio = $0.20/s | 4K = $0.60/s
+#   Wan 2.7:                  flat = $0.10/s
+#   Sora 2 Pro:               720p = $0.30/s | 1080p = $0.50/s
 
 - alias: draft
   model_id: openrouter/bytedance/seedance-2.0-fast
@@ -30,16 +31,17 @@
   inputs: []
 
 - alias: mid
-  model_id: openrouter/kwaivgi/kling-video-o1
+  model_id: openrouter/x-ai/grok-imagine-video
   tier: mid
-  cost: 0.112
+  cost: 0.05
   unit: second
-  description: Kling Video O1. Strong motion and prompt adherence. Flat $0.112/s regardless of resolution.
-  fallback: draft
+  description: "xAI Grok Imagine Video. Strong prompt adherence. From $0.05/s at 480p/720p."
+  fallback: kling
   capabilities:
-    aspect_ratios: ["9:16", "16:9", "1:1"]
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4", "3:2", "2:3"]
+    resolutions: ["480p", "720p"]
     start_frame: true
-    end_frame: true
+    end_frame: false
   inputs: []
 
 - alias: premium
@@ -111,6 +113,20 @@
     aspect_ratios: ["9:16", "16:9", "1:1"]
     start_frame: true
     end_frame: true
+  inputs: []
+
+- alias: grok-video
+  model_id: openrouter/x-ai/grok-imagine-video
+  tier: default
+  cost: 0.05
+  unit: second
+  description: "xAI Grok Imagine Video. From $0.05/s at 480p/720p."
+  fallback: kling
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4", "3:2", "2:3"]
+    resolutions: ["480p", "720p"]
+    start_frame: true
+    end_frame: false
   inputs: []
 
 - alias: sora
