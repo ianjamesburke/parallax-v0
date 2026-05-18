@@ -67,4 +67,5 @@ bump-and-install:
     git add pyproject.toml uv.lock
     git commit -m "chore: bump version to $new"
     echo "Bumped $current → $new"
+    uv sync
     uv tool install --python python3.11 --reinstall .
