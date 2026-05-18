@@ -12,8 +12,7 @@ from . import _audio, _image, _log, _meta, _models, _produce, _schema, _validate
 app = typer.Typer(
     name="parallax",
     help="Agentic creative production CLI.",
-    no_args_is_help=False,
-    invoke_without_command=True,
+    no_args_is_help=True,
 )
 
 
