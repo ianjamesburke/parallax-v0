@@ -57,7 +57,10 @@ uv tool install --python 3.11 git+https://github.com/ianjamesburke/parallax-v0
 if [ -z "${OPENROUTER_API_KEY:-}" ]; then
     echo ""
     printf "Enter your OpenRouter API key (sk-or-...): "
-    read -r api_key
+    stty -echo </dev/tty
+    read -r api_key </dev/tty
+    stty echo </dev/tty
+    printf "\n"
     if [ -n "$api_key" ]; then
         # Append to the most specific secrets file that exists, else .zshrc
         if [ -f "$HOME/.zsh_secrets" ]; then
@@ -70,7 +73,7 @@ if [ -z "${OPENROUTER_API_KEY:-}" ]; then
             target="$HOME/.zshrc"
         fi
         echo "" >> "$target"
-        echo "export OPENROUTER_API_KEY=$api_key" >> "$target"
+        echo "export OPENROUTER_API_KEY=\"$api_key\"" >> "$target"
         echo "→ API key saved to $target"
         export OPENROUTER_API_KEY="$api_key"
     else
