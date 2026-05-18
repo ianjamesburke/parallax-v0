@@ -53,10 +53,35 @@ fi
 echo "→ Installing parallax..."
 uv tool install --python 3.11 git+https://github.com/ianjamesburke/parallax-v0
 
+# ─── API key ─────────────────────────────────────────────────────────────────
+if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+    echo ""
+    printf "Enter your OpenRouter API key (sk-or-...): "
+    read -r api_key
+    if [ -n "$api_key" ]; then
+        # Append to the most specific secrets file that exists, else .zshrc
+        if [ -f "$HOME/.zsh_secrets" ]; then
+            target="$HOME/.zsh_secrets"
+        elif [ -f "$HOME/.zshrc" ]; then
+            target="$HOME/.zshrc"
+        elif [ -f "$HOME/.bashrc" ]; then
+            target="$HOME/.bashrc"
+        else
+            target="$HOME/.zshrc"
+        fi
+        echo "" >> "$target"
+        echo "export OPENROUTER_API_KEY=$api_key" >> "$target"
+        echo "→ API key saved to $target"
+        export OPENROUTER_API_KEY="$api_key"
+    else
+        echo "⚠ Skipped. Set it later:"
+        echo "  echo 'export OPENROUTER_API_KEY=sk-or-...' >> ~/.zshrc"
+    fi
+fi
+
 echo ""
-echo "✓ parallax installed. Set your API key and go:"
+echo "✓ parallax installed."
 echo ""
-echo "  export OPENROUTER_API_KEY=sk-or-..."
 echo "  parallax --help"
 echo ""
 echo "For tab completion:  parallax completions install"
