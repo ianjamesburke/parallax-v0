@@ -89,7 +89,7 @@ SKILL_URL="https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/skil
 mkdir -p "$HOME/.agents/skills/parallax"
 curl -fsSL "$SKILL_URL" -o "$HOME/.agents/skills/parallax/SKILL.md"
 echo "→ Skill installed to ~/.agents/skills/parallax/"
-for dir in "$HOME/.claude/skills" "$HOME/.gemini/skills"; do
+for dir in "$HOME/.claude/skills" "$HOME/.gemini/skills" "$HOME/.pi/agent/skills" "$HOME/.openclaw/skills" "$HOME/.opencode/skills" "$HOME/.codex/skills"; do
     if [ -d "$(dirname "$dir")" ]; then
         mkdir -p "$dir"
         ln -sf "$HOME/.agents/skills/parallax" "$dir/parallax"
