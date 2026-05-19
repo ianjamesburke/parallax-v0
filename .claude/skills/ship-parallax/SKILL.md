@@ -228,7 +228,7 @@ After DEV_LOG is committed on the feature branch. Run without stopping:
    ```bash
    git -C /Users/ianburke/Documents/GitHub/parallax-v0 status --porcelain
    ```
-   If dirty: commit or stash before continuing — `just bump-and-install` will fail on a dirty tree.
+   If dirty: commit or stash before continuing — `just bump` will fail on a dirty tree.
 
 2. Steps 2-6 all run from the repo root — cd once, then chain:
    ```bash
@@ -237,7 +237,8 @@ After DEV_LOG is committed on the feature branch. Run without stopping:
    git pull origin alpha
    wtp remove --force <branch>
    git push origin --delete <branch>
-   just bump-and-install
+   just bump
+   just install
    git push origin alpha
    ```
    (`git push origin alpha` keeps local and remote in sync — prevents divergence next cycle)
@@ -288,7 +289,7 @@ If the changes are in `~/.claude/` (global skills, settings), commit them to the
 - Never merge before user confirms testing passed
 - Never claim [COMPLETE] without user verification
 - `just pr-install` runs from the **feature worktree**
-- `just pr-clean` and `just bump-and-install` run from the **repo root**
+- `just pr-clean`, `just bump`, and `just install` run from the **repo root**
 - Never pass `--delete-branch` to `gh pr merge` — git refuses to delete a branch checked out by a worktree
 - Alpha must be clean when the cycle ends
 - Subagents stage only — orchestrator owns the commit and the PR
