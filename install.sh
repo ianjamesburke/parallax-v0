@@ -56,11 +56,17 @@ uv tool install --python 3.11 git+https://github.com/ianjamesburke/parallax-v0
 # ─── API key ─────────────────────────────────────────────────────────────────
 if [ -z "${OPENROUTER_API_KEY:-}" ]; then
     echo ""
-    printf "Enter your OpenRouter API key (sk-or-...): "
-    stty -echo </dev/tty
-    read -r api_key </dev/tty
-    stty echo </dev/tty
-    printf "\n"
+    if [ "$(uname)" = "Darwin" ]; then
+        api_key=$(osascript \
+            -e 'Tell application "System Events" to display dialog "Enter your OpenRouter API key (sk-or-...):" default answer "" with hidden answer buttons {"Cancel", "OK"} default button "OK"' \
+            -e 'text returned of result' 2>/dev/null) || true
+    else
+        printf "Enter your OpenRouter API key (sk-or-...) — input is hidden, paste freely: "
+        stty -echo </dev/tty
+        read -r api_key </dev/tty
+        stty echo </dev/tty
+        printf "\n"
+    fi
     if [ -n "$api_key" ]; then
         # Append to the most specific secrets file that exists, else .zshrc
         if [ -f "$HOME/.zsh_secrets" ]; then
