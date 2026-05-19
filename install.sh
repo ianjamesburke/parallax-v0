@@ -83,12 +83,17 @@ if [ -z "${OPENROUTER_API_KEY:-}" ]; then
 fi
 
 # ─── skill ───────────────────────────────────────────────────────────────────
+# Install into ~/.agents/skills as the source of truth, then symlink from
+# ~/.claude/skills and ~/.gemini/skills if those dirs exist.
 SKILL_URL="https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/skills/parallax-v0/SKILL.md"
-for dir in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.gemini/skills"; do
+mkdir -p "$HOME/.agents/skills/parallax"
+curl -fsSL "$SKILL_URL" -o "$HOME/.agents/skills/parallax/SKILL.md"
+echo "→ Skill installed to ~/.agents/skills/parallax/"
+for dir in "$HOME/.claude/skills" "$HOME/.gemini/skills"; do
     if [ -d "$(dirname "$dir")" ]; then
-        mkdir -p "$dir/parallax"
-        curl -fsSL "$SKILL_URL" -o "$dir/parallax/SKILL.md"
-        echo "→ Skill installed to $dir/parallax/"
+        mkdir -p "$dir"
+        ln -sf "$HOME/.agents/skills/parallax" "$dir/parallax"
+        echo "→ Symlinked to $dir/parallax"
     fi
 done
 
