@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Bump version, regenerate CHANGELOG via git-cliff, and commit.
-# Usage: scripts/release-version.sh [patch|minor|major]
-# Default: patch
+# Invoked by: just bump [patch|minor|major]
 # After this, run: just promote [beta|main]
 set -euo pipefail
 

@@ -4,7 +4,7 @@
 #   No argument: auto-detects current branch and prompts for confirmation.
 #   With argument: skips prompt (useful for scripting).
 #
-# Run `just release` on alpha before promoting to beta if you haven't already.
+# Run `just bump` on alpha before promoting to beta if you haven't already.
 set -euo pipefail
 
 REPO_ROOT=$(dirname "$(git rev-parse --git-common-dir)")
@@ -114,3 +114,6 @@ fi
 
 echo ""
 echo "Released v$version — tag v$version pushed to origin."
+
+echo "Installing main..."
+(cd "$MAIN_TREE" && just install)
