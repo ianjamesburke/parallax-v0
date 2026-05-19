@@ -82,6 +82,16 @@ if [ -z "${OPENROUTER_API_KEY:-}" ]; then
     fi
 fi
 
+# ─── skill ───────────────────────────────────────────────────────────────────
+SKILL_URL="https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/skills/parallax-v0/SKILL.md"
+for dir in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.gemini/skills"; do
+    if [ -d "$(dirname "$dir")" ]; then
+        mkdir -p "$dir/parallax"
+        curl -fsSL "$SKILL_URL" -o "$dir/parallax/SKILL.md"
+        echo "→ Skill installed to $dir/parallax/"
+    fi
+done
+
 echo ""
 echo "✓ parallax installed."
 echo ""
