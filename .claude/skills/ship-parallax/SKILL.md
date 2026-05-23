@@ -56,14 +56,14 @@ plexi pane set-title "#<number> — <short-title>"
 
 Run from the repo root:
 ```bash
-wtp add -b feature/<issue-number>-short-description
+wtp add -b <issue-number>-short-description
 ```
 
 **If branch already exists:** check `git worktree list`. If no open worktree, add without `-b`. Run `git log --oneline -5` to surface prior commits — treat as partial implementation.
 
 **Immediately verify the base:**
 ```bash
-git -C worktrees/<branch> log --oneline -1
+git -C worktrees/<issue-number>-short-description log --oneline -1
 git log --oneline -1
 ```
 
@@ -133,7 +133,7 @@ git -C worktrees/<branch> push origin HEAD
 
 Open a PR targeting `alpha` — always pass `--head` explicitly (gh fails with "Head sha can't be blank" if branch isn't on remote):
 ```bash
-gh pr create --base alpha --head feature/<branch> --title "<title>" --body "..."
+gh pr create --base alpha --head <branch> --title "<title>" --body "..."
 ```
 
 ---
