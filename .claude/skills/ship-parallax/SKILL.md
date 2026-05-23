@@ -173,7 +173,10 @@ Result: PASS | FAIL — <why>
 Overall: PASS | FAIL
 ```
 
-Present the full report to the user.
+Present the full report to the user, and always include the PR URL on its own line so it's easy to open:
+```
+PR: https://github.com/ianjamesburke/parallax-v0/pull/<n>
+```
 
 **Command formatting rule:** Any command you give the user to run must appear alone in its own code block — never inline inside prose. One command per block, nothing else on the line.
 
