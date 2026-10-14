@@ -1,12 +1,13 @@
 ---
 name: parallax
 description: Use when operating the Parallax CLI to produce AI-generated short-form videos. Covers project setup, brief authoring, the plan→produce loop, asset locking, model selection, and cost management.
-version: "0.5.34"
+metadata:
+  version: "0.5.43"
 ---
 
 # Parallax CLI — Operator Skill
 
-> **Version:** `0.5.34` — run `parallax --version` on load. If the installed version is higher, warn the user that the skill may be behind and suggest running `parallax update` to check the changelog.
+> **Version:** `0.5.43` — run `parallax --version` on load. If the installed version is higher, warn the user that the skill may be behind and suggest running `parallax update` to check the changelog.
 
 Agentic creative production CLI. A `brief.yaml` goes in; a finished short-form video comes out — stills, voiceover, animated clips, captions, all routed through OpenRouter.
 
@@ -61,7 +62,7 @@ Validate without spending:
 parallax validate --folder ./my-project --brief ./my-project/brief.yaml
 ```
 
-**Paths:** Always use absolute paths for `--folder`. Never construct paths relative to `$PWD` inside a worktree — it resolves by accident and breaks. Use the repo-root sandbox: `/Users/ianburke/Documents/GitHub/parallax-v0/sandbox/<project>`. Paths with spaces must be quoted.
+**Paths:** Always use absolute paths for `--folder`. Never construct paths relative to `$PWD` inside a worktree — it resolves by accident and breaks. Paths with spaces must be quoted.
 
 ---
 
