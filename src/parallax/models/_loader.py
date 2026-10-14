@@ -42,6 +42,7 @@ def _to_spec(entry: dict[str, Any], kind: Kind) -> ModelSpec:
         model_id=entry["model_id"],
         cost_usd=float(entry.get("cost", 0.0)),
         cost_unit=entry.get("unit", "image"),
+        fixed_cost_usd=float(entry.get("fixed_cost", 0.0)),
         description=entry.get("description", ""),
         fallback_alias=entry.get("fallback"),
         tier=entry.get("tier", "default"),

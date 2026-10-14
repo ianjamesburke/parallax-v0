@@ -55,6 +55,13 @@ class ModelSpec:
     # Durations (whole seconds) the video model accepts (video kind).
     durations: tuple[int, ...] = ()
 
+    # Flat per-call USD on top of the per-unit `cost_usd` (TTS: fixed overhead of a call).
+    fixed_cost_usd: float = 0.0
+
+    def estimate_tts_usd(self, chars: int) -> float:
+        """Estimated USD for one TTS call speaking `chars` characters."""
+        return self.fixed_cost_usd + chars / 1000.0 * self.cost_usd
+
     @property
     def supports_reference(self) -> bool:
         return self.kind == "image" and self.max_refs > 0

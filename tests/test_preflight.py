@@ -427,7 +427,7 @@ def test_voiceover_cost_scales_with_characters():
     text = "x" * 2000
     plan = _make_plan([{"index": 0, "still_path": "s.png", "vo_text": text}], voice_model="tts-gemini")
     result = compute_preflight(plan)
-    assert result.voiceover_cost_usd == pytest.approx(2.0 * resolve("tts-gemini", kind="tts").cost_usd)
+    assert result.voiceover_cost_usd == pytest.approx(resolve("tts-gemini", kind="tts").estimate_tts_usd(2000))
     assert result.voiceover_cost_usd > 0
     assert result.estimated_total_usd == pytest.approx(result.voiceover_cost_usd)
 
@@ -437,3 +437,11 @@ def test_voiceover_cost_unknown_model_warns_instead_of_guessing():
     result = compute_preflight(plan)
     assert result.voiceover_cost_usd == 0.0
     assert any("elevenlabs" in w for w in result.warnings)
+
+
+def test_tts_mini_estimate_matches_billed_short_and_long_scripts():
+    """Billed 2026-10-14: 72 chars -> $0.000451..$0.000467; 180 chars -> $0.000674."""
+    from parallax.models import resolve
+    spec = resolve("tts-mini", kind="tts")
+    assert spec.estimate_tts_usd(72) == pytest.approx(0.000459, rel=0.10)
+    assert spec.estimate_tts_usd(180) == pytest.approx(0.000674, rel=0.10)

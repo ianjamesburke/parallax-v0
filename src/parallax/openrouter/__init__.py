@@ -382,7 +382,7 @@ def generate_tts(
 
     def _tts_call(spec):
         # /audio/speech responses carry no usage; record the catalog rate on the spoken text.
-        note_estimated_cost(len(text) / 1000.0 * spec.cost_usd)
+        note_estimated_cost(spec.estimate_tts_usd(len(text)))
         model_id = _strip_or_prefix(spec.model_id)
         if spec.tts_backend == "speech":
             chosen_voice = voice if voice and voice != "default" else _GEMINI_TTS_DEFAULT_VOICE

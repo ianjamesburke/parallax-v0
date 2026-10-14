@@ -155,7 +155,8 @@ def compute_preflight(
     if not vo_locked:
         if voice_model in TTS_MODELS:
             chars = sum(len(sc.get("vo_text", "")) for sc in plan.get("scenes", []))
-            vo_cost = chars / 1000.0 * TTS_MODELS[voice_model].cost_usd
+            # No script means no TTS call (stage_voiceover skips it), so no fixed cost either.
+            vo_cost = TTS_MODELS[voice_model].estimate_tts_usd(chars) if chars else 0.0
         else:
             vo_warnings.append(f"voiceover cost not estimated: {voice_model!r} is not in the TTS catalog")
 

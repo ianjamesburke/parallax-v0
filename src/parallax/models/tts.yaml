@@ -5,12 +5,16 @@
 # Slugs verified live against OpenRouter /api/v1/models 2026-10-14. `cost` is USD per
 # 1k input characters, measured on a 180-character script (billed usage.cost, or the
 # /generation record for /audio/speech); real cost varies with how fast the voice speaks.
+# `fixed_cost` is a flat USD per call. tts-mini's rate and fixed cost are a straight-line fit
+# of three billed calls (180 chars $0.000674; 72 chars $0.000467 and $0.000451); short
+# scripts cost more per character because the model also speaks extra words.
 
 - alias: tts-mini
   model_id: openrouter/openai/gpt-audio-mini
   tts_backend: chat_audio
   tier: default
-  cost: 0.00374
+  cost: 0.00199
+  fixed_cost: 0.0003
   unit: 1k_chars
   description: Default TTS. OpenAI gpt-audio-mini via OpenRouter (chat audio modality). Inline [emotional] tags are stripped before sending.
   fallback: null
