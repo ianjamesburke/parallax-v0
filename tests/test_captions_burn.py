@@ -164,6 +164,24 @@ def test_burn_captions_drawtext_produces_video(tmp_path):
     assert abs(_probe_dur(out) - 1.0) < 0.2
 
 
+@_requires_drawtext
+def test_burn_captions_drawtext_handles_percent_sign(tmp_path):
+    """A literal '%' (e.g. "25%") must not be parsed as a drawtext expansion."""
+    v = tmp_path / "in.mp4"
+    _make_video_with_audio(v, 1.0)
+    out = tmp_path / "captioned.mp4"
+    chunks = [{"text": "UP 25% NOW", "start": 0.0, "end": 1.0}]
+    style = resolve_caption_style("bangers")
+    _burn_captions_drawtext(str(v), chunks, out, fontsize=64, style=style)
+    assert out.exists() and out.stat().st_size > 0
+
+
+def test_drawtext_filter_escapes_percent():
+    style = resolve_caption_style("bangers")
+    f = _style_drawtext_filter(style, "25%", 0, 1, 50)
+    assert "25\\\\%" in f  # two backslashes: one survives the filtergraph parser
+
+
 # ─── burn_captions orchestrator ─────────────────────────────────────────
 
 

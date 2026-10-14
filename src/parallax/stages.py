@@ -33,11 +33,12 @@ from .avatar import burn_avatar, key_avatar_track
 from .captions import burn_captions
 from .headline import burn_headline, burn_titles
 from .manifest import write_manifest
+from .models import DEFAULT_CLIP_DURATION_S
 from .project import scan_project_folder
 from .settings import ProductionMode, Settings
-from .shim import is_mock_asset
+from .shim import is_mock_asset, is_test_mode
 from .text_expand import expand_digits
-from .voiceover import generate_voiceover_dict
+from .voiceover import generate_voiceover_dict, mock_words
 
 
 # --------------------------------------------------------------------------
@@ -65,6 +66,9 @@ class SceneRuntime:
     zoom_amount: float | None = None
     video_references: list[str] | None = None
     reference_images: list[str] | None = None
+    # Plan-pinned scene length. When unset, clips are generated at DEFAULT_CLIP_DURATION_S
+    # (scene length is only known after voiceover alignment, which runs after animation).
+    duration_s: float | None = None
 
 
 @dataclass
@@ -439,6 +443,7 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
             prompt=s.get("prompt", ""),
             still_path=still_paths[idx],
             aspect=s.get("aspect", settings.aspect),
+            duration_s=s.get("duration_s"),
         )
         if s.get("animate"):
             scene_rt.animate = True
@@ -520,6 +525,7 @@ def _animate_one_scene(
         image_path=Path(still),
         end_image_path=Path(end_frame) if end_frame else None,
         input_references=input_references,
+        duration_s=s.duration_s or DEFAULT_CLIP_DURATION_S,
         out_dir=scene_tmp,
         aspect_ratio=s.aspect,
         size=scene_animate_res,
@@ -630,9 +636,14 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
                 else float(words[-1]["end"]) if words else 0.0
             )
         else:
-            from . import forced_align
-            _log(settings, f"forced_align → {Path(audio_path).name} (whisperx)")
-            words = forced_align.align_words(audio_path)
+            if is_test_mode():
+                # WhisperX cannot align the silent stub audio; use synthetic timings.
+                _log(settings, f"test mode: synthetic word timings → {Path(audio_path).name}")
+                words = mock_words(" ".join(s.get("vo_text", "") for s in plan.get("scenes", [])))
+            else:
+                from . import forced_align
+                _log(settings, f"forced_align → {Path(audio_path).name} (whisperx)")
+                words = forced_align.align_words(audio_path)
             import wave as _wave
             with _wave.open(audio_path, "rb") as _w:
                 total = _w.getnframes() / float(_w.getframerate())
@@ -676,8 +687,12 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
         audio_path = vo_result["audio_path"]
         words_path = vo_result["words_path"]
 
-        from . import forced_align
-        aligned_words = forced_align.align_words(audio_path)
+        if is_test_mode():
+            # The mock voiceover already carries synthetic word timings.
+            aligned_words = vo_result["words"]
+        else:
+            from . import forced_align
+            aligned_words = forced_align.align_words(audio_path)
         vo_result["words"] = aligned_words
         Path(words_path).write_text(
             json.dumps({"words": aligned_words, "total_duration_s": vo_result["total_duration_s"]}, indent=2)

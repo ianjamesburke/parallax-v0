@@ -66,6 +66,9 @@ def _print_models_list(models_pkg, kind: str | None, as_json: bool) -> int:
                     "inputs": list(s.inputs),
                     "voices": list(s.voices),
                     "native_resolution": s.native_resolution,
+                    "native_size": s.native_size,
+                    "request": s.request_params,
+                    "durations": list(s.durations),
                     "description": s.description,
                 }
                 for s in table.values()
@@ -78,18 +81,57 @@ def _print_models_list(models_pkg, kind: str | None, as_json: bool) -> int:
 
     for k, table in tables:
         print(f"\n{k.upper()}:")
-        print(f"  {'alias':<18} {'tier':<8} {'cost':<10} {'fallback':<14} description")
-        print(f"  {'-' * 18} {'-' * 8} {'-' * 10} {'-' * 14} {'-' * 40}")
         for s in table.values():
-            cost = f"${s.cost_usd:.3f}/{s.cost_unit}"
-            fb = s.fallback_alias or "—"
-            markers = ""
+            marker = ""
             if s.alias == _DEFAULT_ALIAS.get(k):
-                markers = " [default]"
+                marker = "  [default]"
             elif s.alias == _HQ_ALIAS.get(k):
-                markers = " [hq]"
-            print(f"  {s.alias:<18} {s.tier:<8} {cost:<10} {fb:<14} {s.description}{markers}")
+                marker = "  [hq]"
+            for line in _model_card(s, marker):
+                print(line)
+    print("\nFull description: parallax models show <alias>")
     return 0
+
+
+_LIST_WIDTH = 80
+
+
+def _fmt_cost(usd: float) -> str:
+    """Cost without losing sub-cent precision: at least 2 decimals, up to 5."""
+    text = f"{usd:.5f}".rstrip("0")
+    decimals = len(text.split(".")[1])
+    return text + "0" * max(0, 2 - decimals)
+
+
+def _model_card(spec, marker: str) -> list[str]:
+    """Compact card: header row (alias, tier, cost), slug row, capabilities row.
+
+    Every line is at most `_LIST_WIDTH` columns. Descriptions are deliberately
+    left to `parallax models show <alias>`.
+    """
+    import textwrap
+
+    cost = f"${_fmt_cost(spec.cost_usd)}/{spec.cost_unit}"
+    header = f"  {spec.alias:<22}{spec.tier:<9}{cost}{marker}"
+    caps: list[str] = []
+    if spec.aspect_ratios:
+        caps.append(" ".join(spec.aspect_ratios))
+    if spec.kind == "image":
+        caps.append(f"refs {spec.max_refs}")
+        if spec.native_size:
+            caps.append(spec.native_size)
+    elif spec.kind == "video":
+        frames = "start+end frame" if spec.end_frame else "start frame" if spec.start_frame else "text only"
+        caps.append(frames)
+        if spec.native_resolution:
+            caps.append(spec.native_resolution)
+    else:
+        caps.append(f"{len(spec.voices)} voices")
+        caps.append(spec.tts_backend)
+    wrapped = textwrap.wrap(
+        " | ".join(caps), width=_LIST_WIDTH - 4, initial_indent="    ", subsequent_indent="    ",
+    )
+    return [header, f"    {spec.model_id.removeprefix('openrouter/')}", *wrapped]
 
 
 def _print_elevenlabs_voices() -> int:
@@ -121,15 +163,20 @@ def _print_model_show(models_pkg, alias: str, kind: str | None) -> int:
     print(f"kind:           {spec.kind}")
     print(f"tier:           {spec.tier}")
     print(f"model_id:       {spec.model_id}")
-    print(f"cost:           ${spec.cost_usd:.4f} / {spec.cost_unit}")
+    print(f"cost:           ${_fmt_cost(spec.cost_usd)} / {spec.cost_unit}")
     print(f"fallback:       {spec.fallback_alias or '—'}")
     print(f"aspect_ratios:  {', '.join(spec.aspect_ratios) if spec.aspect_ratios else '—'}")
+    if spec.request_params:
+        print(f"request:        {', '.join(f'{k}={v}' for k, v in spec.request_params.items())}")
     if spec.kind == "image":
         print(f"max_refs:       {spec.max_refs}")
+        if spec.native_size:
+            print(f"native_size:    {spec.native_size} (measured 9:16 output)")
         print(f"inputs:         {', '.join(spec.inputs) if spec.inputs else '—'}")
     if spec.kind == "video":
         print(f"start_frame:    {spec.start_frame}")
         print(f"end_frame:      {spec.end_frame}")
+        print(f"durations (s):  {', '.join(str(d) for d in spec.durations)}")
         if spec.native_resolution:
             print(f"native_res:     {spec.native_resolution} (generates at this resolution; upscaled to output during assembly)")
     if spec.kind == "tts":

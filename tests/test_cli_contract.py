@@ -8,6 +8,7 @@ This is the regression harness for issue #100 (argparse → Typer rewrite).
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -215,19 +216,39 @@ class TestCredits:
 # ---------------------------------------------------------------------------
 
 class TestCompletions:
-    def test_print_zsh(self, capsys):
-        rc = cli.main(["completions", "print", "zsh"])
+    @pytest.mark.parametrize("shell", ["zsh", "bash"])
+    def test_print_uses_source_shell_instruction(self, capsys, shell):
+        rc = cli.main(["completions", "print", shell])
         assert rc == 0
+        out = capsys.readouterr().out
+        assert f"_PARALLAX_COMPLETE=source_{shell} parallax" in out
+        assert f"{shell}_source" not in out
 
-    def test_print_bash(self, capsys):
-        rc = cli.main(["completions", "print", "bash"])
-        assert rc == 0
+    @pytest.mark.parametrize("shell,marker", [("zsh", "#compdef parallax"), ("bash", "_parallax_completion()")])
+    def test_install_writes_working_instruction(self, tmp_path, shell, marker):
+        import shutil
+        import subprocess
+        import sys
 
-    def test_install_writes_file(self, tmp_path):
-        out = tmp_path / "completion.zsh"
-        rc = cli.main(["completions", "install", "--shell", "zsh", "--path", str(out)])
+        out = tmp_path / f"completion.{shell}"
+        rc = cli.main(["completions", "install", "--shell", shell, "--path", str(out)])
         assert rc == 0
-        assert out.exists()
+        content = out.read_text()
+        assert f"_PARALLAX_COMPLETE=source_{shell} parallax" in content
+        assert f"{shell}_source" not in content
+
+        # Run the generated instruction for real: the env var plus the CLI must
+        # emit a shell completion definition, not "Shell source not supported.".
+        # The instruction is `eval "$(VAR=value parallax)"`; take VAR=value from it.
+        assignment = content.split("$(", 1)[1].split(" parallax)", 1)[0]
+        var, _, value = assignment.partition("=")
+        parallax_bin = shutil.which("parallax", path=str(Path(sys.executable).parent))
+        assert parallax_bin, "parallax entry point missing from the test interpreter's bin dir"
+        env = {**os.environ, var: value}
+        result = subprocess.run([parallax_bin], env=env, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert marker in result.stdout, result.stdout or result.stderr
+        assert "not supported" not in result.stdout + result.stderr
 
     def test_invalid_shell_rejected(self):
         _rejects_args("completions", "print", "fish")

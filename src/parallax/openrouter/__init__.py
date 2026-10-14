@@ -57,17 +57,18 @@ from .client import (  # noqa: F401
     _raise_for_credits_or_status,
     _stream_post,
     _strip_or_prefix,
+    capture_cost,
+    note_billed_cost,
+    note_estimated_cost,
     CreditsBalance,
     InsufficientCreditsError,
     check_credits,
 )
 
 from .image import (  # noqa: F401
-    _ASPECT_CUE_TEXTS,
     _ASPECT_TO_REF_RES,
     _REFERENCE_DESCRIBE_MODEL,
     _REFERENCE_DESCRIBE_PROMPT,
-    _aspect_cue,
     _describe_reference_cache,
     _describe_reference_uncached,
     _image_real,
@@ -123,6 +124,8 @@ def _path_of(result: Any) -> str:
 
 def _record_usage(
     spec: ModelSpec, prompt: str, output_path: str, *, duration_ms: int, cost_usd: float, test: bool,
+    cost_source: str = "billed",
+    generation_ids: list[str] | None = None,
 ) -> None:
     _usage.record(
         session_id=current_session_id.get(),
@@ -134,6 +137,8 @@ def _record_usage(
         output_path=output_path,
         duration_ms=duration_ms,
         cost_usd=cost_usd,
+        cost_source=cost_source,
+        generation_ids=generation_ids or [],
         test_mode=test,
     )
 
@@ -155,7 +160,7 @@ def _dispatch(
     if is_test_mode():
         runlog.event(f"openrouter.{kind}.test", alias=alias, prompt_preview=prompt[:120])
         path = test_call(spec0)
-        _record_usage(spec0, prompt, str(path), duration_ms=0, cost_usd=0.0, test=True)
+        _record_usage(spec0, prompt, str(path), duration_ms=0, cost_usd=0.0, test=True, cost_source="test")
         return path
     return _with_fallback(kind=kind, alias=alias, primary_call=primary_call)
 
@@ -202,7 +207,8 @@ def _call_with_transient_retry(*, kind: Kind, spec, primary_call):
                 alias=spec.alias, model_id=spec.model_id,
                 attempt=attempt + 1,
             )
-            result = primary_call(spec)
+            with capture_cost() as cost:
+                result = primary_call(spec)
             duration_ms = int((time.monotonic() - t0) * 1000)
             runlog.event(
                 f"openrouter.{kind}.response",
@@ -210,8 +216,19 @@ def _call_with_transient_retry(*, kind: Kind, spec, primary_call):
                 duration_ms=duration_ms, ok=True,
                 attempt=attempt + 1,
             )
+            if cost.billed:
+                cost_usd, cost_source = sum(cost.billed), "billed"
+            elif cost.estimated:
+                cost_usd, cost_source = sum(cost.estimated), "estimate"
+            else:
+                log.warning(
+                    "%s alias %s: response carried no cost; recording $0 (cost_source=unknown)",
+                    kind, spec.alias,
+                )
+                cost_usd, cost_source = 0.0, "unknown"
             _record_usage(spec, "", _path_of(result), duration_ms=duration_ms,
-                          cost_usd=spec.cost_usd, test=False)
+                          cost_usd=cost_usd, test=False, cost_source=cost_source,
+                          generation_ids=cost.generation_ids)
             return result
         except InsufficientCreditsError:
             raise
@@ -252,14 +269,14 @@ def generate_image(
     size: str | None = None,
     aspect_ratio: str | None = None,
 ) -> Path:
-    """Generate an image. `size` is a passthrough hint like '1080x720' or
-    '1080x1920' — note that some models (e.g. google/gemini-2.5-flash-image)
-    silently ignore size and always return 1024×1024. For exact dimensions,
-    pick a model that respects size or post-process via `parallax.stills`.
+    """Generate an image via `/api/v1/images`. Output size is not chosen here: the
+    catalog's `request:` params (quality / resolution) set it, to the smallest
+    output with a short side of at least 720 px. `size` only drives the mock
+    image dimensions in test mode.
 
-    `aspect_ratio` (e.g. '9:16') is the user-chosen aspect; when set it is
-    forwarded to the upstream provider as a top-level body field and used
-    to drive the prompt cue + reference pre-crop.
+    `aspect_ratio` (e.g. '9:16') is the user-chosen aspect; it is forwarded as
+    the request's `aspect_ratio` and drives the reference pre-crop. It must be
+    one the model's catalog entry lists.
     """
     spec = resolve(alias, kind="image")
     refs = _validate_refs(reference_images, spec)
@@ -271,7 +288,7 @@ def generate_image(
     return _dispatch(
         kind="image",
         alias=alias,
-        primary_call=lambda s: _image_real(prompt, s, refs, out_dir, size=size, aspect_ratio=aspect_ratio, out_file=out_file),
+        primary_call=lambda s: _image_real(prompt, s, refs, out_dir, aspect_ratio=aspect_ratio, out_file=out_file),
         test_call=lambda s: render_mock_image(
             prompt=prompt, model=s.alias, out_dir=out_dir,
             resolution=test_resolution, out_file=out_file,
@@ -288,7 +305,7 @@ def generate_video(
     image_path: Path | None = None,
     end_image_path: Path | None = None,
     input_references: list[Path] | None = None,
-    duration_s: float = 5.0,
+    duration_s: float,
     out_dir: Path | None = None,
     size: str | None = None,
     aspect_ratio: str | None = None,
@@ -364,6 +381,8 @@ def generate_tts(
         return result
 
     def _tts_call(spec):
+        # /audio/speech responses carry no usage; record the catalog rate on the spoken text.
+        note_estimated_cost(spec.estimate_tts_usd(len(text)))
         model_id = _strip_or_prefix(spec.model_id)
         if spec.tts_backend == "speech":
             chosen_voice = voice if voice and voice != "default" else _GEMINI_TTS_DEFAULT_VOICE

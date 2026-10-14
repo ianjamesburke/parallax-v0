@@ -138,8 +138,8 @@ Model, caption, and transition settings live in `plan.yaml` (not brief.yaml). Se
 
 ```yaml
 voice_model: tts-mini        # tts-mini (default) | tts-gemini
-image_model: grok-image      # RECOMMENDED for image quality + ref fidelity
-video_model: mid             # mid = Grok Imagine Video (RECOMMENDED) | draft | premium | wan | sora
+image_model: mid             # draft ($0.004) | mid ($0.009, default) | premium ($0.033) | seedream | grok-image
+video_model: mid             # mid = Grok Imagine Video | draft (Seedance) | veo-lite (cheapest 720p) | premium | wan
 caption_style: bangers        # bangers (default) | anton | or custom dict
 fontsize: 55
 words_per_chunk: smart        # smart (default) | integer
@@ -207,31 +207,37 @@ parallax models show mid --kind image
 parallax models show tts-gemini
 ```
 
-**Image:**
+**Image** (billed cost per image, 9:16, smallest output of at least 720 px short side, no refs; each reference adds about $0.005 on `draft`/`mid`/`premium`):
 | Alias | Cost | Notes |
 |---|---|---|
-| `grok-image` | ~$0.05/img | **Recommended.** xAI Grok Imagine. Strong ref fidelity, all aspects |
-| `draft` | $0.039/img | Gemini 2.5 Flash. **Sometimes ignores non-square aspect ratios** — prefer `mid` or `grok-image` for 9:16/16:9 |
-| `mid` | $0.039/img | Gemini 3.1 Flash. Honors aspect natively |
-| `premium` | $0.080/img | Gemini 3 Pro. Best Gemini fidelity |
-| `nano-banana` | $0.039/img | Gemini 2.5 Flash. Multi-ref compositing |
-| `gemini-3-flash` | $0.039/img | Gemini 3.1 Flash. Same as `mid` |
-| `gemini-3-pro` | $0.080/img | Gemini 3 Pro. Same as `premium` |
+| `draft` | $0.00375/img | GPT Image 2.5 Flare, low quality. 864x1536. Strong ref identity |
+| `mid` | $0.00855/img | GPT Image 2.5 Flare, medium quality. Default |
+| `premium` | $0.0325/img | GPT Image 2.5 Sunburst, high quality |
+| `seedream` | $0.018/img | Seedream 5.0 Flash. 720x1280. Strong ref identity |
+| `gemini-3-flash-lite` | $0.0336/img | Gemini 3.1 Flash Lite. 768x1376 |
+| `nano-banana` | $0.0387/img | Gemini 2.5 Flash Image. Max 3 refs |
+| `grok-image` | $0.05/img | Grok Imagine Image Quality. 720x1280. Max 3 refs |
+| `gemini-3-flash` | $0.0672/img | Gemini 3.1 Flash Image at 1K |
+| `gemini-3-pro` | $0.1344/img | Gemini 3 Pro Image at 1K. Prefer `premium` |
 
-**Video:**
+**Video** (measured per second of the billed clip; clips are billed at the shortest supported length covering the scene):
 | Alias | Cost | Notes |
 |---|---|---|
-| `mid` / `grok-video` | ~$0.05/s | **Recommended.** xAI Grok Imagine Video. 480p/720p. Strong prompt adherence |
-| `draft` | $0.054/s | Seedance 2.0 Fast. $0.054/s at 480p, $0.121/s at 720p, $0.272/s at 1080p |
-| `premium` | $0.400/s | Veo 3.1. $0.40/s 1080p w/ audio, $0.20/s w/o, $0.60/s 4K |
-| `wan` | $0.100/s | Wan 2.7. Open-weights baseline. Flat $0.10/s |
-| `sora` | $0.500/s | OpenAI Sora 2 Pro. Text-to-video only. $0.30/s 720p, $0.50/s 1080p |
+| `grok-video-lite` | $0.0225/s | Grok Imagine Video 1.5 Lite, 480p (400x736). Start frame only |
+| `veo-lite` | $0.03/s | Veo 3.1 Lite, 720p, no audio. Set `animate_resolution: 720x1280` |
+| `seedance-mini` | $0.0355/s | Seedance 2.0 Mini, 480p |
+| `draft` / `seedance` | $0.0426/s | Seedance 2.0 Fast, 480p. Higher resolutions cost more |
+| `mid` / `grok-video` | $0.0505/s | Grok Imagine Video, 480p. Strong prompt adherence. Start frame only |
+| `wan` | $0.10/s | Wan 2.7 (list price) |
+| `kling` | $0.112/s | Kling Video O1 (list price) |
+| `premium` / `veo` | $0.20/s | Veo 3.1 1080p without audio (list price) |
 
 **TTS:**
 | Alias | Notes |
 |---|---|
-| `tts-mini` | Default. OpenAI gpt-audio-mini. Strips `[emotional]` tags |
-| `tts-gemini` | Expressive. Supports inline `[emotional]` tags: `[dramatically]`, `[rapidly]`, `[excitedly]`, `[softly]`, `[whispering]` |
+| `tts-mini` | Default. OpenAI gpt-audio-mini, about $0.0037 per 1k chars. Strips `[emotional]` tags |
+| `tts-gemini-lite` | About $0.0146 per 1k chars. Same voices and tags as `tts-gemini` |
+| `tts-gemini` | Expressive, about $0.042 per 1k chars. Supports inline `[emotional]` tags: `[dramatically]`, `[rapidly]`, `[excitedly]`, `[softly]`, `[whispering]` |
 
 **Voices (tts-gemini):**
 - Dramatic: `Fenrir` (excitable), `Kore` (firm), `Charon` (informative), `Puck` (upbeat)

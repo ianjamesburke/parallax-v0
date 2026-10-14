@@ -25,6 +25,8 @@ def _rec(
     output_path: str = "/tmp/x.png",
     duration_ms: int = 100,
     cost_usd: float = 0.025,
+    cost_source: str = "billed",
+    generation_ids: list[str] | None = None,
     test_mode: bool = False,
     run_id: str | None = None,
 ) -> usage.UsageRecord:
@@ -38,6 +40,8 @@ def _rec(
         output_path=output_path,
         duration_ms=duration_ms,
         cost_usd=cost_usd,
+        cost_source=cost_source,
+        generation_ids=generation_ids or [],
         test_mode=test_mode,
         run_id=run_id,
     )

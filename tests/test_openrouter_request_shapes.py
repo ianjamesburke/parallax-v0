@@ -44,7 +44,8 @@ def _real_mode(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 class _FakeResponse:
-    def __init__(self, status_code: int = 200, json_body: dict | None = None, content: bytes = b""):
+    def __init__(self, status_code: int = 200, json_body: dict | None = None, content: bytes = b"", headers: dict | None = None):
+        self.headers = headers or {}
         self.status_code = status_code
         self._json = json_body or {}
         self.content = content
@@ -68,61 +69,74 @@ class _Recorder:
 # Image
 # ---------------------------------------------------------------------------
 
-def test_image_real_strips_openrouter_prefix_from_model_id(monkeypatch, tmp_path):
+def _images_ok(cost: float | None = 0.00375) -> _FakeResponse:
+    b64 = base64.b64encode(b"\x89PNG\r\n\x1a\nfake").decode()
+    body: dict = {"data": [{"b64_json": b64, "media_type": "image/png"}]}
+    if cost is not None:
+        body["usage"] = {"cost": cost}
+    return _FakeResponse(200, body, headers={"x-generation-id": "gen-img-123"})
+
+
+def test_image_real_posts_to_images_endpoint_with_catalog_request_params(monkeypatch, tmp_path):
     rec = _Recorder()
 
     def fake_post(url, *, headers, json, timeout):
         rec.posts.append((url, json))
-        # Minimal valid image response shape
-        b64 = base64.b64encode(b"\x89PNG\r\n\x1a\nfake").decode()
-        return _FakeResponse(200, {
-            "choices": [{"message": {"images": [{"image_url": {"url": f"data:image/png;base64,{b64}"}}]}}],
-        })
-
-    monkeypatch.setattr(openrouter.httpx if hasattr(openrouter, "httpx") else httpx, "post", fake_post, raising=False)
+        return _images_ok()
     monkeypatch.setattr(httpx, "post", fake_post)
 
-    out = openrouter.generate_image("a red apple", alias="draft", out_dir=tmp_path)
+    out = openrouter.generate_image("a red apple", alias="draft", out_dir=tmp_path, aspect_ratio="9:16")
     assert out.exists()
-    body = rec.posts[0][1]
-    assert body["model"] == "google/gemini-2.5-flash-image"  # NO leading 'openrouter/'
-    assert body["modalities"] == ["image", "text"]
-    assert "size" not in body  # not passed when not requested
+    url, body = rec.posts[0]
+    assert url.endswith("/images")
+    assert body["model"] == "openai/gpt-image-2.5-flare"  # NO leading 'openrouter/'
+    assert body["quality"] == "low"  # catalog `request:` params are sent explicitly
+    assert body["aspect_ratio"] == "9:16"
+    assert body["prompt"] == "a red apple"
+    assert "messages" not in body and "modalities" not in body and "size" not in body
 
 
-def test_image_real_passes_size_when_specified(monkeypatch, tmp_path):
+def test_image_real_rejects_unsupported_aspect(monkeypatch, tmp_path):
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: pytest.fail("must not call the API"))
+    with pytest.raises(RuntimeError, match="all fallbacks exhausted"):
+        openrouter.generate_image("x", alias="draft", out_dir=tmp_path, aspect_ratio="21:9")
+
+
+def test_image_real_encodes_reference_images_as_input_references(monkeypatch, tmp_path):
     rec = _Recorder()
-    b64 = base64.b64encode(b"\x89PNG").decode()
-
-    def fake_post(url, *, headers, json, timeout):
-        rec.posts.append((url, json))
-        return _FakeResponse(200, {
-            "choices": [{"message": {"images": [{"image_url": {"url": f"data:image/png;base64,{b64}"}}]}}],
-        })
-    monkeypatch.setattr(httpx, "post", fake_post)
-
-    openrouter.generate_image("x", alias="draft", out_dir=tmp_path, size="1080x720")
-    assert rec.posts[0][1]["size"] == "1080x720"
-
-
-def test_image_real_encodes_reference_images_as_data_url_parts(monkeypatch, tmp_path):
-    rec = _Recorder()
-    b64 = base64.b64encode(b"\x89PNG").decode()
     ref = tmp_path / "ref.png"
     ref.write_bytes(b"\x89PNG\r\n\x1a\nfake-ref")
 
     def fake_post(url, *, headers, json, timeout):
         rec.posts.append((url, json))
-        return _FakeResponse(200, {
-            "choices": [{"message": {"images": [{"image_url": {"url": f"data:image/png;base64,{b64}"}}]}}],
-        })
+        return _images_ok()
     monkeypatch.setattr(httpx, "post", fake_post)
 
     openrouter.generate_image("x", alias="nano-banana", reference_images=[ref], out_dir=tmp_path)
-    content = rec.posts[0][1]["messages"][0]["content"]
-    assert content[0]["type"] == "text"
-    assert content[1]["type"] == "image_url"
-    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+    images_bodies = [b for u, b in rec.posts if u.endswith("/images")]
+    refs = images_bodies[0]["input_references"]
+    assert refs[0]["type"] == "image_url"
+    assert refs[0]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_image_real_records_billed_cost_not_catalog_cost(monkeypatch, tmp_path):
+    """The usage log must carry OpenRouter's billed usage.cost, labelled as such."""
+    import json as _json
+    monkeypatch.setattr(httpx, "post", lambda url, *, headers, json, timeout: _images_ok(cost=0.0123))
+    openrouter.generate_image("x", alias="draft", out_dir=tmp_path, aspect_ratio="9:16")
+    rec = _json.loads((tmp_path / "usage.ndjson").read_text().splitlines()[-1])
+    assert rec["cost_usd"] == pytest.approx(0.0123)
+    assert rec["cost_source"] == "billed"
+    assert rec["generation_ids"] == ["gen-img-123"]  # for reconciling with /api/v1/generation
+
+
+def test_response_without_cost_is_recorded_as_unknown_not_catalog(monkeypatch, tmp_path):
+    import json as _json
+    monkeypatch.setattr(httpx, "post", lambda url, *, headers, json, timeout: _images_ok(cost=None))
+    openrouter.generate_image("x", alias="draft", out_dir=tmp_path, aspect_ratio="9:16")
+    rec = _json.loads((tmp_path / "usage.ndjson").read_text().splitlines()[-1])
+    assert rec["cost_source"] == "unknown"
+    assert rec["cost_usd"] == 0.0
 
 
 def test_image_real_raises_when_response_has_no_images(monkeypatch, tmp_path):
@@ -273,7 +287,7 @@ def test_video_real_raises_on_failed_status(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_video_pricing_model_ids_match_live_openrouter_slugs():
-    """Locks in the corrected slugs from 2026-04-28. If OpenRouter ever
+    """Locks in the slugs verified live on 2026-10-14. If OpenRouter ever
     drops or renames these, this fails loud and the user knows to check
     `/api/v1/videos/models`."""
     from parallax.models import VIDEO_MODELS
@@ -282,13 +296,13 @@ def test_video_pricing_model_ids_match_live_openrouter_slugs():
         "veo": "openrouter/google/veo-3.1",
         "seedance": "openrouter/bytedance/seedance-2.0-fast",
         "wan": "openrouter/alibaba/wan-2.7",
-        "sora": "openrouter/openai/sora-2-pro",
+        "veo-lite": "openrouter/google/veo-3.1-lite",
     }
     for alias, expected_id in expected.items():
         assert alias in VIDEO_MODELS, f"missing alias {alias} in VIDEO_MODELS"
         assert VIDEO_MODELS[alias].model_id == expected_id, (
             f"alias {alias!r} drifted: have {VIDEO_MODELS[alias].model_id!r}, "
-            f"expected {expected_id!r} (verified hosted on OpenRouter 2026-04-28)"
+            f"expected {expected_id!r} (verified hosted on OpenRouter 2026-10-14)"
         )
 
 
