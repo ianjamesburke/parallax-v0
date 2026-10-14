@@ -125,6 +125,7 @@ def _path_of(result: Any) -> str:
 def _record_usage(
     spec: ModelSpec, prompt: str, output_path: str, *, duration_ms: int, cost_usd: float, test: bool,
     cost_source: str = "billed",
+    generation_ids: list[str] | None = None,
 ) -> None:
     _usage.record(
         session_id=current_session_id.get(),
@@ -137,6 +138,7 @@ def _record_usage(
         duration_ms=duration_ms,
         cost_usd=cost_usd,
         cost_source=cost_source,
+        generation_ids=generation_ids or [],
         test_mode=test,
     )
 
@@ -225,7 +227,8 @@ def _call_with_transient_retry(*, kind: Kind, spec, primary_call):
                 )
                 cost_usd, cost_source = 0.0, "unknown"
             _record_usage(spec, "", _path_of(result), duration_ms=duration_ms,
-                          cost_usd=cost_usd, test=False, cost_source=cost_source)
+                          cost_usd=cost_usd, test=False, cost_source=cost_source,
+                          generation_ids=cost.generation_ids)
             return result
         except InsufficientCreditsError:
             raise

@@ -176,6 +176,7 @@ def animate_scenes(
                 duration_ms=0,
                 cost_usd=0.0,
                 cost_source="test",
+                generation_ids=[],
                 test_mode=True,
             )
         return json.dumps(scenes)

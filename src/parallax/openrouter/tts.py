@@ -12,6 +12,7 @@ from .client import (
     _raise_for_credits_or_status,
     _stream_post,
     note_billed_cost,
+    note_generation_id,
 )
 
 _TTS_DEFAULT_VOICE = "nova"
@@ -129,6 +130,7 @@ def _tts_real(
             except _json.JSONDecodeError:
                 continue
             note_billed_cost(event)
+            note_generation_id(event.get("id"))
             choices = event.get("choices") or []
             if not choices:
                 continue
@@ -213,6 +215,7 @@ def _tts_real_speech(
 
     resp = _post("/audio/speech", body, timeout=120.0)
     _raise_for_credits_or_status(resp)
+    note_generation_id(resp.headers.get("x-generation-id"))
 
     if not resp.content:
         raise RuntimeError(

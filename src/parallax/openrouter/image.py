@@ -14,6 +14,7 @@ from .client import (
     _raise_for_credits_or_status,
     _strip_or_prefix,
     note_billed_cost,
+    note_generation_id,
 )
 
 log = get_logger("openrouter")
@@ -253,6 +254,7 @@ def _image_real(
     _raise_for_credits_or_status(resp)
     data = resp.json()
     note_billed_cost(data)
+    note_generation_id(resp.headers.get("x-generation-id"))
 
     images = data.get("data") or []
     b64 = images[0].get("b64_json") if images else None

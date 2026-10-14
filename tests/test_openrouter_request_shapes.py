@@ -44,7 +44,8 @@ def _real_mode(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 class _FakeResponse:
-    def __init__(self, status_code: int = 200, json_body: dict | None = None, content: bytes = b""):
+    def __init__(self, status_code: int = 200, json_body: dict | None = None, content: bytes = b"", headers: dict | None = None):
+        self.headers = headers or {}
         self.status_code = status_code
         self._json = json_body or {}
         self.content = content
@@ -73,7 +74,7 @@ def _images_ok(cost: float | None = 0.00375) -> _FakeResponse:
     body: dict = {"data": [{"b64_json": b64, "media_type": "image/png"}]}
     if cost is not None:
         body["usage"] = {"cost": cost}
-    return _FakeResponse(200, body)
+    return _FakeResponse(200, body, headers={"x-generation-id": "gen-img-123"})
 
 
 def test_image_real_posts_to_images_endpoint_with_catalog_request_params(monkeypatch, tmp_path):
@@ -126,6 +127,7 @@ def test_image_real_records_billed_cost_not_catalog_cost(monkeypatch, tmp_path):
     rec = _json.loads((tmp_path / "usage.ndjson").read_text().splitlines()[-1])
     assert rec["cost_usd"] == pytest.approx(0.0123)
     assert rec["cost_source"] == "billed"
+    assert rec["generation_ids"] == ["gen-img-123"]  # for reconciling with /api/v1/generation
 
 
 def test_response_without_cost_is_recorded_as_unknown_not_catalog(monkeypatch, tmp_path):

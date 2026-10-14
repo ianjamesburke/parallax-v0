@@ -75,7 +75,8 @@ def test_resolve_settings_defaults_to_9_16_when_aspect_absent(tmp_path):
 # ---------------------------------------------------------------------------
 
 class _FakeResponse:
-    def __init__(self, status_code=200, json_body=None, content=b""):
+    def __init__(self, status_code=200, json_body=None, content=b"", headers=None):
+        self.headers = headers or {}
         self.status_code = status_code
         self._json = json_body or {}
         self.content = content

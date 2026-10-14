@@ -33,6 +33,8 @@ class CostScope:
     """
     billed: list[float] = field(default_factory=list)
     estimated: list[float] = field(default_factory=list)
+    # OpenRouter generation ids (`gen-...`) for reconciling against /api/v1/generation.
+    generation_ids: list[str] = field(default_factory=list)
 
 
 _cost_scope: ContextVar[CostScope | None] = ContextVar("parallax_cost_scope", default=None)
@@ -54,6 +56,12 @@ def note_billed_cost(payload: dict) -> None:
     cost = (payload.get("usage") or {}).get("cost")
     if scope is not None and cost is not None:
         scope.billed.append(float(cost))
+
+
+def note_generation_id(generation_id: str | None) -> None:
+    scope = _cost_scope.get()
+    if scope is not None and generation_id and generation_id not in scope.generation_ids:
+        scope.generation_ids.append(generation_id)
 
 
 def note_estimated_cost(usd: float) -> None:
