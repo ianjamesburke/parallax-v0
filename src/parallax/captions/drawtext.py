@@ -23,7 +23,11 @@ def _style_drawtext_filter(
 ) -> str:
     # Escape order matters: backslashes first, then other special chars.
     # Reversing this order would double-escape the backslashes inserted by later steps.
-    escaped = text.replace("\\", "\\\\").replace("'", "’").replace(":", "\\:")
+    # `%` starts a drawtext expansion (`%{...}`), so a literal one must reach drawtext as `\%`.
+    # The filtergraph parser strips one backslash level first, hence two here.
+    escaped = (
+        text.replace("\\", "\\\\").replace("'", "’").replace(":", "\\:").replace("%", "\\\\%")
+    )
     if style.get("uppercase"):
         escaped = escaped.upper()
 
