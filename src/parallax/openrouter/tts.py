@@ -11,6 +11,7 @@ from .client import (
     _post,
     _raise_for_credits_or_status,
     _stream_post,
+    note_billed_cost,
 )
 
 _TTS_DEFAULT_VOICE = "nova"
@@ -127,6 +128,7 @@ def _tts_real(
                 event = _json.loads(payload)
             except _json.JSONDecodeError:
                 continue
+            note_billed_cost(event)
             choices = event.get("choices") or []
             if not choices:
                 continue

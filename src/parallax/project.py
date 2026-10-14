@@ -175,6 +175,7 @@ def animate_scenes(
                 output_path=str(stub),
                 duration_ms=0,
                 cost_usd=0.0,
+                cost_source="test",
                 test_mode=True,
             )
         return json.dumps(scenes)

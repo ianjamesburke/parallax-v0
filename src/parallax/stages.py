@@ -33,6 +33,7 @@ from .avatar import burn_avatar, key_avatar_track
 from .captions import burn_captions
 from .headline import burn_headline, burn_titles
 from .manifest import write_manifest
+from .models import DEFAULT_CLIP_DURATION_S
 from .project import scan_project_folder
 from .settings import ProductionMode, Settings
 from .shim import is_mock_asset, is_test_mode
@@ -65,6 +66,9 @@ class SceneRuntime:
     zoom_amount: float | None = None
     video_references: list[str] | None = None
     reference_images: list[str] | None = None
+    # Plan-pinned scene length. When unset, clips are generated at DEFAULT_CLIP_DURATION_S
+    # (scene length is only known after voiceover alignment, which runs after animation).
+    duration_s: float | None = None
 
 
 @dataclass
@@ -439,6 +443,7 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
             prompt=s.get("prompt", ""),
             still_path=still_paths[idx],
             aspect=s.get("aspect", settings.aspect),
+            duration_s=s.get("duration_s"),
         )
         if s.get("animate"):
             scene_rt.animate = True
@@ -520,6 +525,7 @@ def _animate_one_scene(
         image_path=Path(still),
         end_image_path=Path(end_frame) if end_frame else None,
         input_references=input_references,
+        duration_s=s.duration_s or DEFAULT_CLIP_DURATION_S,
         out_dir=scene_tmp,
         aspect_ratio=s.aspect,
         size=scene_animate_res,

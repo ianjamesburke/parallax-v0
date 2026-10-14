@@ -4,7 +4,8 @@ Every `generate_image` call appends one JSON record to
 `~/.parallax/usage.ndjson` (override via `PARALLAX_USAGE_LOG`). The file is
 the single source of truth for duration and cost accounting across both
 backends. Test-mode calls are recorded with `test_mode: true` and
-`cost_usd: 0.0`; real runs carry the priced cost from pricing.MODELS.
+`cost_usd: 0.0`; real runs carry the OpenRouter-billed cost (`cost_source: billed`),
+or the catalog estimate where the endpoint reports none (`cost_source: estimate`).
 
 summarize() aggregates by alias and by session for the `parallax usage`
 subcommand.
@@ -40,6 +41,8 @@ class UsageRecord:
     output_path: str
     duration_ms: int
     cost_usd: float
+    # "billed" (OpenRouter usage.cost), "estimate" (catalog rate), "test", or "unknown".
+    cost_source: str
     test_mode: bool
 
 
@@ -54,6 +57,7 @@ def record(
     output_path: str,
     duration_ms: int,
     cost_usd: float,
+    cost_source: str,
     test_mode: bool,
     run_id: str | None = None,
 ) -> UsageRecord:
@@ -73,6 +77,7 @@ def record(
         output_path=output_path,
         duration_ms=duration_ms,
         cost_usd=cost_usd,
+        cost_source=cost_source,
         test_mode=test_mode,
     )
     path = usage_log_path()

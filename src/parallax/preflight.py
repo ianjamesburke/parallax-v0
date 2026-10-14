@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .log import get_logger
-from .models import resolve
+from .models import DEFAULT_CLIP_DURATION_S, TTS_MODELS, resolve
 
 log = get_logger("preflight")
 
@@ -117,12 +117,14 @@ def compute_preflight(
         if s.get("animate", False):
             clip_alias = s.get("video_model") or video_model
             clip_locked = bool(s.get("clip_path"))
-            duration = float(s.get("duration_s") or 5.0)
+            duration = float(s.get("duration_s") or DEFAULT_CLIP_DURATION_S)
             if clip_locked:
                 clip_cost = 0.0
                 clip_native_res = None
             else:
                 clip_spec = resolve(clip_alias, kind="video")
+                # Estimate the billed length (the model's request_duration), not the scene length.
+                duration = float(clip_spec.request_duration(duration))
                 clip_cost = clip_spec.cost_usd * duration
                 clip_native_res = clip_spec.native_resolution
 
@@ -148,7 +150,14 @@ def compute_preflight(
 
     # --- Voiceover ---
     vo_locked = bool(plan.get("audio_path"))
-    vo_cost = 0.0  # Current TTS models have cost_usd=0
+    vo_cost = 0.0
+    vo_warnings: list[str] = []
+    if not vo_locked:
+        if voice_model in TTS_MODELS:
+            chars = sum(len(sc.get("vo_text", "")) for sc in plan.get("scenes", []))
+            vo_cost = chars / 1000.0 * TTS_MODELS[voice_model].cost_usd
+        else:
+            vo_warnings.append(f"voiceover cost not estimated: {voice_model!r} is not in the TTS catalog")
 
     # --- Locked-audio warnings ---
     locked_audio_warnings: list[str] = []
@@ -209,7 +218,7 @@ def compute_preflight(
         estimated_total_usd=estimated_total,
         balance_usd=balance_usd,
         has_overwrites=has_overwrites,
-        warnings=locked_audio_warnings,
+        warnings=locked_audio_warnings + vo_warnings,
     )
 
 
@@ -246,7 +255,7 @@ def format_preflight(result: PreflightResult) -> str:
         if s.kind == "still":
             row = (
                 f"    scene {s.index} — still ({s.model_alias})"
-                f"       ~${s.cost_usd:.3f}   {status}"
+                f"       ~${s.cost_usd:.4f}   {status}"
             )
         else:
             res_note = ""
@@ -258,7 +267,7 @@ def format_preflight(result: PreflightResult) -> str:
                 res_note = f" {s.native_resolution} → {_short_res(s.output_resolution)}"
             row = (
                 f"    scene {s.index} — clip ({s.model_alias}{res_note}, {s.duration_s:.0f}s)"
-                f"  ~${s.cost_usd:.3f}   {status}"
+                f"  ~${s.cost_usd:.4f}   {status}"
             )
         lines.append(row)
 
@@ -266,11 +275,11 @@ def format_preflight(result: PreflightResult) -> str:
     vo_status = "[locked — skipping]" if result.voiceover_locked else "[will regenerate]"
     lines.append(
         f"    voiceover ({result.voiceover_model})"
-        f"      ~${result.voiceover_cost_usd:.3f}   {vo_status}"
+        f"      ~${result.voiceover_cost_usd:.4f}   {vo_status}"
     )
 
     lines.append("    ─────────────────────────────────────")
-    lines.append(f"    estimated total:             ~${result.estimated_total_usd:.3f}")
+    lines.append(f"    estimated total:             ~${result.estimated_total_usd:.4f}")
 
     if result.balance_usd is not None:
         lines.append(f"    current balance:             ${result.balance_usd:.2f}")

@@ -5,7 +5,7 @@ Verifies the user-facing `aspect:` knob flows from plan/CLI through
 
   1. `resolve_settings` derives the right resolution per aspect, validates
      the value, and respects an explicit `resolution:` override.
-  2. The image generation prompt cue and request body reflect the chosen
+  2. The image request body reflects the chosen
      aspect (no leaking 9:16 when the caller picks something else).
   3. End-to-end `parallax produce --aspect <N>` (test mode, stub provider)
      produces an mp4 whose dimensions match the chosen aspect.
@@ -107,9 +107,7 @@ def test_generate_image_forwards_aspect_ratio_to_request_body(monkeypatch, tmp_p
 
     def fake_post(url, *, headers, json, timeout):
         posts.append(json)
-        return _FakeResponse(200, {
-            "choices": [{"message": {"images": [{"image_url": {"url": f"data:image/png;base64,{b64}"}}]}}],
-        })
+        return _FakeResponse(200, {"data": [{"b64_json": b64, "media_type": "image/png"}]})
 
     monkeypatch.setattr(httpx, "post", fake_post)
 
@@ -117,9 +115,7 @@ def test_generate_image_forwards_aspect_ratio_to_request_body(monkeypatch, tmp_p
 
     body = posts[0]
     assert body["aspect_ratio"] == aspect
-    # The textual cue is prepended to the prompt — locks in the per-aspect string.
-    text_part = body["messages"][0]["content"][0]["text"]
-    assert aspect in text_part, f"prompt cue missing {aspect!r}: {text_part[:80]!r}"
+    assert body["prompt"] == "a thing"  # aspect travels in the field, not as a prompt cue
 
 
 def test_generate_image_omits_aspect_when_unset(monkeypatch, tmp_path, real_mode_env):
@@ -128,9 +124,7 @@ def test_generate_image_omits_aspect_when_unset(monkeypatch, tmp_path, real_mode
 
     def fake_post(url, *, headers, json, timeout):
         posts.append(json)
-        return _FakeResponse(200, {
-            "choices": [{"message": {"images": [{"image_url": {"url": f"data:image/png;base64,{b64}"}}]}}],
-        })
+        return _FakeResponse(200, {"data": [{"b64_json": b64, "media_type": "image/png"}]})
 
     monkeypatch.setattr(httpx, "post", fake_post)
 

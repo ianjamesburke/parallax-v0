@@ -13,20 +13,13 @@ from .client import (
     _post,
     _raise_for_credits_or_status,
     _strip_or_prefix,
+    note_billed_cost,
 )
 
 log = get_logger("openrouter")
 
-_ASPECT_CUE_TEXTS: dict[str, str] = {
-    "9:16": "Vertical 9:16 portrait orientation, taller than wide, ",
-    "16:9": "Horizontal 16:9 widescreen orientation, wider than tall, ",
-    "1:1":  "Square 1:1 orientation, equal width and height, ",
-    "4:3":  "Landscape 4:3 orientation, wider than tall, ",
-    "3:4":  "Portrait 3:4 orientation, taller than wide, ",
-}
-
 # Default rendering size paired with each aspect — used to pre-crop reference
-# images so Gemini's "match the reference aspect" instinct aligns with the
+# images so a model's "match the reference aspect" instinct aligns with the
 # requested aspect. The actual final video resolution comes from Settings.
 _ASPECT_TO_REF_RES: dict[str, str] = {
     "9:16": "720x1280",
@@ -47,19 +40,6 @@ _REFERENCE_DESCRIBE_PROMPT = (
 )
 
 _describe_reference_cache: dict[tuple[str, float], str] = {}
-
-
-def _aspect_cue(aspect_ratio: str | None) -> str:
-    """Textual prefix to nudge image models that ignore the body `aspect_ratio` field.
-
-    Returns "" when aspect is unknown or unset (no cue prepended). Returns the
-    explicit human-readable directive otherwise. Belt-and-suspenders only — the
-    body field (when honored) is still authoritative; this cue gets the model
-    to look at the request twice.
-    """
-    if not aspect_ratio:
-        return ""
-    return _ASPECT_CUE_TEXTS.get(aspect_ratio, "")
 
 
 def _validate_refs(reference_images, spec: ModelSpec) -> list[Path]:
@@ -118,6 +98,7 @@ def _describe_reference_uncached(image_path: str) -> str:
         resp = _post("/chat/completions", body, timeout=60.0)
         _raise_for_credits_or_status(resp)
         data = resp.json()
+        note_billed_cost(data)
         content = data["choices"][0]["message"]["content"]
         if isinstance(content, list):
             content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
@@ -192,22 +173,19 @@ def analyze_image(
 
 def _image_real(
     prompt: str, spec: ModelSpec, refs: list[Path], out_dir: Path | None,
-    *, size: str | None = None, aspect_ratio: str | None = None,
-    out_file: Path | None = None,
+    *, aspect_ratio: str | None = None, out_file: Path | None = None,
 ) -> Path:
-    """Generate an image via OpenRouter's chat/completions endpoint.
+    """Generate an image via OpenRouter's `/api/v1/images` endpoint.
 
-    OpenRouter exposes image generation through the OpenAI-compatible chat
-    endpoint with `modalities=["image","text"]`. The response message has
-    an `images` list whose entries carry `image_url.url` as a base64 data
-    URL. Reference images (for image-edit / nano-banana style models) are
-    encoded into the user message as `image_url` content parts alongside
-    the prompt text.
+    Request: `{model, prompt, aspect_ratio, input_references, **spec.request_params}`
+    where `request_params` is the catalog's explicit `quality` / `resolution`
+    choice (smallest output with a short side of at least 720 px). Response:
+    `{data: [{b64_json, media_type}], usage: {cost}}` (verified live 2026-10-14).
+    Reference images go in `input_references` as `image_url` parts.
 
-    `aspect_ratio` is the caller-supplied target ratio (e.g. '9:16'). When
-    set, it is sent on the request body as `aspect_ratio` (Gemini honors
-    this), prepended to the prompt as a textual cue, and used to pre-crop
-    every reference image to the matching shape.
+    `aspect_ratio` (e.g. '9:16') must be one the catalog lists for the model;
+    every reference is pre-cropped to that shape so the model's "match the
+    reference aspect" instinct agrees with the request.
     """
     import base64
 
@@ -219,10 +197,14 @@ def _image_real(
         out.mkdir(parents=True, exist_ok=True)
     model_id = _strip_or_prefix(spec.model_id)
 
-    # Textual aspect cue — belt-and-suspenders alongside the body field below.
-    aspect_cue = _aspect_cue(aspect_ratio)
-    cued_prompt = f"{aspect_cue}{prompt}" if aspect_cue else prompt
+    if aspect_ratio and not spec.supports_aspect(aspect_ratio):
+        raise ValueError(
+            f"Model {spec.alias!r} does not support aspect {aspect_ratio!r}; "
+            f"supported: {', '.join(spec.aspect_ratios)}. Edit capabilities.aspect_ratios "
+            f"in models/image.yaml only after verifying the live /api/v1/images/models list."
+        )
 
+    styled_prompt = prompt
     # Style consistency anchor via vision-LLM description of the first reference.
     if refs:
         try:
@@ -230,21 +212,20 @@ def _image_real(
         except Exception:
             ref_desc = ""
         if ref_desc:
-            cued_prompt = (
+            styled_prompt = (
                 f"STYLE REFERENCE (the FIRST attached image is the canonical "
                 f"character & visual-style reference — every generated image "
                 f"MUST match this character's appearance and this exact visual "
                 f"style; do NOT default to photoreal if the reference is "
                 f"stylized): {ref_desc}\n\n"
-                f"{cued_prompt}"
+                f"{prompt}"
             )
 
-    # Pre-crop reference images to the target aspect.
     target_aspect_res: str | None = (
         _ASPECT_TO_REF_RES.get(aspect_ratio) if aspect_ratio else None
     )
 
-    user_content: list[dict[str, Any]] = [{"type": "text", "text": cued_prompt}]
+    input_references: list[dict[str, Any]] = []
     for ref in refs:
         ref_path = Path(ref)
         if target_aspect_res:
@@ -258,38 +239,29 @@ def _image_real(
                 )
         ref_b64 = base64.b64encode(ref_path.read_bytes()).decode("ascii")
         suffix = ref_path.suffix.lstrip(".").lower() or "png"
-        user_content.append({
+        input_references.append({
             "type": "image_url",
             "image_url": {"url": f"data:image/{suffix};base64,{ref_b64}"},
         })
 
-    body: dict[str, Any] = {
-        "model": model_id,
-        "messages": [{"role": "user", "content": user_content}],
-        "modalities": list(spec.image_modalities),
-    }
+    body: dict[str, Any] = {"model": model_id, "prompt": styled_prompt, **spec.request_params}
     if aspect_ratio:
         body["aspect_ratio"] = aspect_ratio
-    if size:
-        body["size"] = size
-    resp = _post("/chat/completions", body, timeout=300.0)
+    if input_references:
+        body["input_references"] = input_references
+    resp = _post("/images", body, timeout=300.0)
     _raise_for_credits_or_status(resp)
     data = resp.json()
+    note_billed_cost(data)
 
-    images = data.get("choices", [{}])[0].get("message", {}).get("images") or []
-    if not images:
-        raise RuntimeError(
-            f"OpenRouter {model_id} returned no images for prompt {prompt[:60]!r}"
-        )
-    url = images[0].get("image_url", {}).get("url", "")
-    if not url.startswith("data:"):
-        raise RuntimeError(
-            f"OpenRouter {model_id} returned non-data-URL image: {url[:80]!r}"
-        )
-    header, _, b64 = url.partition(",")
+    images = data.get("data") or []
+    b64 = images[0].get("b64_json") if images else None
     if not b64:
-        raise RuntimeError(f"OpenRouter {model_id} image data URL missing payload: {header}")
-    suffix = "png" if "png" in header else ("jpg" if "jpeg" in header or "jpg" in header else "png")
+        raise RuntimeError(
+            f"OpenRouter {model_id} returned no image for prompt {prompt[:60]!r}"
+        )
+    media_type = images[0].get("media_type", "image/png")
+    suffix = "jpg" if "jpeg" in media_type or "jpg" in media_type else "png"
     if out_file is not None:
         out_path = out_file
         out_path.parent.mkdir(parents=True, exist_ok=True)

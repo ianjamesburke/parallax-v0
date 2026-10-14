@@ -45,7 +45,7 @@ def test_kind_mismatch_raises(tmp_path):
         openrouter.generate_image("x", alias="kling", out_dir=tmp_path)
     # `seedream` is image-only — surfaces a kind mismatch when called via video.
     with pytest.raises(ValueError, match="video"):
-        openrouter.generate_video("x", alias="seedream", out_dir=tmp_path)
+        openrouter.generate_video("x", alias="seedream", duration_s=4.0, out_dir=tmp_path)
     # `seedream` is image-only — surfaces a kind mismatch when called via tts.
     with pytest.raises(ValueError, match="tts"):
         openrouter.generate_tts("x", alias="seedream", out_dir=tmp_path)
