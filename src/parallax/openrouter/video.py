@@ -14,6 +14,8 @@ from .client import (
     _post,
     _raise_for_credits_or_status,
     _strip_or_prefix,
+    note_billed_cost,
+    note_generation_id,
 )
 
 # Async video generation typically takes 30s – 5 min. Cap the wait so a stuck
@@ -57,7 +59,8 @@ def _video_real(
     body: dict[str, Any] = {
         "model": model_id,
         "prompt": prompt,
-        "duration": int(round(duration_s)),
+        "duration": spec.request_duration(duration_s),
+        **spec.request_params,
     }
     if size:
         body["size"] = size
@@ -102,6 +105,7 @@ def _video_real(
     submit = _post("/videos", body, timeout=60.0)
     _raise_for_credits_or_status(submit)
     job = submit.json()
+    note_generation_id(job.get("id"))
     polling_url = job.get("polling_url")
     if not polling_url:
         raise RuntimeError(f"OpenRouter video submit returned no polling_url: {job!r}")
@@ -135,6 +139,7 @@ def _video_real(
             f"(last status: {last_status.get('status')!r})"
         )
 
+    note_billed_cost(last_status)
     urls = last_status.get("unsigned_urls") or []
     if not urls:
         raise RuntimeError(

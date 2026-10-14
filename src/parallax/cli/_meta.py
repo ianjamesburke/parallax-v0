@@ -207,12 +207,14 @@ def _detect_shell() -> str:
     return "zsh"
 
 
+# Click's completion instruction is `source_<shell>` (verified click 8.1.8-8.3.3 with
+# typer 0.12.5-0.25.1; `<shell>_source` prints "Shell source not supported.").
 def _run_completions_print(shell: str) -> int:
     prog = "parallax"
     if shell == "zsh":
-        print(f'eval "$(_PARALLAX_COMPLETE=zsh_source {prog})"')
+        print(f'eval "$(_PARALLAX_COMPLETE=source_zsh {prog})"')
     elif shell == "bash":
-        print(f'eval "$(_PARALLAX_COMPLETE=bash_source {prog})"')
+        print(f'eval "$(_PARALLAX_COMPLETE=source_bash {prog})"')
     return 0
 
 
@@ -232,9 +234,9 @@ def _run_completions_install(shell: str | None, path: str | None) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     prog = "parallax"
     var = f"_{prog.upper()}_COMPLETE"
-    content = f'eval "$({var}={target_shell}_source {prog})"'
+    content = f'eval "$({var}=source_{target_shell} {prog})"'
     out.write_text(content + "\n")
     print(f"Wrote {target_shell} completion to {out}")
     print(f"\nAdd to your ~/.{target_shell}rc:\n  source {out}")
-    print(f"\nOr source completion directly:\n  eval \"$({var}={target_shell}_source {prog})\"")
+    print(f"\nOr source completion directly:\n  eval \"$({var}=source_{target_shell} {prog})\"")
     return 0

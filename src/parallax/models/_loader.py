@@ -30,19 +30,19 @@ def _to_spec(entry: dict[str, Any], kind: Kind) -> ModelSpec:
     voices = entry.get("voices") or ()
     if isinstance(voices, list):
         voices = tuple(voices)
-    image_modalities = entry.get("modalities") or ("image", "text")
-    if isinstance(image_modalities, list):
-        image_modalities = tuple(image_modalities)
+    durations = tuple(sorted(int(d) for d in entry.get("durations") or ()))
+    if kind == "video" and not durations:
+        raise ValueError(f"video alias {entry['alias']!r} must declare `durations:` (seconds the model accepts)")
 
-    # `portrait_args` is now empty by default — aspect ratio flows from the
-    # caller (Settings → openrouter.generate_image/generate_video) rather
-    # than being baked into the model spec. Phase 1.3 (2026-04-29).
+    # Aspect ratio flows from the caller (Settings → openrouter.generate_image /
+    # generate_video) rather than being baked into the model spec.
     return ModelSpec(
         alias=entry["alias"],
         kind=kind,
         model_id=entry["model_id"],
         cost_usd=float(entry.get("cost", 0.0)),
         cost_unit=entry.get("unit", "image"),
+        fixed_cost_usd=float(entry.get("fixed_cost", 0.0)),
         description=entry.get("description", ""),
         fallback_alias=entry.get("fallback"),
         tier=entry.get("tier", "default"),
@@ -54,7 +54,9 @@ def _to_spec(entry: dict[str, Any], kind: Kind) -> ModelSpec:
         voices=voices,
         tts_backend=entry.get("tts_backend", "chat_audio"),
         native_resolution=caps.get("native_resolution") or None,
-        image_modalities=image_modalities,
+        request_params=dict(entry.get("request") or {}),
+        native_size=caps.get("native_size") or None,
+        durations=durations,
     )
 
 

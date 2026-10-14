@@ -7,7 +7,10 @@ Every callsite that hits OpenRouter goes through these helpers.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -18,6 +21,53 @@ _BASE_HEADERS = {
     "HTTP-Referer": "https://github.com/ianjamesburke/parallax-v0",
     "X-Title": "parallax",
 }
+
+
+@dataclass
+class CostScope:
+    """Cost evidence gathered during one generation call.
+
+    `billed`: USD OpenRouter reported charging (`usage.cost`).
+    `estimated`: USD computed from the catalog, for endpoints whose response
+    carries no usage (e.g. /audio/speech).
+    """
+    billed: list[float] = field(default_factory=list)
+    estimated: list[float] = field(default_factory=list)
+    # OpenRouter generation ids (`gen-...`) for reconciling against /api/v1/generation.
+    generation_ids: list[str] = field(default_factory=list)
+
+
+_cost_scope: ContextVar[CostScope | None] = ContextVar("parallax_cost_scope", default=None)
+
+
+@contextmanager
+def capture_cost() -> Iterator[CostScope]:
+    scope = CostScope()
+    token = _cost_scope.set(scope)
+    try:
+        yield scope
+    finally:
+        _cost_scope.reset(token)
+
+
+def note_billed_cost(payload: dict) -> None:
+    """Record `payload["usage"]["cost"]` into the open scope, if both exist."""
+    scope = _cost_scope.get()
+    cost = (payload.get("usage") or {}).get("cost")
+    if scope is not None and cost is not None:
+        scope.billed.append(float(cost))
+
+
+def note_generation_id(generation_id: str | None) -> None:
+    scope = _cost_scope.get()
+    if scope is not None and generation_id and generation_id not in scope.generation_ids:
+        scope.generation_ids.append(generation_id)
+
+
+def note_estimated_cost(usd: float) -> None:
+    scope = _cost_scope.get()
+    if scope is not None:
+        scope.estimated.append(usd)
 
 
 def _check_key() -> str:

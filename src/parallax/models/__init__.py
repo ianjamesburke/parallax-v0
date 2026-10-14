@@ -24,6 +24,11 @@ from __future__ import annotations
 from ._loader import load_image, load_tts, load_video
 from ._spec import Kind, ModelSpec
 
+# Clip length requested when a scene does not pin `duration_s`. Scene length is
+# only known after voiceover alignment, which runs after animation, so both the
+# pre-flight estimate and the real request use this value.
+DEFAULT_CLIP_DURATION_S = 5.0
+
 # Eager-load on import — catalog is small and frozen at module scope.
 IMAGE_MODELS: dict[str, ModelSpec] = load_image()
 VIDEO_MODELS: dict[str, ModelSpec] = load_video()
@@ -117,6 +122,7 @@ def alias_guidance() -> str:
 
 
 __all__ = [
+    "DEFAULT_CLIP_DURATION_S",
     "Kind",
     "ModelSpec",
     "IMAGE_MODELS",

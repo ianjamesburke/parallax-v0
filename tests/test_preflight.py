@@ -124,7 +124,7 @@ def test_format_preflight_contains_model_and_cost():
     assert "mid" in text
     # Should contain the cost of a mid image
     cost = resolve("mid", kind="image").cost_usd
-    assert f"${cost:.3f}" in text
+    assert f"${cost:.4f}" in text
     # Should contain the header marker
     assert "pre-flight cost estimate" in text
 
@@ -400,3 +400,48 @@ def test_warnings_visible_in_non_interactive_run(capsys):
     prompt_proceed(result, yes=True)
     captured = capsys.readouterr()
     assert "voice_speed" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Billed-duration and voiceover estimates (cost accuracy)
+# ---------------------------------------------------------------------------
+
+def test_clip_estimate_uses_billed_duration_not_scene_length():
+    """A 3 s scene on seedance (min 4 s) is billed for 4 s; the estimate must say so."""
+    from parallax.models import resolve
+    plan = _make_plan([{"index": 0, "animate": True, "duration_s": 3.0, "still_path": "s.png"}], video_model="seedance")
+    clip = [s for s in compute_preflight(plan).scenes if s.kind == "clip"][0]
+    assert clip.duration_s == 4.0
+    assert clip.cost_usd == pytest.approx(resolve("seedance", kind="video").cost_usd * 4)
+
+
+def test_clip_estimate_defaults_to_default_clip_duration():
+    from parallax.models import DEFAULT_CLIP_DURATION_S
+    plan = _make_plan([{"index": 0, "animate": True, "still_path": "s.png"}], video_model="seedance")
+    clip = [s for s in compute_preflight(plan).scenes if s.kind == "clip"][0]
+    assert clip.duration_s == DEFAULT_CLIP_DURATION_S
+
+
+def test_voiceover_cost_scales_with_characters():
+    from parallax.models import resolve
+    text = "x" * 2000
+    plan = _make_plan([{"index": 0, "still_path": "s.png", "vo_text": text}], voice_model="tts-gemini")
+    result = compute_preflight(plan)
+    assert result.voiceover_cost_usd == pytest.approx(resolve("tts-gemini", kind="tts").estimate_tts_usd(2000))
+    assert result.voiceover_cost_usd > 0
+    assert result.estimated_total_usd == pytest.approx(result.voiceover_cost_usd)
+
+
+def test_voiceover_cost_unknown_model_warns_instead_of_guessing():
+    plan = _make_plan([{"index": 0, "still_path": "s.png", "vo_text": "hello"}], voice_model="elevenlabs")
+    result = compute_preflight(plan)
+    assert result.voiceover_cost_usd == 0.0
+    assert any("elevenlabs" in w for w in result.warnings)
+
+
+def test_tts_mini_estimate_matches_billed_short_and_long_scripts():
+    """Billed 2026-10-14: 72 chars -> $0.000451..$0.000467; 180 chars -> $0.000674."""
+    from parallax.models import resolve
+    spec = resolve("tts-mini", kind="tts")
+    assert spec.estimate_tts_usd(72) == pytest.approx(0.000459, rel=0.10)
+    assert spec.estimate_tts_usd(180) == pytest.approx(0.000674, rel=0.10)

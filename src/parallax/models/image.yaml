@@ -1,55 +1,71 @@
-# Image generation models. All routed through OpenRouter.
+# Image generation models. All routed through OpenRouter's /api/v1/images endpoint.
 #
 # Tier aliases (`draft` / `mid` / `premium`) are the default vocabulary the
-# agent uses. Named aliases exist for pinning a specific Gemini model.
-# Slugs were verified live against `/api/v1/models` 2026-04-29.
+# agent uses. Named aliases exist for pinning a specific model.
+# Slugs, costs and sizes were measured live on 2026-10-14: slugs against
+# `/api/v1/images/models`, costs from the billed `usage.cost` of real 9:16
+# calls (see DEV_LOG.md).
 #
-# `capabilities.aspect_ratios` is the list of supported output ratios. Use
-# ["any"] only if the model genuinely accepts arbitrary ratios.
+# DEFAULT RESOLUTION POLICY: every entry generates at the smallest output
+# the model offers whose short side is at least 720 px (enough for 720x1280
+# social video). It is set explicitly per entry in `request:`, the exact
+# `quality` / `resolution` parameters sent to the API. `capabilities.native_size`
+# is the measured 9:16 output (WxH). Models with no size control (gemini-2.5)
+# return a fixed size. Below-720 tiers are never used (e.g. gemini 3.1 flash
+# "512" returns 384x688).
+#
+# `cost` is the billed USD per image with NO reference images. Each reference
+# image adds input-token cost (gpt-image: about +$0.0047 per ref at 432x768).
+#
+# `capabilities.aspect_ratios` is the list of Parallax aspects the model
+# honors natively. `max_refs` is the model's `input_references` limit.
 
 - alias: draft
-  model_id: openrouter/google/gemini-2.5-flash-image
+  model_id: openrouter/openai/gpt-image-2.5-flare
   tier: draft
-  cost: 0.039
+  cost: 0.00375
   unit: image
-  description: Cheapest. Gemini 2.5 Flash Image. NOTE — sometimes ignores aspect_ratio body field on first call; prefer `mid` for non-square output.
-  fallback: null
+  description: Cheapest. OpenAI GPT Image 2.5 Flare at low quality. Honors 9:16 natively; strong identity with reference images.
+  fallback: gemini-3-flash-lite
+  request: {quality: low}
   capabilities:
-    aspect_ratios: ["9:16", "16:9", "1:1"]
-    max_refs: 8
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
+    native_size: "864x1536"
+    max_refs: 16
   inputs:
     - style_ref
     - product_ref
     - character_ref
 
 - alias: mid
-  model_id: openrouter/google/gemini-3.1-flash-image-preview
+  model_id: openrouter/openai/gpt-image-2.5-flare
   tier: mid
-  cost: 0.039
+  cost: 0.00855
   unit: image
-  description: Default. Gemini 3.1 Flash Image (preview). Honors aspect_ratio natively.
-  fallback: draft
+  description: Default. OpenAI GPT Image 2.5 Flare at medium quality. Cleaner detail and text than draft.
+  fallback: gemini-3-flash-lite
+  request: {quality: medium}
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
-    max_refs: 8
+    native_size: "864x1536"
+    max_refs: 16
   inputs:
     - style_ref
     - product_ref
     - character_ref
 
 - alias: premium
-  model_id: openrouter/google/gemini-3-pro-image-preview
+  model_id: openrouter/openai/gpt-image-2.5-sunburst
   tier: premium
-  cost: 0.080
+  cost: 0.0325
   unit: image
-  description: Best fidelity. Gemini 3 Pro Image (preview). Honors aspect_ratio natively.
-  # No fallback: Pro -> Flash silently degrades style fidelity for stylized
-  # references. Failing loud surfaces the underlying error so the operator
-  # can rephrase or accept.
+  description: Best fidelity. OpenAI GPT Image 2.5 Sunburst at high quality.
   fallback: null
+  request: {quality: high}
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
-    max_refs: 8
+    native_size: "864x1536"
+    max_refs: 16
   inputs:
     - style_ref
     - product_ref
@@ -60,43 +76,65 @@
 - alias: nano-banana
   model_id: openrouter/google/gemini-2.5-flash-image
   tier: default
-  cost: 0.039
+  cost: 0.0387
   unit: image
-  description: Gemini 2.5 Flash Image (a.k.a. Nano Banana). Multi-ref compositing.
+  description: Gemini 2.5 Flash Image (a.k.a. Nano Banana). No size control; fixed output. Max 3 reference images.
   fallback: mid
   capabilities:
-    aspect_ratios: ["9:16", "16:9", "1:1"]
-    max_refs: 8
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
+    native_size: "768x1344"
+    max_refs: 3
   inputs:
     - style_ref
     - product_ref
     - character_ref
 
 - alias: gemini-3-flash
-  model_id: openrouter/google/gemini-3.1-flash-image-preview
+  model_id: openrouter/google/gemini-3.1-flash-image
   tier: default
-  cost: 0.039
+  cost: 0.0672
   unit: image
-  description: Gemini 3.1 Flash Image (preview). Honors aspect_ratio natively.
+  description: Gemini 3.1 Flash Image (Nano Banana 2) at 1K. The 512 tier is below 720 px so it is not used.
   fallback: nano-banana
+  request: {resolution: "1K"}
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
-    max_refs: 8
+    native_size: "768x1376"
+    max_refs: 14
+  inputs:
+    - style_ref
+    - product_ref
+    - character_ref
+
+- alias: gemini-3-flash-lite
+  model_id: openrouter/google/gemini-3.1-flash-lite-image
+  tier: default
+  cost: 0.0336
+  unit: image
+  description: Gemini 3.1 Flash Lite Image at 1K. Cheapest Gemini; 1K is its only tier.
+  fallback: nano-banana
+  request: {resolution: "1K"}
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
+    native_size: "768x1376"
+    max_refs: 14
   inputs:
     - style_ref
     - product_ref
     - character_ref
 
 - alias: gemini-3-pro
-  model_id: openrouter/google/gemini-3-pro-image-preview
+  model_id: openrouter/google/gemini-3-pro-image
   tier: default
-  cost: 0.080
+  cost: 0.1344
   unit: image
-  description: Gemini 3 Pro Image (preview). Best fidelity; honors aspect_ratio.
+  description: Gemini 3 Pro Image at 1K. Expensive; prefer premium unless you need Gemini style.
   fallback: null
+  request: {resolution: "1K"}
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
-    max_refs: 8
+    native_size: "768x1376"
+    max_refs: 14
   inputs:
     - style_ref
     - product_ref
@@ -105,14 +143,32 @@
 - alias: grok-image
   model_id: openrouter/x-ai/grok-imagine-image-quality
   tier: default
-  cost: 0.050
+  cost: 0.05
   unit: image
-  description: "xAI Grok Imagine Image Quality. From $0.05/image. Accepts reference images for character/product identity continuity."
+  description: xAI Grok Imagine Image Quality at 1K. Flat $0.05 per image. Strong identity with references.
   fallback: mid
-  modalities: ["image"]
+  request: {resolution: "1K"}
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
-    max_refs: 4
+    native_size: "720x1280"
+    max_refs: 3
+  inputs:
+    - style_ref
+    - product_ref
+    - character_ref
+
+- alias: seedream
+  model_id: openrouter/bytedance-seed/seedream-5-0-flash
+  tier: default
+  cost: 0.018
+  unit: image
+  description: ByteDance Seedream 5.0 Flash at 1K. Strong identity continuity with references.
+  fallback: mid
+  request: {resolution: "1K"}
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
+    native_size: "720x1280"
+    max_refs: 14
   inputs:
     - style_ref
     - product_ref
