@@ -35,9 +35,9 @@ from .headline import burn_headline, burn_titles
 from .manifest import write_manifest
 from .project import scan_project_folder
 from .settings import ProductionMode, Settings
-from .shim import is_mock_asset
+from .shim import is_mock_asset, is_test_mode
 from .text_expand import expand_digits
-from .voiceover import generate_voiceover_dict
+from .voiceover import generate_voiceover_dict, mock_words
 
 
 # --------------------------------------------------------------------------
@@ -630,9 +630,14 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
                 else float(words[-1]["end"]) if words else 0.0
             )
         else:
-            from . import forced_align
-            _log(settings, f"forced_align → {Path(audio_path).name} (whisperx)")
-            words = forced_align.align_words(audio_path)
+            if is_test_mode():
+                # WhisperX cannot align the silent stub audio; use synthetic timings.
+                _log(settings, f"test mode: synthetic word timings → {Path(audio_path).name}")
+                words = mock_words(" ".join(s.get("vo_text", "") for s in plan.get("scenes", [])))
+            else:
+                from . import forced_align
+                _log(settings, f"forced_align → {Path(audio_path).name} (whisperx)")
+                words = forced_align.align_words(audio_path)
             import wave as _wave
             with _wave.open(audio_path, "rb") as _w:
                 total = _w.getnframes() / float(_w.getframerate())
@@ -676,8 +681,12 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
         audio_path = vo_result["audio_path"]
         words_path = vo_result["words_path"]
 
-        from . import forced_align
-        aligned_words = forced_align.align_words(audio_path)
+        if is_test_mode():
+            # The mock voiceover already carries synthetic word timings.
+            aligned_words = vo_result["words"]
+        else:
+            from . import forced_align
+            aligned_words = forced_align.align_words(audio_path)
         vo_result["words"] = aligned_words
         Path(words_path).write_text(
             json.dumps({"words": aligned_words, "total_duration_s": vo_result["total_duration_s"]}, indent=2)

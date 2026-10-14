@@ -271,14 +271,22 @@ def _trim_long_pauses(
     return adjusted, new_dur, len(gaps), total_removed
 
 
-def _mock_voiceover(text: str, dest: Path) -> str:
-    words_text = re.sub(r'\[[^\]]*\]', '', text).split()
+def mock_words(text: str) -> list[dict]:
+    """Deterministic synthetic per-word timings for PARALLAX_TEST_MODE.
+
+    Stands in for forced alignment, which cannot run on the silent stub audio.
+    """
+    words: list[dict] = []
     t = 0.0
-    words = []
-    for w in words_text:
+    for w in re.sub(r'\[[^\]]*\]', '', text).split():
         dur = max(0.3, len(w) * 0.06)
         words.append({"word": w, "start": round(t, 3), "end": round(t + dur, 3)})
         t += dur + 0.05
+    return words
+
+
+def _mock_voiceover(text: str, dest: Path) -> str:
+    words = mock_words(text)
     total = words[-1]["end"] if words else 0.0
 
     # Silence mp3
