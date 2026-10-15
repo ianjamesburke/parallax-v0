@@ -28,9 +28,21 @@ export OPENROUTER_API_KEY=sk-or-...
 
 Before planning a new production, inspect the supplied script, project notes, and reference inventory. Ask one compact set of questions only for choices that remain unresolved: whether to preserve the script verbatim, whether the user wants a storyboard or the full video, and any format, voice, or spending constraint.
 
-When a named brand or product must be shown and no usable official visual reference is supplied, call that out before writing the brief and offer to look up official brand/product references on the web. Get the user's approval before researching or adopting an internet-found reference. Once approved, prefer an official source, inspect the candidate rather than relying on its filename or search snippet, save or record its source with the project, and **open the found reference** for the user immediately. Mark unverified/generated placeholders as such; do not present them as approved branding. A supplied composite style reference can be sufficient for a first style test. Request cleaner assets when their absence prevents a specific approved shot, rather than making optional uploads a prerequisite for all progress.
+When a named brand or product appears in the video, gather missing visual references from its official website or verified app-store listing as part of storyboard preparation, unless the user limits browsing or supplies a complete brand kit. Inspect and save the actual logos and useful product images with their source URLs. Show them in the storyboard as official-source references pending creative review. Preserve real logos and UI; generated approximations are not official assets. A supplied composite style sample is enough to start reference development; ask for cleaner files only when a particular shot needs them.
 
 Plan global character/product references can merge with scene references. For mixed character shots and diagrams, prefer explicit per-scene refs and omit global character/product fields from the production plan so unrelated images do not condition graphics.
+
+### Script structure and project identity
+
+Separate opening display copy from spoken narration before splitting scenes. A labeled `H:` or `Headline:` section belongs in top-level `headline` when it denotes on-screen opening text; do not put it in `vo_text`. `Body:` identifies narration. A hook can be spoken when the script says so; ask only when its role is ambiguous. Verify the assembled scene narration against the body text, separately from headline preservation. The production headline currently lasts through the first scene.
+
+Preserve an existing project title. Otherwise propose a short descriptive `concept_name` in the brief and mark it as a proposal in the review conversation. Accept an optional user-supplied `concept_id`; do not invent a client tracking identifier. The HTML heading and browser tab use this identity. Keep the longer production objective in `goal`.
+
+### Develop reference material before scene generation
+
+When a style sample needs translating into a consistent video character or world, generate a small reusable reference set within the authorized budget: typically a clean character sheet and one environment/style frame. Use the supplied sample to guide these assets. Include them in the storyboard before generating the scene batch, clearly marked as generated candidates pending approval. Use approved character/style assets as scene `image_refs` instead of repeatedly feeding a broad screenshot containing unrelated characters and text. Keep branding in separately sourced official assets.
+
+Record references in `assets.provided` with `origin: supplied`, `generated`, or `official`, `review_status: pending` or `approved`, and `source_url` for web sources. `provided` means the file exists as an input, even if generated earlier in the workflow. Only record approved after real user acceptance. Reference generation is a paid preparation step; the HTML render itself remains free. Preserve original source files and record prompts, model, output and billed costs.
 
 ### Scene-length and hook check
 
@@ -38,7 +50,7 @@ Before spending on a brief or plan, audit the script scene by scene. A generatio
 
 If the user has provided only a concept or asks for a script from scratch, propose a concise, platform-appropriate version first: lead with a specific visual/action hook in the first 1–2 seconds, put the tension, benefit, or surprising change on screen early, vary the visual beat before attention drops, and reserve a clean final beat for the CTA. Prefer a 15–45 second initial cut unless the user specifies another duration. For a longer script, say why it needs a cut-down or a multi-shot treatment and offer concrete short-form versions before generating.
 
-Show the native HTML storyboard before generation; it contains the scene/reference map. Record only additional reference provenance or missing assets in project notes, avoiding a second manually maintained scene table. Shared art direction belongs in a short style note, and each executable image prompt must include the necessary style description: plan `style` and `style_hint` currently affect voice synthesis, not still generation.
+Show the native HTML storyboard before scene-batch generation; it contains the scene/reference map. Record only additional reference provenance or missing assets in project notes, avoiding a second manually maintained scene table. Shared art direction belongs in a short style note, and each executable image prompt must include the necessary style description: plan `style` and `style_hint` currently affect voice synthesis, not still generation.
 
 ---
 
@@ -46,8 +58,8 @@ Show the native HTML storyboard before generation; it contains the scene/referen
 
 For a staged production, keep the authored brief as the scene map. `scene_type` describes the proposed final treatment: `still`, `animation`, or `motion_graphic`; `shot_type` describes the content: `character`, `broll`, or `screen`. Preserve proposed treatments when creating stage-specific execution plans.
 
-1. **Storyboard.** Preserve the supplied narration and beat order unless the user asks for a rewrite. Author concise scene prompts and explicit scene types. Run `parallax storyboard --folder /absolute/project --brief /absolute/project/brief.yaml`, open the returned HTML, and ask for feedback on scene breakdown and treatments. This command is local and free. Empty preview areas are pending assets, not generated stills. Estimated seconds are for review only.
-2. **Stills.** After storyboard approval and a spending cap, generate a representative character/style anchor first, then the approved batch. Use `stills_only: true` in a separate execution plan for image scenes. Keep unfinished graphics out of that generation batch and use the motion-graphics workflow below. Inspect and lock approved stills, update `still_path` in the brief, and refresh the HTML. Pause for still approval before paid animation.
+1. **Storyboard and reference direction.** Preserve the supplied narration and beat order unless the user asks for a rewrite; separate the headline first. Gather official brand assets and, when authorized, develop the small reference set above. Author concise scene prompts and explicit scene types. Run `parallax storyboard --folder /absolute/project --brief /absolute/project/brief.yaml`, open the returned HTML, and ask for feedback on scene breakdown and treatments. This command is local and free. Empty preview areas are pending assets, not generated stills. Estimated seconds are for review only.
+2. **Stills.** After storyboard/reference approval and a spending cap, use the accepted reference set for a representative scene, then generate the approved batch. If reference development was deferred, review that set first. Use `stills_only: true` in a separate execution plan for image scenes. Keep unfinished graphics out of that generation batch and use the motion-graphics workflow below. Inspect and lock approved stills, update `still_path` in the brief, and refresh the HTML. Pause for still approval before paid animation.
 3. **Narrated draft and motion.** After still approval, make a separate draft plan with approved stills, `scene_type: still` and `animate: false` for image scenes, `stills_only: false`, and `captions: skip`. Keep the final proposed types in the authored brief. For unfinished graphics, use the approved poster as a still in the draft plan. Preserve raw narration and inspect spoken fidelity before trusting alignment or captions. Use measured narration timing to price and prepare a small animation pilot and timed graphics. Show the pilot before extending to the remaining selected shots; carry forward approved assets and the same budget ledger.
 4. **Final review.** Assemble accepted clips against approved narration, inspect captions and every scene transition, decode the export, and open the video. Report mechanical checks separately from human acceptance.
 
@@ -112,6 +124,9 @@ parallax validate --folder ./my-project --brief ./my-project/brief.yaml
 ## brief.yaml format
 
 ```yaml
+concept_name: "My 30-Day Reset" # propose if no title exists
+concept_id: null             # optional supplied tracking ID
+headline: "30-day drinking reset is all it takes" # opening overlay, not spoken
 goal: "30-second direct-response ad"
 aspect: "9:16"          # 9:16 | 16:9 | 1:1 | 4:3 | 3:4
 voice: Fenrir           # default: nova
@@ -196,7 +211,7 @@ style: null                   # voice synthesis direction; not a shared image pr
 style_hint: null              # additional voice direction
 resolution: null              # output resolution e.g. "480x854"
 animate_resolution: null      # video gen resolution e.g. "480x854"
-headline: null                # persistent headline text overlay
+headline: null                # opening overlay through the first scene
 headline_fontsize: null
 headline_bg: null             # e.g. "0x000000"
 headline_color: null          # e.g. "0xFFFFFF"

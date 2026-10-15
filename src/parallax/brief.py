@@ -56,6 +56,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 import warnings
 from typing import Any
@@ -74,6 +75,20 @@ class ProvidedAsset(BaseModel):
     path: str
     kind: Literal["style_ref", "product_ref", "character_ref"]
     description: str | None = None
+    source_url: str | None = None
+    origin: Literal["supplied", "generated", "official"] = "supplied"
+    review_status: Literal["pending", "approved"] = "pending"
+
+    @field_validator("source_url")
+    @classmethod
+    def _check_source_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        parsed = urlsplit(value)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError("source_url must be an http(s) URL with a hostname")
+        return value
+
 
 
 class GeneratedAsset(BaseModel):
@@ -157,6 +172,9 @@ class Brief(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     goal: str
+    concept_name: str | None = None
+    concept_id: str | None = None
+    headline: str | None = None  # opening overlay, never included in voiceover
     aspect: Literal["9:16", "16:9", "1:1", "4:3", "3:4"] = "9:16"
     voice: str = "nova"
     voice_speed: float = 1.0
@@ -237,6 +255,7 @@ class Brief(BaseModel):
             "aspect": self.aspect,
             "voice": self.voice,
             "voice_speed": self.voice_speed,
+            **({"headline": self.headline} if self.headline else {}),
             **({"pronunciations": self.pronunciations} if self.pronunciations else {}),
             "scenes": [
                 {

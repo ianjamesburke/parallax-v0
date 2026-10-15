@@ -38,7 +38,7 @@ def test_validate_brief_missing_provided_asset(tmp_path):
     assert any("missing.png" in e["message"] for e in result["errors"])
 
 
-def test_validate_brief_product_ref_warns(tmp_path):
+def test_validate_brief_product_ref_is_wired_without_stale_warning(tmp_path):
     logo = tmp_path / "logo.png"
     logo.write_bytes(b"fake")
     brief = tmp_path / "brief.yaml"
@@ -50,7 +50,11 @@ def test_validate_brief_product_ref_warns(tmp_path):
     from parallax.validate import validate_brief
     result = validate_brief(brief, tmp_path)
     assert result["valid"] is True
-    assert any("#83" in w["message"] for w in result["warnings"])
+    assert result["warnings"] == []
+    from parallax.planner import plan_from_brief
+    planned = plan_from_brief(brief, tmp_path)
+    assert planned.ok
+    assert yaml.safe_load(planned.plan_path.read_text())["product_image"] == str(logo)
 
 
 def test_validate_brief_bad_schema(tmp_path):

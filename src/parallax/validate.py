@@ -48,16 +48,6 @@ def validate_brief(brief_path: str | Path, folder: str | Path) -> dict:
                 "message": f"file not found: {full}",
             })
 
-        # product_ref has no wiring yet (see #83)
-        if asset.kind == "product_ref":
-            warnings.append({
-                "field": f"assets.provided[{i}]",
-                "message": (
-                    "product_ref provided but no wiring exists — "
-                    "will be ignored (see #83)"
-                ),
-            })
-
     # Per-scene image_refs existence
     for scene in brief.script.scenes:
         for j, image_ref in enumerate(scene.image_refs):

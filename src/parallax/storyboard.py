@@ -9,25 +9,26 @@ import re
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from .brief import Brief
+from .brief import Brief, ProvidedAsset
 
 
 _STYLE = """
-:root{color-scheme:light;--ink:#182c30;--muted:#52696d;--paper:#f4f1e8;--line:#d2d9d3}
+:root{color-scheme:dark;--ink:#e5ece9;--muted:#a9bab5;--paper:#101817;--line:#354540}
 *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 system-ui,sans-serif}
 main{max-width:1160px;margin:auto;padding:50px 28px}h1{font:500 clamp(32px,5vw,56px)/1.12 Georgia,serif;max-width:950px;margin:12px 0 24px}
 h2{font-size:24px;margin:0 0 12px}h3{font-size:13px;text-transform:uppercase;letter-spacing:.09em;margin:20px 0 7px}
 p{margin:8px 0;white-space:pre-wrap}.eyebrow,.meta{color:var(--muted);font-size:13px}.eyebrow{text-transform:uppercase;letter-spacing:.17em}
-.summary,.gate{padding:20px 24px;background:#e2e9df;border-radius:12px;margin:22px 0}.gate{background:#fff;border:1px solid var(--line)}
-nav{display:flex;gap:8px;flex-wrap:wrap;margin:25px 0}a{color:#225e65}nav a{padding:6px 12px;border:1px solid var(--line);border-radius:25px;text-decoration:none}
-.scene{background:#fff;border:1px solid var(--line);border-radius:16px;margin:26px 0;padding:28px;break-inside:avoid;scroll-margin-top:20px}
-.scene-head{display:flex;justify-content:space-between;gap:16px;align-items:center}.badge{border-radius:24px;padding:6px 14px;background:#e3ecf1;font-size:13px;white-space:nowrap}
-.motion_graphic .badge{background:#f6e5c7}.animation .badge{background:#e8e2f5}.columns{display:grid;grid-template-columns:1fr 1fr;gap:30px}
+.summary,.gate{padding:20px 24px;background:#223831;border-radius:12px;margin:22px 0}.gate{background:#192420;border:1px solid var(--line)}
+a{color:#a1d7cd}
+.scene{background:#192420;border:1px solid var(--line);border-radius:16px;margin:26px 0;padding:28px;break-inside:avoid;scroll-margin-top:20px}
+.scene-head{display:flex;justify-content:space-between;gap:16px;align-items:center}.badge{border-radius:24px;padding:6px 14px;background:#2c424b;font-size:13px;white-space:nowrap}
+.motion_graphic .badge{background:#514127}.animation .badge{background:#403650}.columns{display:grid;grid-template-columns:1fr 1fr;gap:30px}
 blockquote{font:24px/1.45 Georgia,serif;margin:18px 0;padding-left:18px;border-left:3px solid #85a19b;white-space:pre-wrap}
-.gallery{display:flex;gap:16px;flex-wrap:wrap}.asset{margin:12px 0;max-width:290px;min-width:140px;overflow-wrap:anywhere}.asset img,.asset video{width:100%;max-height:330px;object-fit:contain;background:#f2f3ef;border-radius:8px}.asset figcaption{font-size:12px;color:var(--muted)}
-.missing{color:#913f2b;border:1px dashed #bd8d7c;padding:14px;border-radius:8px}.empty{padding:28px;background:#f3f5f2;border-radius:8px;color:var(--muted)}
+.gallery{display:flex;gap:16px;flex-wrap:wrap}.asset{margin:12px 0;max-width:290px;min-width:140px;overflow-wrap:anywhere}.asset img,.asset video{width:100%;max-height:330px;object-fit:contain;background:#101817;border-radius:8px}.asset figcaption{font-size:12px;color:var(--muted)}
+.missing{color:#efb5a1;border:1px dashed #bd8d7c;padding:14px;border-radius:8px}.empty{padding:28px;background:#121d19;border-radius:8px;color:var(--muted)}
+.scene .asset img,.scene .asset video{height:280px}.scene .empty{min-height:280px;width:100%}
 footer{color:var(--muted);font-size:13px;margin-top:40px}@media(max-width:700px){main{padding:24px 16px}.columns{grid-template-columns:1fr}.scene{padding:20px}.scene-head{align-items:flex-start}}
-@media print{body{background:white}main{padding:0}nav{display:none}.scene{border-radius:0}.gate{break-inside:avoid}}
+@media print{:root{color-scheme:light;--ink:#182c30;--muted:#52696d;--paper:white;--line:#d2d9d3}main{padding:0}.scene,.gate,.summary,.empty{background:white;border-radius:0}.badge,.motion_graphic .badge,.animation .badge{background:#e3ecf1}.gate{break-inside:avoid}a{color:#225e65}}
 """
 
 
@@ -54,11 +55,42 @@ def _asset(folder: Path, raw_path: str, label: str, *, video: bool = False) -> s
     return f'<figure class="asset">{media}<figcaption><a href="{uri}">{caption}</a></figcaption></figure>'
 
 
+def _reference_groups(brief: Brief, folder: Path) -> str:
+    """Group reference provenance without treating pending assets as approved."""
+    groups: dict[str, list[ProvidedAsset]] = {
+        "Source style and supplied references": [],
+        "Generated character and style references": [],
+        "Official brand references": [],
+    }
+    titles = dict(zip(("supplied", "generated", "official"), groups))
+    for asset in brief.assets.provided:
+        groups[titles[asset.origin]].append(asset)
+    sections = []
+    for title, assets in groups.items():
+        if not assets:
+            continue
+        cards = []
+        for asset in assets:
+            label = asset.description or asset.kind.replace("_", " ")
+            preview = _asset(folder, asset.path, label)
+            provenance = f'<p class="meta">{asset.origin.title()} · Review: {asset.review_status}</p>'
+            source = (
+                f'<p class="meta"><a href="{escape(asset.source_url, quote=True)}" rel="noopener noreferrer">Source</a></p>'
+                if asset.source_url else ''
+            )
+            cards.append(f'<div class="asset">{preview}{provenance}{source}</div>')
+        sections.append(f'<section><h2>{title}</h2><div class="gallery">{"".join(cards)}</div></section>')
+    if not sections:
+        return ''
+    return ''.join(sections) + '<p class="meta">References guide the look; they are not scene assets. Review labels record the authored status. Assign scene image_refs explicitly for image generation.</p>'
+
+
 def render_storyboard(brief: Brief, folder: str | Path) -> str:
     """Return self-contained layout and image previews; video links stay local."""
     root = Path(folder).expanduser().resolve()
+    concept_name = brief.concept_name or root.name or "Storyboard"
+    concept_title = f"{concept_name} · {brief.concept_id}" if brief.concept_id else concept_name
     cards: list[str] = []
-    navigation: list[str] = []
     total = 0.0
     for position, scene in enumerate(brief.script.scenes, start=1):
         kind = scene.resolved_scene_type
@@ -67,7 +99,6 @@ def render_storyboard(brief: Brief, folder: str | Path) -> str:
         words = len(re.sub(r"\[[^\]]*\]", "", scene.vo_text).split())
         duration = words / 2.5
         total += duration
-        navigation.append(f'<a href="#scene-{position}">{scene.index:02d} · {title}</a>')
         media = []
         if scene.still_path:
             media.append(_asset(root, scene.still_path, "Supplied still"))
@@ -86,7 +117,13 @@ def render_storyboard(brief: Brief, folder: str | Path) -> str:
 <div class="columns"><div><h3>Voiceover</h3><blockquote>{escape(scene.vo_text)}</blockquote>
 <h3>Visual direction</h3><p>{escape(scene.prompt)}</p>{motion}{copy}{route}</div>
 <div><h3>Supplied scene assets</h3><div class="gallery">{assets}</div>{'<h3>Scene references</h3><div class="gallery">' + refs + '</div>' if refs else ''}</div></div></article>''')
-    provided = ''.join(_asset(root, asset.path, asset.description or asset.kind.replace('_', ' ')) for asset in brief.assets.provided)
+    provided = _reference_groups(brief, root)
+    headline = (
+        '<section class="gate"><h2>Opening headline</h2>'
+        f'<blockquote>{escape(brief.headline)}</blockquote>'
+        '<p class="meta">On-screen overlay during the first scene. Not spoken; excluded from the reading estimate.</p></section>'
+        if brief.headline else ''
+    )
     criteria = ''.join(f'<li>{escape(item)}</li>' for item in brief.success_criteria)
     counts = {kind: sum(scene.resolved_scene_type == kind for scene in brief.script.scenes)
               for kind in ("still", "animation", "motion_graphic")}
@@ -94,16 +131,18 @@ def render_storyboard(brief: Brief, folder: str | Path) -> str:
                               for kind, count in counts.items() if count)
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Parallax · Storyboard</title><style>{_STYLE}</style></head><body><main>
-<div class="eyebrow">Parallax / Storyboard review</div><h1>Storyboard</h1>
+<title>{escape(concept_title)} · Storyboard</title><style>{_STYLE}</style></head><body><main>
+<div class="eyebrow">Parallax / Storyboard review</div><h1>{escape(concept_name)}</h1>
+{'<p class="meta">Concept ID: ' + escape(brief.concept_id) + '</p>' if brief.concept_id else ''}
 <p>{escape(brief.goal)}</p>
 <p class="meta">{len(brief.script.scenes)} scenes · {escape(brief.aspect)} · voice: {escape(brief.voice)}</p>
 <p class="meta">{type_summary}</p>
 <div class="summary"><strong>Estimated reading time: {total:.1f}s at 150 words/minute.</strong><p>These are pacing estimates, not production timing. Generated narration and alignment determine final scene durations.</p></div>
 <section class="gate"><h2>Checkpoint 1 — Storyboard</h2><p>Review scene order, narration, visual direction, scene types, references, and on-screen copy before generating assets.</p><p>Next: review stills and motion-graphic frames → approve a motion sample → animate approved stills and render graphics → review the final edit.</p><p class="meta">This document records proposals, not approval. Share decisions in the conversation; rendering it does not authorize generation.</p></section>
 {'<h2>Success criteria</h2><ul>' + criteria + '</ul>' if criteria else ''}
-{'<h2>Provided references</h2><div class="gallery">' + provided + '</div><p class="meta">References guide the look; they are not generated scene assets. Assign scene image_refs explicitly for image generation.</p>' if provided else ''}
-<nav aria-label="Scenes">{''.join(navigation)}</nav>{''.join(cards)}
+{headline}
+{provided}
+{''.join(cards)}
 <footer>Offline review — no provider calls. Image previews are embedded; original files and video previews link to local assets.</footer>
 </main></body></html>'''
 

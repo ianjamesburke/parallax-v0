@@ -92,8 +92,8 @@ def test_html_escapes_text_embeds_references_and_distinguishes_assets(tmp_path):
         dict(index=1, vo_text='End', prompt='<img onerror=alert(1)>', scene_type='motion_graphic'),
     ]})
     html = render_storyboard(brief, tmp_path)
-    assert '<h1>Storyboard</h1>' in html
-    assert '<title>Parallax · Storyboard</title>' in html
+    assert f'<h1>{tmp_path.name}</h1>' in html
+    assert f'<title>{tmp_path.name} · Storyboard</title>' in html
     assert '1 animation · 1 motion graphic' in html
     assert '<script>' not in html
     assert '&lt;script&gt;' in html
@@ -160,3 +160,57 @@ def test_missing_graphic_prevents_other_scenes_generation(tmp_path, monkeypatch)
     state = PipelineState(stills_dir=str(tmp_path / 'stills'))
     with pytest.raises(ValueError, match='missing or unusable'):
         stage_stills(plan, settings, state)
+
+
+def test_headline_is_opening_overlay_not_narration_or_reading_time(tmp_path):
+    brief = _brief()
+    brief.headline = 'This opening headline is visible and must never be read aloud.'
+    source = tmp_path / 'brief.yaml'
+    source.write_text(yaml.safe_dump(brief.to_dict()))
+    result = plan_from_brief(source, tmp_path)
+    plan = Plan.from_yaml(result.plan_path)
+    assert plan.headline == brief.headline
+    assert ' '.join(scene.vo_text for scene in plan.scenes) == 'One two three.'
+    html = render_storyboard(brief, tmp_path)
+    assert '<h2>Opening headline</h2>' in html
+    assert brief.headline in html
+    assert 'Not spoken; excluded from the reading estimate.' in html
+    assert 'Estimated reading time: 1.2s' in html
+    assert 'color-scheme:dark' in html
+    assert '<nav' not in html
+
+
+def test_reference_provenance_defaults_groups_status_and_escaped_url(tmp_path):
+    from parallax.brief import ProvidedAsset
+    legacy = ProvidedAsset(path='style.png', kind='style_ref')
+    assert legacy.origin == 'supplied'
+    assert legacy.review_status == 'pending'
+    brief = _brief()
+    brief.assets.provided = [legacy,
+        ProvidedAsset(path='character.png', kind='character_ref', origin='generated'),
+        ProvidedAsset(path='logo.png', kind='product_ref', origin='official', review_status='approved',
+                      source_url='https://example.com/brand?name="quoted"&x=1'),
+    ]
+    html = render_storyboard(brief, tmp_path)
+    assert 'Source style and supplied references' in html
+    assert 'Generated character and style references' in html
+    assert 'Official brand references' in html
+    assert 'Generated · Review: pending' in html
+    assert 'Official · Review: approved' in html
+    assert 'href="https://example.com/brand?name=&quot;quoted&quot;&amp;x=1"' in html
+    for url in ('javascript:alert(1)', 'file:///tmp/logo.png', 'https:///missing-host'):
+        with pytest.raises(ValueError, match=r'http\(s\) URL'):
+            ProvidedAsset(path='logo.png', kind='product_ref', source_url=url)
+
+
+def test_concept_name_and_id_identify_storyboard_without_changing_production(tmp_path):
+    brief = _brief()
+    brief.concept_name = "A better <morning>"
+    brief.concept_id = "REF-02 & A"
+    html = render_storyboard(brief, tmp_path)
+    assert '<h1>A better &lt;morning&gt;</h1>' in html
+    assert '<title>A better &lt;morning&gt; · REF-02 &amp; A · Storyboard</title>' in html
+    assert 'Concept ID: REF-02 &amp; A' in html
+    assert brief.goal in html
+    assert 'concept_name' not in brief.to_plan_skeleton()
+    assert 'concept_id' not in brief.to_plan_skeleton()
