@@ -10,6 +10,8 @@ Before rendering, establish the scene's narration, exact on-screen text, visual 
 
 Create a layout poster for still review. A silent timing sketch may use estimated duration, but label it as a preview. After narration approval, use measured scene boundaries and scene-relative cue times. Keep estimated durations out of production `duration_s` locks. Retain the source composition, cue data and rendered output together so a narration revision can be rerendered.
 
+State how each preview was made: a code-rendered layout poster is a static image of editable shapes, not proof of animation. Keep important layout relationships in shared coordinates: a person inside a ring should use the ring's center and the person's visible bounds, rather than unrelated hard-coded offsets. Check optical balance as well as geometry at native size, including start, intermediate and final animation states. Preserve intentional asymmetry when it supports the composition.
+
 For Remotion authoring, use the available Remotion guidance when installed. For a simpler graphic, choose an appropriate local renderer. The output contract is the same:
 
 - Poster image for layout review.
