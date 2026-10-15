@@ -35,7 +35,7 @@ def _produce_cmd(
     scene: Optional[int] = typer.Option(None, "--scene", help="If set, render only this scene index (no full pipeline)."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the pre-flight confirmation prompt (non-interactive mode)."),
     hq: bool = typer.Option(False, "--hq", help="Use premium-tier models."),
-    debug: int = typer.Option(0, "--debug", help="Burn debug overlay on every scene: 1=scene index, 2=+prompt, 3=+refs. Default: 0 (off)."),
+    debug: int = typer.Option(0, "--debug", help="Burn debug overlay on every scene: 1=scene index, 2=+prompt, 3=+script and motion. Default: 0 (off)."),
     resolution: Optional[str] = typer.Option(None, "--resolution", help="Override output resolution, e.g. 480x854 or 1080x1920."),
 ) -> int:
     if plan is None and brief is None:
