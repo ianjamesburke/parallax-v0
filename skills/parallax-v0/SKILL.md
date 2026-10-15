@@ -28,6 +28,8 @@ export OPENROUTER_API_KEY=sk-or-...
 
 Before planning a new production, inspect the supplied script, project notes, and reference inventory. Ask one compact set of questions only for choices that remain unresolved: whether to preserve the script verbatim, whether the user wants a storyboard or the full video, and any format, voice, or spending constraint.
 
+Unless the user specifies another source, treat the selected project folder as the complete input boundary: use its script and resources to create the Parallax project. Pass that folder as `--folder`; Parallax creates and updates its working files under `<folder>/parallax/`. Do not search adjacent projects, archived runs, or other host folders for substitute inputs.
+
 When a named brand or product must be shown and no usable official visual reference is supplied, call that out before writing the brief and offer to look up official brand/product references on the web. Get the user's approval before researching or adopting an internet-found reference. Once approved, prefer an official source, inspect the candidate rather than relying on its filename or search snippet, save or record its source with the project, and **open the found reference** for the user immediately. Mark unverified/generated placeholders as such; do not present them as approved branding.
 
 Treat a `reference: true` character fallback and explicit `reference_images` as complementary. If a scene needs both character and product identity, include both references explicitly; do not let the product image silently replace the character reference.
