@@ -126,6 +126,7 @@ def audio_cap_sentence_silence(
     crossfade: float = typer.Option(0.010, "--crossfade", help="Quiet-only join crossfade in seconds (default: 0.010)."),
     noise_db: float = typer.Option(-40.0, "--noise-db", help="Acoustic quiet threshold in dB (default: -40)."),
     min_silence: float = typer.Option(0.040, "--min-silence", help="Minimum detected quiet segment, seconds (default: 0.040)."),
+    first_word_by: Optional[float] = typer.Option(None, "--first-word-by", help="Optionally trim verified opening quiet so the first aligned word starts by this second (e.g. 0.100)."),
 ) -> int:
     """Shorten measured quiet between sentences while preserving audible edges.
 
@@ -134,8 +135,10 @@ def audio_cap_sentence_silence(
     for downstream captions, scene timing, and graphics.
     """
     import json
+    import tempfile
+    from contextlib import nullcontext
     from pathlib import Path
-    from ..audio import cap_sentence_silence
+    from ..audio import cap_sentence_silence, trim_leading_quiet
 
     paths = [Path(p).expanduser().resolve() for p in (input, output, words, words_out)]
     if report:
@@ -145,15 +148,41 @@ def audio_cap_sentence_silence(
 
     word_data = json.loads(Path(words).read_text())
     word_list = word_data if isinstance(word_data, list) else word_data.get("words", [])
-    result = cap_sentence_silence(
-        input_path=input,
-        output_path=output,
-        words=word_list,
-        max_silence_s=max_silence,
-        crossfade_s=crossfade,
-        noise_db=noise_db,
-        min_silence_s=min_silence,
-    )
+    with (tempfile.TemporaryDirectory() if first_word_by is not None else nullcontext(None)) as tmpdir:
+        sentence_output = str(Path(tmpdir) / "sentence-capped.wav") if tmpdir else output
+        result = cap_sentence_silence(
+            input_path=input,
+            output_path=sentence_output,
+            words=word_list,
+            max_silence_s=max_silence,
+            crossfade_s=crossfade,
+            noise_db=noise_db,
+            min_silence_s=min_silence,
+        )
+        if first_word_by is not None:
+            opening = trim_leading_quiet(
+                input_path=sentence_output, output_path=output,
+                words=result["adjusted_words"], first_word_by_s=first_word_by,
+                noise_db=noise_db,
+            )
+            result["sentence_stage_duration_s"] = result["new_duration_s"]
+            result["output"] = str(Path(output).resolve())
+            result["new_duration_s"] = opening["new_duration_s"]
+            result["seconds_removed"] = round(
+                result["original_duration_s"] - opening["new_duration_s"], 4
+            )
+            result["adjusted_words"] = opening["adjusted_words"]
+            for edit in result["edits"]:
+                edit["sentence_stage_verified_quiet_start_s"] = edit["verified_quiet_start_s"]
+                edit["verified_quiet_start_s"] = round(
+                    edit["verified_quiet_start_s"] - opening["seconds_removed"], 4
+                )
+            result["source_cut_coordinate_system"] = "original input audio"
+            result["verified_quiet_coordinate_system"] = "final output audio"
+            result["opening_trim"] = {
+                key: value for key, value in opening.items()
+                if key not in ("input", "output", "adjusted_words")
+            }
     adjusted = result.pop("adjusted_words")
     words_path = Path(words_out)
     words_path.parent.mkdir(parents=True, exist_ok=True)
@@ -168,6 +197,56 @@ def audio_cap_sentence_silence(
         f"cap-sentence-silence: {result['quiet_segments_capped']} quiet segments at "
         f"{result['sentence_boundaries']} sentence boundaries; "
         f"{result['seconds_removed']:.3f}s removed"
+    )
+    print(f"  audio  → {output}")
+    print(f"  words  → {words_out}")
+    if report:
+        print(f"  report → {report}")
+    return 0
+
+
+@audio_app.command(name="trim-leading-quiet")
+def audio_trim_leading_quiet(
+    input: str = typer.Option(..., "--input", "-i", help="Source audio; preserved unchanged."),
+    output: str = typer.Option(..., "--output", "-o", help="Edited WAV output path."),
+    words: str = typer.Option(..., "--words", help="Canonical word-timing JSON."),
+    words_out: str = typer.Option(..., "--words-out", help="Output JSON with shifted canonical word timings."),
+    report: Optional[str] = typer.Option(None, "--report", help="Detailed measured opening trim JSON."),
+    first_word_by: float = typer.Option(0.100, "--first-word-by", help="Latest allowed first-word start, seconds (default: 0.100)."),
+    min_leading_quiet: float = typer.Option(0.020, "--min-leading-quiet", help="Protected acoustic quiet before detectable speech, seconds (default: 0.020)."),
+    fade: float = typer.Option(0.005, "--fade", help="Fade-in wholly inside retained quiet, seconds (default: 0.005)."),
+    noise_db: float = typer.Option(-40.0, "--noise-db", help="Acoustic quiet threshold in dB (default: -40)."),
+) -> int:
+    """Trim proven opening quiet without touching the first spoken phoneme."""
+    import json
+    from pathlib import Path
+    from ..audio import trim_leading_quiet
+
+    paths = [Path(p).expanduser().resolve() for p in (input, output, words, words_out)]
+    if report:
+        paths.append(Path(report).expanduser().resolve())
+    if len(set(paths)) != len(paths):
+        raise typer.BadParameter("input, output, words, words-out, and report must be distinct paths")
+    word_data = json.loads(Path(words).read_text())
+    word_list = word_data if isinstance(word_data, list) else word_data.get("words", [])
+    result = trim_leading_quiet(
+        input_path=input, output_path=output, words=word_list,
+        first_word_by_s=first_word_by, min_leading_quiet_s=min_leading_quiet,
+        fade_s=fade, noise_db=noise_db,
+    )
+    adjusted = result.pop("adjusted_words")
+    words_path = Path(words_out)
+    words_path.parent.mkdir(parents=True, exist_ok=True)
+    words_path.write_text(json.dumps({"words": adjusted, "total_duration_s": result["new_duration_s"]}, indent=2))
+    result["words_input"] = str(Path(words).resolve())
+    result["words_output"] = str(words_path.resolve())
+    if report:
+        report_path = Path(report)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(result, indent=2))
+    print(
+        f"trim-leading-quiet: {result['seconds_removed']:.4f}s removed; "
+        f"first word {result['first_word_before_s']:.4f}s → {result['first_word_after_s']:.4f}s"
     )
     print(f"  audio  → {output}")
     print(f"  words  → {words_out}")

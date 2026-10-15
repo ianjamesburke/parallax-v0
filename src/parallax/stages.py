@@ -922,6 +922,14 @@ def stage_speed_adjust(plan: dict[str, Any], settings: Settings, state: Pipeline
     return plan
 
 
+def _report_opening_pacing(aligned: list[dict[str, Any]], settings: Settings, basis: str, first_word_start_s: float | None = None) -> None:
+    from .pacing import review_opening_pacing
+    report = review_opening_pacing(aligned, basis, first_word_start_s=first_word_start_s)
+    runlog.event("qa.opening_pacing", level="INFO", **report)
+    for warning in report["warnings"]:
+        _log(settings, f"[pacing advisory] {warning['message']}")
+
+
 def stage_align(plan: dict[str, Any], settings: Settings, state: PipelineState) -> dict[str, Any]:
     """Assign per-scene start/end/duration from the aligned words.
 
@@ -947,6 +955,7 @@ def stage_align(plan: dict[str, Any], settings: Settings, state: PipelineState) 
             _log(settings, f"  [{s['index']:02d}] {s.get('start_s', 0):.2f}s – {s.get('end_s', 0):.2f}s ({s.get('duration_s', 0):.2f}s)")
         state.aligned = aligned
         state.aligned_json = json.dumps(aligned)
+        _report_opening_pacing(aligned, settings, "declared no-voiceover timeline")
         return plan
 
     vo_result = state.vo_result
@@ -976,6 +985,8 @@ def stage_align(plan: dict[str, Any], settings: Settings, state: PipelineState) 
         _log(settings, f"  [{s['index']:02d}] {s.get('start_s', 0):.2f}s – {s.get('end_s', 0):.2f}s ({s.get('duration_s', 0):.2f}s)")
     state.aligned = aligned
     state.aligned_json = json.dumps(aligned)
+    _report_opening_pacing(aligned, settings, "aligned narration timeline (including explicit overrides)",
+                           first_word_start_s=float(vo_result["words"][0]["start"]) if vo_result["words"] else None)
 
     # Write corrected words back — cross-check may have patched TTS
     # hallucinations (e.g. "sweatsh" → "switch") in the words list.

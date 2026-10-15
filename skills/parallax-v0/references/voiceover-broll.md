@@ -8,6 +8,10 @@ Reject passive front-facing character poses as filler. “Smiling at camera,” 
 
 Before generation, audit the whole sequence for repeated staging, gaze toward the viewer, empty holds and disconnected symbolism. Carry the action into both the still prompt and the motion prompt, making the still a credible starting pose. During animation keep mouths naturally at rest unless the scene actually calls for speech; voiceover does not authorize lip sync or talking-head performance. Inspect the resulting footage for unintended talking.
 
+For a social ad, review the opening as its own sequence before generating the scene batch and again after timing the narration. Use the native HTML storyboard to compare the first twelve seconds together. After narration, pass `storyboard --timing` the aligned timing manifest so its pacing advisories use measured scene lengths. Look for visible changes of shot size, setting, action and emotional beat. Treat the CLI opening-pacing advisories as prompts for review: a shot longer than three seconds in that window or fewer than three cuts in the first six seconds deserves a deliberate exception or a revised breakdown. More cuts alone do not prove excitement; repeated portraits, alternate crops of the same idle pose and a long zoom can remain monotonous. Split narration at meaningful words into distinct visual actions, preserve the script, and avoid inventing a numeric excitement score. Competitor-based calibration is future work, not a validated metric.
+
+For the opening audio, aim for speech within 100ms. Measure actual leading quiet as well as the first aligned word; safely trim only verified quiet and then retime downstream assets. If the CLI cannot reach the target without touching speech, review the source or obtain a better take instead of clipping the first phoneme.
+
 Use one sufficient approved reference per still by default. Use a prior scene frame for a deliberate same-setting continuity link, not an automatic chain through the video. Name that relationship in the storyboard. Animate from the accepted scene still; add reference inputs only when the chosen model and a concrete continuity need justify them.
 
 When the narration names an app or product, consider showing it rather than only a character looking at a device. Use a sourced screen inset, an over-the-shoulder view, or a split composition when it improves comprehension. Preserve official screen content and branding; label illustrative UI as a concept. Fit the demonstration into the shot's available space and duration without covering the character action or caption band.
@@ -24,7 +28,9 @@ Use the acoustic sentence command for this edit, with the approved punctuated wo
 parallax audio cap-sentence-silence \
   --input narration-v3.wav --words narration-v3-words.json \
   --output narration-v4.wav --words-out narration-v4-words.json \
-  --max-silence 0.075 --report narration-v4-edits.json
+  --max-silence 0.075 --first-word-by 0.100 --report narration-v4-edits.json
 ```
 
 The cap applies to measured continuous quiet, not the complete interval between aligned words. Review retained breaths separately. The legacy `audio cap-pauses` trims estimated inter-word gaps and is not the path for a tight acoustic-silence target. Point the working plan's audio and word locks at the new outputs before recalculating scene and graphic timings.
+
+When replacing a shot, keep the approved global caption safe area fixed and reframe that shot if its action collides with captions. Refresh self-contained storyboard previews after replacing assets; use a representative rendered frame for composites so the opening contact sheet shows what the viewer will actually see.

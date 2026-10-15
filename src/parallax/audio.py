@@ -687,6 +687,110 @@ def cap_sentence_silence(
     }
 
 
+def trim_leading_quiet(
+    input_path: str,
+    output_path: str,
+    words: list[dict],
+    first_word_by_s: float = 0.100,
+    min_leading_quiet_s: float = 0.020,
+    fade_s: float = 0.005,
+    noise_db: float = -40.0,
+) -> dict:
+    """Move the first aligned word earlier by removing proven acoustic quiet.
+
+    The trim point must leave at least `min_leading_quiet_s` of measured quiet
+    before the first audible sample at `noise_db`. Only the first `fade_s` of
+    that retained quiet is faded in, so speech samples remain untouched.
+    Refuse the edit when a requested first-word deadline cannot be reached
+    safely. The source is never modified; return shifted canonical words.
+    """
+    src = Path(input_path).expanduser().resolve()
+    dst = Path(output_path).expanduser().resolve()
+    if not src.is_file():
+        raise FileNotFoundError(f"trim_leading_quiet: input not found: {src}")
+    if src == dst:
+        raise ValueError("trim_leading_quiet: output must differ from input")
+    if not words:
+        raise ValueError("trim_leading_quiet: words list is empty")
+    if not all(math.isfinite(x) for x in (first_word_by_s, min_leading_quiet_s, fade_s, noise_db)):
+        raise ValueError("trim_leading_quiet: numeric settings must be finite")
+    if first_word_by_s < 0 or min_leading_quiet_s <= 0 or fade_s < 0 or fade_s > min_leading_quiet_s:
+        raise ValueError("trim_leading_quiet: require nonnegative deadline and fade <= positive retained quiet")
+    if noise_db >= 0:
+        raise ValueError("trim_leading_quiet: noise_db must be below 0 dB")
+    if any(
+        not isinstance(w.get(k), (int, float)) or not math.isfinite(w[k]) or w[k] < 0
+        for w in words for k in ("start", "end")
+    ) or any(w["end"] < w["start"] for w in words):
+        raise ValueError("trim_leading_quiet: words need finite nonnegative start/end")
+
+    source_probe = run_ffmpeg(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(src)],
+        check=True, capture_output=True, text=True,
+    )
+    source_duration = float(source_probe.stdout.strip())
+    first_start = float(words[0]["start"])
+    required_trim = max(0.0, first_start - first_word_by_s)
+    detected = detect_silences(str(src), noise_db=noise_db, min_silence_s=0.010)
+    leading_quiet = detected[0]["end"] if detected and detected[0]["start"] <= 0.002 else 0.0
+    if required_trim > 0 and required_trim > leading_quiet - min_leading_quiet_s + 0.0001:
+        raise ValueError(
+            "trim_leading_quiet: first-word deadline needs more removal than "
+            f"verified leading quiet permits ({required_trim:.4f}s requested, "
+            f"{leading_quiet:.4f}s quiet, {min_leading_quiet_s:.4f}s retained)"
+        )
+    if required_trim > 0 and first_start < leading_quiet - 0.002:
+        raise ValueError("trim_leading_quiet: first word timing overlaps detected leading quiet; realign first")
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    filters = [f"atrim=start={required_trim:.6f}", "asetpts=PTS-STARTPTS"]
+    if required_trim > 0 and fade_s > 0:
+        filters.append(f"afade=t=in:st=0:d={fade_s:.6f}")
+    run_ffmpeg(
+        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(src),
+         "-af", ",".join(filters), "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le", str(dst)],
+        check=True, capture_output=True,
+    )
+    output_probe = run_ffmpeg(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(dst)],
+        check=True, capture_output=True, text=True,
+    )
+    output_duration = float(output_probe.stdout.strip())
+    actual_trim = source_duration - output_duration
+    if abs(actual_trim - required_trim) > 0.002:
+        raise RuntimeError("trim_leading_quiet: rendered trim differs from requested trim")
+    output_quiet = detect_silences(str(dst), noise_db=noise_db, min_silence_s=0.010)
+    verified_quiet = output_quiet[0]["end"] if output_quiet and output_quiet[0]["start"] <= 0.002 else 0.0
+    if required_trim > 0 and verified_quiet < min_leading_quiet_s - 0.002:
+        raise RuntimeError("trim_leading_quiet: rendered lead-in lost protected quiet")
+    adjusted_words = [
+        {"word": w["word"],
+         "start": round(max(0.0, w["start"] - actual_trim), 4),
+         "end": round(max(0.0, w["end"] - actual_trim), 4)}
+        for w in words
+    ]
+    if adjusted_words[0]["start"] > first_word_by_s + 0.001:
+        raise RuntimeError("trim_leading_quiet: rendered first word missed requested deadline")
+    return {
+        "input": str(src), "output": str(dst),
+        "original_duration_s": round(source_duration, 4),
+        "new_duration_s": round(output_duration, 4),
+        "seconds_removed": round(actual_trim, 4),
+        "first_word": words[0]["word"],
+        "first_word_before_s": first_start,
+        "first_word_after_s": adjusted_words[0]["start"],
+        "first_word_by_s": first_word_by_s,
+        "leading_quiet_before_s": round(leading_quiet, 4),
+        "leading_quiet_after_s": round(verified_quiet, 4),
+        "min_leading_quiet_s": min_leading_quiet_s,
+        "fade_s": fade_s if required_trim > 0 else 0.0,
+        "noise_db": noise_db,
+        "adjusted_words": adjusted_words,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Onset padding — ensure each word has at least pad_s of lead-in silence
 # ---------------------------------------------------------------------------

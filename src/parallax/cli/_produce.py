@@ -78,12 +78,13 @@ def _plan_cmd(
 def _storyboard_cmd(
     folder: str = typer.Option(..., "--folder", help="Project root for resolving assets."),
     brief: str = typer.Option(..., "--brief", help="Path to the authored brief.yaml."),
+    timing: Optional[str] = typer.Option(None, "--timing", help="Aligned manifest YAML/JSON with index, start_s, end_s for every scene; replaces reading estimates."),
     out: Optional[str] = typer.Option(None, "--out", help="HTML output (default: <folder>/parallax/scratch/storyboard.html)."),
 ) -> int:
     """Render an offline HTML storyboard for review before generation."""
     from ..storyboard import storyboard_from_brief
     try:
-        path = storyboard_from_brief(brief, folder, out)
+        path = storyboard_from_brief(brief, folder, out, timing_path=timing)
     except (ValueError, OSError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         return 2
