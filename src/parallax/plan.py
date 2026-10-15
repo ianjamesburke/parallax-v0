@@ -98,6 +98,7 @@ class PlanScene(BaseModel):
 
     index: int
     shot_type: Literal["character", "broll", "screen"] = "broll"
+    scene_type: Literal["still", "animation", "motion_graphic"] | None = None
     vo_text: str = ""
     prompt: str = ""
 
@@ -159,6 +160,15 @@ class PlanScene(BaseModel):
                         "clip_trim_start_s, not both"
                     )
                 data["clip_trim_start_s"] = data.pop("clip_offset_s")
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _scene_type_animation(cls, data: Any) -> Any:
+        from .scene_types import normalize_scene_type
+        data = normalize_scene_type(data)
+        if isinstance(data, dict) and data.get("scene_type") == "motion_graphic" and not data.get("clip_path"):
+            raise ValueError(f"scene {data.get('index', '?')}: motion_graphic requires a locally rendered clip_path; AI generation is not supported")
         return data
 
     @field_validator("aspect")

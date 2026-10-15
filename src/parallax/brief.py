@@ -98,6 +98,7 @@ class BriefScene(BaseModel):
 
     index: int
     shot_type: Literal["character", "broll", "screen"] = "broll"
+    scene_type: Literal["still", "animation", "motion_graphic"] | None = None
     vo_text: str
     prompt: str
     animate: bool = False
@@ -105,6 +106,18 @@ class BriefScene(BaseModel):
     aspect: str | None = None  # per-scene override; defaults to brief.aspect
     image_refs: list[str] = Field(default_factory=list)
     still_path: str | None = None  # approved still from a prior version — skips generation
+    clip_path: str | None = None  # reusable locally rendered or previously generated clip
+    on_screen_text: str | None = None  # storyboard copy; not automatically burned into video
+
+    @model_validator(mode="before")
+    @classmethod
+    def _scene_type_animation(cls, data: Any) -> Any:
+        from .scene_types import normalize_scene_type
+        return normalize_scene_type(data)
+
+    @property
+    def resolved_scene_type(self) -> str:
+        return self.scene_type or ("animation" if self.animate else "still")
 
     @model_validator(mode="before")
     @classmethod
@@ -182,7 +195,7 @@ class Brief(BaseModel):
     # --------------------------------------------------------- Validation
 
     def validate_assets(self, folder: str | Path) -> list[str]:
-        """Check every `provided` asset and scene-level `still_path` exists.
+        """Check provided assets, scene references, and still/clip locks exist.
 
         Returns a list of missing absolute paths (empty = all good).
         Generated assets are NOT checked — they're an inventory hint, not
@@ -196,11 +209,12 @@ class Brief(BaseModel):
             if not full.is_file():
                 missing.append(str(full))
         for scene in self.script.scenes:
-            if scene.still_path:
-                sp = Path(scene.still_path)
-                full = sp if sp.is_absolute() else root / sp
-                if not full.is_file():
-                    missing.append(str(full))
+            for asset_path in [scene.still_path, scene.clip_path, *scene.image_refs]:
+                if asset_path:
+                    sp = Path(asset_path).expanduser()
+                    full = sp if sp.is_absolute() else root / sp
+                    if not full.is_file():
+                        missing.append(str(full))
         return missing
 
     # ----------------------------------------------------- Plan derivation
@@ -213,6 +227,12 @@ class Brief(BaseModel):
         provider-specific fields. This method gives it a starting point
         with the brief's deterministic fields already populated.
         """
+        for scene in self.script.scenes:
+            if scene.scene_type == "motion_graphic" and not scene.clip_path:
+                raise ValueError(
+                    f"scene {scene.index}: motion_graphic needs a locally rendered clip_path before planning. "
+                    "Review the storyboard, render the graphic, then add its clip_path; AI generation is not supported for this scene type."
+                )
         return {
             "aspect": self.aspect,
             "voice": self.voice,
@@ -222,6 +242,7 @@ class Brief(BaseModel):
                 {
                     "index": s.index,
                     "shot_type": s.shot_type,
+                    **({"scene_type": s.scene_type} if s.scene_type else {}),
                     "vo_text": s.vo_text,
                     "prompt": s.prompt,
                     **({"animate": True} if s.animate else {}),
@@ -230,6 +251,7 @@ class Brief(BaseModel):
                     **({"reference_images": s.image_refs} if s.image_refs else {}),
                     **({"reference": True} if self.character_reference and s.shot_type == "character" else {}),
                     **({"still_path": s.still_path} if s.still_path else {}),
+                    **({"clip_path": s.clip_path} if s.clip_path else {}),
                 }
                 for s in self.script.scenes
             ],

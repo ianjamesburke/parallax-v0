@@ -24,6 +24,49 @@ export OPENROUTER_API_KEY=sk-or-...
 
 ---
 
+## Intake: references and a social-first brief
+
+Before planning a new production, inspect the supplied script, project notes, and reference inventory. Ask one compact set of questions only for choices that remain unresolved: whether to preserve the script verbatim, whether the user wants a storyboard or the full video, and any format, voice, or spending constraint.
+
+When a named brand or product must be shown and no usable official visual reference is supplied, call that out before writing the brief and offer to look up official brand/product references on the web. Get the user's approval before researching or adopting an internet-found reference. Once approved, prefer an official source, inspect the candidate rather than relying on its filename or search snippet, save or record its source with the project, and **open the found reference** for the user immediately. Mark unverified/generated placeholders as such; do not present them as approved branding. A supplied composite style reference can be sufficient for a first style test. Request cleaner assets when their absence prevents a specific approved shot, rather than making optional uploads a prerequisite for all progress.
+
+Plan global character/product references can merge with scene references. For mixed character shots and diagrams, prefer explicit per-scene refs and omit global character/product fields from the production plan so unrelated images do not condition graphics.
+
+### Scene-length and hook check
+
+Before spending on a brief or plan, audit the script scene by scene. A generation scene should express one readable visual beat, not a paragraph, a montage, or a sequence of camera moves. Flag a proposed scene when it has multiple locations/actions, needs a visual change to stay interesting, or would hold a single shot beyond roughly 5 seconds (and never rely on one generated clip to carry more than the selected video model supports). Offer a split into short shots—usually 1–4 seconds for fast social creative—while preserving the user's narration and meaning. Do not silently rewrite an approved script.
+
+If the user has provided only a concept or asks for a script from scratch, propose a concise, platform-appropriate version first: lead with a specific visual/action hook in the first 1–2 seconds, put the tension, benefit, or surprising change on screen early, vary the visual beat before attention drops, and reserve a clean final beat for the CTA. Prefer a 15–45 second initial cut unless the user specifies another duration. For a longer script, say why it needs a cut-down or a multi-shot treatment and offer concrete short-form versions before generating.
+
+Show the native HTML storyboard before generation; it contains the scene/reference map. Record only additional reference provenance or missing assets in project notes, avoiding a second manually maintained scene table. Shared art direction belongs in a short style note, and each executable image prompt must include the necessary style description: plan `style` and `style_hint` currently affect voice synthesis, not still generation.
+
+---
+
+## Review checkpoints
+
+For a staged production, keep the authored brief as the scene map. `scene_type` describes the proposed final treatment: `still`, `animation`, or `motion_graphic`; `shot_type` describes the content: `character`, `broll`, or `screen`. Preserve proposed treatments when creating stage-specific execution plans.
+
+1. **Storyboard.** Preserve the supplied narration and beat order unless the user asks for a rewrite. Author concise scene prompts and explicit scene types. Run `parallax storyboard --folder /absolute/project --brief /absolute/project/brief.yaml`, open the returned HTML, and ask for feedback on scene breakdown and treatments. This command is local and free. Empty preview areas are pending assets, not generated stills. Estimated seconds are for review only.
+2. **Stills.** After storyboard approval and a spending cap, generate a representative character/style anchor first, then the approved batch. Use `stills_only: true` in a separate execution plan for image scenes. Keep unfinished graphics out of that generation batch and use the motion-graphics workflow below. Inspect and lock approved stills, update `still_path` in the brief, and refresh the HTML. Pause for still approval before paid animation.
+3. **Narrated draft and motion.** After still approval, make a separate draft plan with approved stills, `scene_type: still` and `animate: false` for image scenes, `stills_only: false`, and `captions: skip`. Keep the final proposed types in the authored brief. For unfinished graphics, use the approved poster as a still in the draft plan. Preserve raw narration and inspect spoken fidelity before trusting alignment or captions. Use measured narration timing to price and prepare a small animation pilot and timed graphics. Show the pilot before extending to the remaining selected shots; carry forward approved assets and the same budget ledger.
+4. **Final review.** Assemble accepted clips against approved narration, inspect captions and every scene transition, decode the export, and open the video. Report mechanical checks separately from human acceptance.
+
+These are conversational checkpoints, not an enforced CLI approval state machine. Record the reviewed brief revision, artifact paths, user decision, spend and next authorized action in a small project review log. A simulated user response must be labeled simulated and cannot authorize actual spend or advance a real human gate. On resume, read the latest decision rather than an older handoff. Regenerate the HTML after scene or asset changes so proposed treatment and available media remain visible together.
+
+Example scene:
+
+```yaml
+- index: 0
+  shot_type: character
+  scene_type: animation
+  vo_text: "The supplied narration, unchanged."
+  prompt: "One clear visual beat in the agreed illustration style."
+  motion_prompt: "A small readable gesture; keep the camera steady."
+  image_refs: [references/character.png]
+```
+
+For `scene_type: motion_graphic`, read [motion-graphics.md](references/motion-graphics.md). Drafts without that type retain legacy `animate` behavior. Avoid setting `animate` inconsistently with an explicit type.
+
 ## Core loop
 
 Two artifacts drive every project:
@@ -46,7 +89,7 @@ parallax plan    --folder ./my-project --brief ./my-project/brief.yaml
 parallax produce --folder ./my-project --plan ./my-project/parallax/scratch/plan.yaml
 ```
 
-Non-interactive (skip confirmation prompt — required for sub-agents):
+Non-interactive (only after the current stage is authorized):
 ```bash
 parallax produce --folder ./my-project --brief ./my-project/brief.yaml -y
 ```
@@ -129,7 +172,7 @@ assets:
       description: "Existing product footage"
 ```
 
-`clip_path` and `still_path` are **plan.yaml** fields (asset locks set after the first run), not brief fields.
+`still_path` and `clip_path` are supported in both brief scenes and plan scenes. They lock existing assets; paths resolve from the project root. A `motion_graphic` scene can be storyboarded before its clip exists, but production requires its rendered `clip_path`.
 
 ---
 
@@ -147,10 +190,10 @@ words_per_chunk: smart        # smart (default) | integer
 caption_shift_s: 0.0
 default_transition: null      # transition type
 default_transition_duration_s: 0.5
-stills_only: false            # true = Ken Burns only, no video gen
+stills_only: false            # true = generate stills and stop before narration/assembly
 trim_pauses: true             # true | false | float (max pause seconds)
-style: null                   # global style hint for image gen
-style_hint: null              # additional style guidance
+style: null                   # voice synthesis direction; not a shared image prompt
+style_hint: null              # additional voice direction
 resolution: null              # output resolution e.g. "480x854"
 animate_resolution: null      # video gen resolution e.g. "480x854"
 headline: null                # persistent headline text overlay
@@ -188,7 +231,7 @@ After a run, `output/vN/plan.yaml` is a read-only snapshot. The working plan is 
 # Per-scene reference controls
 - index: 3
   reference: true          # use plan.character_image as the still-generation reference
-  reference_images:        # explicit list overrides the reference: true fallback
+  reference_images:        # explicit refs merge with applicable global refs
     - brand/hero.png
   vo_text: "..."
 ```
@@ -200,107 +243,9 @@ parallax produce --folder ./my-project --plan ./my-project/parallax/plan.yaml
 
 ---
 
-## Models
+## Models and utility commands
 
-```bash
-parallax models list          # full catalog grouped by kind
-parallax models show mid --kind image
-parallax models show tts-gemini
-```
-
-**Image** (billed cost per image, 9:16, smallest output of at least 720 px short side, no refs; each reference adds about $0.005 on `draft`/`mid`/`premium`):
-| Alias | Cost | Notes |
-|---|---|---|
-| `draft` | $0.00375/img | GPT Image 2.5 Flare, low quality. 864x1536. Strong ref identity |
-| `mid` | $0.00855/img | GPT Image 2.5 Flare, medium quality. Default |
-| `premium` | $0.0325/img | GPT Image 2.5 Sunburst, high quality |
-| `seedream` | $0.018/img | Seedream 5.0 Flash. 720x1280. Strong ref identity |
-| `gemini-3-flash-lite` | $0.0336/img | Gemini 3.1 Flash Lite. 768x1376 |
-| `nano-banana` | $0.0387/img | Gemini 2.5 Flash Image. Max 3 refs |
-| `grok-image` | $0.05/img | Grok Imagine Image Quality. 720x1280. Max 3 refs |
-| `gemini-3-flash` | $0.0672/img | Gemini 3.1 Flash Image at 1K |
-| `gemini-3-pro` | $0.1344/img | Gemini 3 Pro Image at 1K. Prefer `premium` |
-
-**Video** (measured per second of the billed clip; clips are billed at the shortest supported length covering the scene):
-| Alias | Cost | Notes |
-|---|---|---|
-| `grok-video-lite` | $0.0225/s | Grok Imagine Video 1.5 Lite, 480p (400x736). Start frame only |
-| `veo-lite` | $0.03/s | Veo 3.1 Lite, 720p, no audio. Set `animate_resolution: 720x1280` |
-| `seedance-mini` | $0.0355/s | Seedance 2.0 Mini, 480p |
-| `draft` / `seedance` | $0.0426/s | Seedance 2.0 Fast, 480p. Higher resolutions cost more |
-| `mid` / `grok-video` | $0.0505/s | Grok Imagine Video, 480p. Strong prompt adherence. Start frame only |
-| `wan` | $0.10/s | Wan 2.7 (list price) |
-| `kling` | $0.112/s | Kling Video O1 (list price) |
-| `premium` / `veo` | $0.20/s | Veo 3.1 1080p without audio (list price) |
-
-**TTS:**
-| Alias | Notes |
-|---|---|
-| `tts-mini` | Default. OpenAI gpt-audio-mini, about $0.0037 per 1k chars. Strips `[emotional]` tags |
-| `tts-gemini-lite` | About $0.0146 per 1k chars. Same voices and tags as `tts-gemini` |
-| `tts-gemini` | Expressive, about $0.042 per 1k chars. Supports inline `[emotional]` tags: `[dramatically]`, `[rapidly]`, `[excitedly]`, `[softly]`, `[whispering]` |
-
-**Voices (tts-gemini):**
-- Dramatic: `Fenrir` (excitable), `Kore` (firm), `Charon` (informative), `Puck` (upbeat)
-- Warm: `Aoede` (breezy), `Sulafat` (warm), `Achird` (friendly), `Sadaltager` (knowledgeable)
-- Soft: `Achernar` (soft), `Enceladus` (breathy), `Vindemiatrix` (gentle)
-
-Default voice: `nova`
-
----
-
-## Standalone commands
-
-```bash
-# Image generation
-parallax image generate "prompt" --aspect 9:16 --model grok-image
-parallax image generate "prompt" --ref ./face.png       # with reference
-parallax image generate "prompt" --size 480x854          # explicit WxH
-parallax image analyze ./frame.png "color palette?"
-
-# Voiceover synthesis
-parallax audio voiceover --text "Hello world" --out /tmp/vo.mp3 --voice Fenrir --voice-model tts-gemini
-parallax audio voiceover --text "Hello world" --out /tmp/vo.mp3 --speed 1.2  # with atempo
-
-# Video generation
-parallax video animate --prompt "Slow zoom in" --start ./frame.png --model mid --out ./clip.mp4
-parallax video animate --prompt "Motion" --ref ./ref.png --duration 5
-
-# Audio utilities
-parallax audio transcribe ./clip.mp4
-parallax audio detect-silences ./clip.mp4
-parallax audio trim ./clip.mp4 --start 1.5 --end 8.0
-parallax audio cap-pauses       # cap inter-word gaps (word-driven, not amplitude)
-parallax audio pad-onsets        # ensure minimum lead-in silence per word
-parallax audio speed ./clip.mp3 --rate 1.2   # or --by 20%
-
-# Video utilities
-parallax video frame ./clip.mp4 --at 2.5     # extract frame at timestamp
-parallax video color ./clip.mp4              # sample pixel color → 0xRRGGBB
-
-# Index footage for search
-parallax ingest ./clips/
-parallax ingest video.mov --estimate         # dry-run cost report
-
-# Cost + credits
-parallax credits          # OpenRouter balance
-parallax usage            # spend by model/session
-parallax log latest       # last run summary
-parallax log list         # all runs
-
-# Validation + schema
-parallax validate --folder ./project --brief ./project/brief.yaml
-parallax validate --folder ./project --plan ./project/parallax/plan.yaml
-parallax schema           # human-readable overview of brief + plan fields
-parallax schema brief     # JSON schema for brief.yaml
-parallax schema plan      # JSON schema for plan.yaml
-
-# Verify suite
-parallax verify run                    # run all verify cases
-parallax verify scaffold <case-name>   # scaffold a new verify case
-```
-
----
+Read [commands.md](references/commands.md) for image, audio, video, inspection, and cost commands. Choose models from `parallax models list` and inspect their supported duration, references and resolution with `parallax models show`. Treat catalog prices as estimates and track billed calls, including failed/retried calls, against the agreed cap.
 
 ## Dry run (no spend)
 
@@ -309,6 +254,14 @@ PARALLAX_TEST_MODE=1 parallax produce --folder ./my-project --brief ./my-project
 ```
 
 Full pipeline runs end-to-end with stub assets. Use to validate brief structure before spending.
+
+---
+
+## Review and opening generated media
+
+Treat a completed generation as something to show, not merely a path to report. Immediately open the primary artifact in an available viewer after each completed image, audio, video, storyboard, draft, or final render. For a storyboard, open the visual storyboard (or its individual stills), not just the YAML plan. For a completed video, open the video itself; for audio, open/play the audio; for an image, open the image. Report the exact artifact that was actually opened.
+
+Before progressing from storyboard to narration, animation, or final assembly, inspect the generated visual output against the scene/reference map. Do not treat a successful command or a populated reference field as evidence of style, character, or product fidelity. Keep rejected artifacts and their diagnosis, and regenerate only the affected unlocked scenes.
 
 ---
 
@@ -343,10 +296,11 @@ my-project/
 - Never edit `output/vN/plan.yaml` — it's a snapshot
 - Lock assets before re-running — unlocked scenes regenerate and cost money
 - Use `tts-gemini` + `[emotional]` tags for any ad that needs pacing variation
-- **Default to `grok-image` for image and `mid` (Grok Imagine Video) for video** — best quality-per-dollar, strong aspect ratio support
+- Choose image and video models for the approved references, resolution, shot duration and budget; check the installed catalog before spending.
 - **STOP before calling `parallax image generate` with `--model draft` and a non-square aspect (9:16, 16:9, 3:4, 4:3):** `draft` sometimes ignores the aspect ratio. Use `grok-image` or `mid` instead.
-- For non-interactive / sub-agent runs, always pass `-y` to `parallax produce`
+- `-y` skips the CLI cost prompt; it never grants creative approval or a spending budget.
 - Run `parallax validate` before `parallax produce` to catch brief/plan errors without spending credits
+- After every generated artifact, open the artifact in an available viewer before declaring that stage complete
 - Output flag is `--out <path>`, never `--output` — that flag does not exist.
 - **macOS screenshot filenames use Unicode characters** (middle dots, narrow no-break spaces), not regular spaces — they cannot be constructed by hand. Always resolve via `find` and copy to `/tmp/` first:
   ```bash

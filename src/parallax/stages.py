@@ -399,6 +399,14 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
                 f"scene {idx}: aspect={scene_aspect!r} is not a supported aspect "
                 f"ratio. Choices: {sorted(VALID_ASPECTS)}"
             )
+        if s.get("scene_type") == "motion_graphic":
+            clip = Path(s.get("clip_path") or "").expanduser()
+            clip = clip if clip.is_absolute() else settings.folder / clip
+            if not _is_clip_reusable(str(clip), settings.mode):
+                raise ValueError(f"scene {idx}: motion_graphic clip_path is missing or unusable: {clip}. Render the local graphic before producing.")
+            # Assembly consumes the clip directly; no AI still or animation is needed.
+            still_paths[idx] = ""
+            continue
         _locked_still: str | None = s.get("still_path")
         if _locked_still is not None and not (
             settings.mode == ProductionMode.REAL and is_mock_asset(_locked_still)
@@ -1273,7 +1281,7 @@ def stage_finalize(plan: dict[str, Any], settings: Settings, state: PipelineStat
 
 _KNOWN_SCENE_FIELDS = {
     "index", "shot_type", "vo_text", "prompt",
-    "still_path", "reference", "reference_images",
+    "still_path", "reference", "reference_images", "scene_type",
     "animate", "motion_prompt", "clip_path", "animate_resolution",
     "end_frame_path",
     # Per-scene model overrides (image_model / video_model / voice_model

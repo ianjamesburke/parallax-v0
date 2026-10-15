@@ -23,6 +23,7 @@ def _validate_resolution(resolution: Optional[str]) -> None:
 def register_produce(app: typer.Typer) -> None:
     app.command("produce")(_produce_cmd)
     app.command("plan")(_plan_cmd)
+    app.command("storyboard")(_storyboard_cmd)
     app.command("ingest")(_ingest_cmd)
 
 
@@ -72,6 +73,23 @@ def _plan_cmd(
         typer.echo(f"Error: {e}", err=True)
         return 2
     return _run_plan_command(folder, brief, out, model, caption_style, resolution)
+
+
+def _storyboard_cmd(
+    folder: str = typer.Option(..., "--folder", help="Project root for resolving assets."),
+    brief: str = typer.Option(..., "--brief", help="Path to the authored brief.yaml."),
+    out: Optional[str] = typer.Option(None, "--out", help="HTML output (default: <folder>/parallax/scratch/storyboard.html)."),
+) -> int:
+    """Render an offline HTML storyboard for review before generation."""
+    from ..storyboard import storyboard_from_brief
+    try:
+        path = storyboard_from_brief(brief, folder, out)
+    except (ValueError, OSError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        return 2
+    typer.echo(f"Storyboard: {path}")
+    typer.echo("Review scene types and direction before generating assets. No provider calls made.")
+    return 0
 
 
 def _ingest_cmd(
