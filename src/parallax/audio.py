@@ -314,12 +314,18 @@ def _cumulative_silence_before(t: float, silences: list[tuple[float, float]]) ->
     return total
 
 
-def _adjust_words(words: list[dict], silences: list[tuple[float, float]]) -> list[dict]:
-    """Shift word timestamps to account for removed silence ranges."""
+def _adjust_words(
+    words: list[dict], silences: list[tuple[float, float]], join_overlap_s: float = 0.0,
+) -> list[dict]:
+    """Shift word timestamps for removed ranges and crossfade overlap at each join."""
     adjusted = []
     for w in words:
-        new_start = round(max(0.0, w["start"] - _cumulative_silence_before(w["start"], silences)), 4)
-        new_end = round(max(new_start, w["end"] - _cumulative_silence_before(w["end"], silences)), 4)
+        start_joins = sum(end <= w["start"] for _, end in silences)
+        end_joins = sum(end <= w["end"] for _, end in silences)
+        new_start = round(max(0.0, w["start"] - _cumulative_silence_before(w["start"], silences)
+                                  - join_overlap_s * start_joins), 4)
+        new_end = round(max(new_start, w["end"] - _cumulative_silence_before(w["end"], silences)
+                                - join_overlap_s * end_joins), 4)
         adjusted.append({"word": w["word"], "start": new_start, "end": new_end})
     return adjusted
 
@@ -466,7 +472,7 @@ def cap_pauses(
         "cap_pauses: %d gaps capped to %.2fs (removed %.2fs total, %.2fs → %.2fs)",
         len(cuts), max_gap_s, removed, total_dur, new_total,
     )
-    adjusted_words = _adjust_words(words, cuts)
+    adjusted_words = _adjust_words(words, cuts, join_overlap_s=cf)
     return {
         "input": str(src), "output": str(dst),
         "original_duration_s": round(total_dur, 3),

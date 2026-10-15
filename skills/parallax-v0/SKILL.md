@@ -203,7 +203,7 @@ image_model: mid             # draft ($0.004) | mid ($0.009, default) | premium 
 video_model: mid             # mid = Grok Imagine Video | draft (Seedance) | veo-lite (cheapest 720p) | premium | wan
 caption_style: bangers        # bangers (default) | anton | or custom dict
 fontsize: 55
-words_per_chunk: smart        # smart (default) | integer
+words_per_chunk: smart        # tiny-word grouping | integer maximum; both stop at punctuation
 caption_shift_s: 0.0
 default_transition: null      # transition type
 default_transition_duration_s: 0.5
@@ -215,6 +215,8 @@ resolution: null              # output resolution e.g. "480x854"
 animate_resolution: null      # video gen resolution e.g. "480x854"
 headline: null                # opening overlay through the first scene
 headline_fontsize: null
+headline_y_position: null     # top of text block; e.g. "h*18/100" (legacy default 12%)
+headline_font: null           # e.g. anton; legacy default bangers
 headline_bg: null             # e.g. "0x000000"
 headline_color: null          # e.g. "0xFFFFFF"
 captions: null                # caption mode override
@@ -223,6 +225,20 @@ titles: null                  # list of title card objects
 avatar: null                  # avatar config object
 voice_postprocess: null       # post-processing pipeline for voice audio
 ```
+
+Caption review: preserve canonical script punctuation when matching words to measured
+narration timestamps. Stop and inspect token mismatches instead of replacing unmatched
+ASR text. Both chunk modes stop at sentence/phrase punctuation; `words_per_chunk: 3`
+produces readable groups of at most three words. `smart` retains its mostly one-word,
+four-letter grouping, so choose the integer mode for short phrases.
+
+For restrained portrait captions, start with `caption_style: {base: anton,
+y_expr: "h*64/100-th"}`, `fontsize: 44`, and `words_per_chunk: 3`.
+The y expression places the text bottom at 64% of frame height, above the bottom third;
+inspect the actual composition and platform controls before finalizing. Fontsize is the
+1080px-wide baseline and scales with output width. Keep full caption bounding boxes
+clear of faces, app UI, and key graphics; do not infer readability from a successful burn.
+
 
 ## plan.yaml — asset locking
 

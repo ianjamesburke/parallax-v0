@@ -207,6 +207,8 @@ class Settings:
     # Threaded through so stages can derive deterministic, traceable artifact
     # names (e.g. `<folder>-vN-<short_id>.mp4`).
     run_id: str | None = None
+    headline_y_position: str | None = None
+    headline_font: str | None = None
 
 
 def _infer_project_resolution(plan: dict, folder: Path, aspect: str = "9:16") -> str:
@@ -361,6 +363,8 @@ def _resolve_settings_from_plan(
         skip_captions=skip_captions,
         headline=plan.headline,
         headline_fontsize=plan.headline_fontsize,
+        headline_y_position=plan.headline_y_position,
+        headline_font=plan.headline_font,
         headline_bg=plan.headline_bg,
         headline_color=plan.headline_color,
         character_image=character_image,
@@ -483,6 +487,8 @@ def _resolve_settings_from_dict(
         skip_captions=skip_captions,
         headline=headline,
         headline_fontsize=headline_fontsize,
+        headline_y_position=plan.get("headline_y_position"),
+        headline_font=plan.get("headline_font"),
         headline_bg=headline_bg,
         headline_color=headline_color,
         character_image=character_image,

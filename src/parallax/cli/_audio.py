@@ -149,6 +149,7 @@ def audio_voiceover(
     voice_model: str = typer.Option("tts-mini", "--voice-model", help="TTS backend: tts-mini, tts-gemini, elevenlabs (default: tts-mini)."),
     speed: Optional[float] = typer.Option(None, "--speed", help="atempo multiplier applied after synthesis (e.g. 1.2 = 20% faster)."),
     style: Optional[str] = typer.Option(None, "--style", help="Delivery style preset: rapid_fire, fast, calm, natural."),
+    trim_pauses: bool = typer.Option(False, "--trim-pauses", help="Opt in to timestamp-based pause trimming. By default, preserve the provider's original audio."),
 ) -> int:
     import shutil
     import tempfile
@@ -163,6 +164,8 @@ def audio_voiceover(
 
     out_path = _P(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    speed_applied = speed is not None and speed != 1.0
+    raw_saved = None
 
     with tempfile.TemporaryDirectory() as tmp:
         result = generate_voiceover_dict(
@@ -171,17 +174,41 @@ def audio_voiceover(
             out_dir=tmp,
             style=style,
             voice_model=voice_model,
+            trim_pauses=trim_pauses,
         )
         audio_src = _P(result["audio_path"])
-        if speed and speed != 1.0:
+        if trim_pauses or speed_applied:
+            raw_src = _P(result["raw_audio_path"])
+            raw_saved = out_path.with_name(out_path.stem + ".provider-raw" + raw_src.suffix)
+            shutil.copy2(raw_src, raw_saved)
+        if speed_applied:
             from ..audio import speedup
+            assert speed is not None
             speedup(audio_src, out_path, speed)
         else:
             shutil.copy2(audio_src, out_path)
 
     duration = result["total_duration_s"]
+    if speed_applied:
+        from ..ffmpeg_utils import run_ffmpeg
+        probe = run_ffmpeg(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(out_path)],
+            capture_output=True, text=True,
+        )
+        if probe.stdout.strip():
+            duration = float(probe.stdout.strip())
     print(f"voiceover: {duration:.2f}s → {out_path}")
-    if speed and speed != 1.0:
+    if trim_pauses:
+        print("  pause trimming: enabled")
+    elif speed_applied:
+        print("  pause trimming: disabled; output speed-adjusted")
+    else:
+        print("  pause trimming: disabled (output preserves provider audio)")
+    if raw_saved is not None:
+        print(f"  provider raw: {raw_saved}")
+    if speed_applied:
+        assert speed is not None
         print(f"  speed: {speed:.2f}x applied")
     return 0
 

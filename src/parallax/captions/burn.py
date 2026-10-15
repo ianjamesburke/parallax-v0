@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..log import get_logger
 from .animation import _expand_animation_keyframes
-from .chunker import _smart_chunk_words
+from .chunker import _fixed_chunk_words, _smart_chunk_words
 from .drawtext import _burn_captions_drawtext
 from .styles import resolve_caption_style
 
@@ -40,8 +40,9 @@ def burn_captions(
     when ffmpeg lacks libfreetype (e.g. minimal Homebrew builds).
 
     words_json: JSON string of [{word, start, end}] or path to vo_words.json
-    words_per_chunk: int N for fixed N-word chunks, or "smart" (default) to
+    words_per_chunk: int N for at most N-word chunks, or "smart" (default) to
         group adjacent words while their combined letter count stays ≤4.
+        Both modes end chunks at sentence/phrase punctuation; punctuation is retained.
     caption_style: preset name (bangers/impact/bebas/anton/clean), an inline
         dict with optional `base: <preset>` for partial override, or a fully
         custom dict. Style carries its own animation profile — see
@@ -83,15 +84,7 @@ def burn_captions(
     if isinstance(words_per_chunk, str) and words_per_chunk.lower() == "smart":
         chunks: list[dict] = _smart_chunk_words(words, max_letters=4)
     else:
-        n = int(words_per_chunk)
-        chunks = []
-        for i in range(0, len(words), n):
-            group = words[i: i + n]
-            chunks.append({
-                "text": " ".join(w["word"] for w in group),
-                "start": group[0]["start"],
-                "end": group[-1]["end"],
-            })
+        chunks = _fixed_chunk_words(words, max_words=int(words_per_chunk))
 
     # Extend chunk end to the next chunk's start when the gap is smaller than
     # gap_hold_frames, so there's no blank flash between adjacent captions.

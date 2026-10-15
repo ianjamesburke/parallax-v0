@@ -1148,6 +1148,10 @@ def stage_headline(plan: dict[str, Any], settings: Settings, state: PipelineStat
         "output_path": final_path,
         "fontsize": h_fontsize,
     }
+    if settings.headline_y_position is not None:
+        headline_kwargs["y_position"] = settings.headline_y_position
+    if settings.headline_font is not None:
+        headline_kwargs["font_name"] = settings.headline_font
     if settings.headline_bg:
         headline_kwargs["bg_color"] = settings.headline_bg
     if settings.headline_color:

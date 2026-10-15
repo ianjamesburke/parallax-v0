@@ -12,6 +12,10 @@ Create a layout poster for still review. A silent timing sketch may use estimate
 
 State how each preview was made: a code-rendered layout poster is a static image of editable shapes, not proof of animation. Keep important layout relationships in shared coordinates: a person inside a ring should use the ring's center and the person's visible bounds, rather than unrelated hard-coded offsets. Check optical balance as well as geometry at native size, including start, intermediate and final animation states. Preserve intentional asymmetry when it supports the composition.
 
+Design motion from the beginning of the shot. When a diagram change waits for a spoken cue, give its elements an early entrance (such as a short fade and settle) rather than holding a static card until that word. Keep the meaningful change synchronized to narration. After a counter or diagram settles, a subtle continuous push-in can sustain movement without hiding labels or becoming a substitute for the diagram's own animation. CTA arrows should begin visibly animating near the scene entrance, not wait until the spoken CTA is nearly over. Sample the first frame, the first few tenths of a second, each cue, and the ending.
+
+Reserve a common caption band before composing the graphics. For vertical social output, keep essential labels, branding and controls clear of the bottom third and top platform chrome; use the project's explicit safe-area guide rather than assuming empty lower space is safe. Check the complete video with captions overlaid, including the largest zoom state. Remove headings that merely repeat labels already in the graphic. Reuse the assembler's actual scene boundaries and word cues; do not independently infer a second timing map.
+
 For Remotion authoring, use the available Remotion guidance when installed. For a simpler graphic, choose an appropriate local renderer. The output contract is the same:
 
 - Poster image for layout review.
