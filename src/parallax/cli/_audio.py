@@ -115,6 +115,67 @@ def audio_cap_pauses(
     return 0
 
 
+@audio_app.command(name="cap-sentence-silence")
+def audio_cap_sentence_silence(
+    input: str = typer.Option(..., "--input", "-i", help="Source audio; preserved unchanged."),
+    output: str = typer.Option(..., "--output", "-o", help="Edited WAV output path."),
+    words: str = typer.Option(..., "--words", help="Canonical word-timing JSON with sentence punctuation."),
+    words_out: str = typer.Option(..., "--words-out", help="Output JSON with adjusted canonical word timings."),
+    report: Optional[str] = typer.Option(None, "--report", help="Detailed acoustic cuts and provenance JSON."),
+    max_silence: float = typer.Option(0.075, "--max-silence", help="Maximum continuous acoustic quiet at sentence boundaries, seconds (default: 0.075)."),
+    crossfade: float = typer.Option(0.010, "--crossfade", help="Quiet-only join crossfade in seconds (default: 0.010)."),
+    noise_db: float = typer.Option(-40.0, "--noise-db", help="Acoustic quiet threshold in dB (default: -40)."),
+    min_silence: float = typer.Option(0.040, "--min-silence", help="Minimum detected quiet segment, seconds (default: 0.040)."),
+) -> int:
+    """Shorten measured quiet between sentences while preserving audible edges.
+
+    Unlike cap-pauses, this uses punctuation only to select boundaries and
+    measured acoustic quiet to place cuts. It always writes revised timestamps
+    for downstream captions, scene timing, and graphics.
+    """
+    import json
+    from pathlib import Path
+    from ..audio import cap_sentence_silence
+
+    paths = [Path(p).expanduser().resolve() for p in (input, output, words, words_out)]
+    if report:
+        paths.append(Path(report).expanduser().resolve())
+    if len(set(paths)) != len(paths):
+        raise typer.BadParameter("input, output, words, words-out, and report must be distinct paths")
+
+    word_data = json.loads(Path(words).read_text())
+    word_list = word_data if isinstance(word_data, list) else word_data.get("words", [])
+    result = cap_sentence_silence(
+        input_path=input,
+        output_path=output,
+        words=word_list,
+        max_silence_s=max_silence,
+        crossfade_s=crossfade,
+        noise_db=noise_db,
+        min_silence_s=min_silence,
+    )
+    adjusted = result.pop("adjusted_words")
+    words_path = Path(words_out)
+    words_path.parent.mkdir(parents=True, exist_ok=True)
+    words_path.write_text(json.dumps({"words": adjusted, "total_duration_s": result["new_duration_s"]}, indent=2))
+    result["words_input"] = str(Path(words).resolve())
+    result["words_output"] = str(words_path.resolve())
+    if report:
+        report_path = Path(report)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(result, indent=2))
+    print(
+        f"cap-sentence-silence: {result['quiet_segments_capped']} quiet segments at "
+        f"{result['sentence_boundaries']} sentence boundaries; "
+        f"{result['seconds_removed']:.3f}s removed"
+    )
+    print(f"  audio  → {output}")
+    print(f"  words  → {words_out}")
+    if report:
+        print(f"  report → {report}")
+    return 0
+
+
 @audio_app.command(name="pad-onsets")
 def audio_pad_onsets(
     input: str = typer.Option(..., "--input", "-i", help="Audio (or m4a/mp3) file to process."),
