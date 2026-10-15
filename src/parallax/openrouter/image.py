@@ -19,7 +19,7 @@ from .client import (
 
 log = get_logger("openrouter")
 
-# Default rendering size paired with each aspect — used to pre-crop reference
+# Default rendering size paired with each aspect — used to fit reference
 # images so a model's "match the reference aspect" instinct aligns with the
 # requested aspect. The actual final video resolution comes from Settings.
 _ASPECT_TO_REF_RES: dict[str, str] = {
@@ -41,6 +41,29 @@ _REFERENCE_DESCRIBE_PROMPT = (
 )
 
 _describe_reference_cache: dict[tuple[str, float], str] = {}
+
+
+def _fit_reference_bytes(path: Path, resolution: str) -> bytes:
+    """Fit the complete reference onto an opaque canvas without editing its source."""
+    from io import BytesIO
+
+    from PIL import Image, ImageOps
+
+    width, height = (int(value) for value in resolution.split("x"))
+    with Image.open(path) as source:
+        oriented = ImageOps.exif_transpose(source)
+        fitted = ImageOps.contain(
+            oriented.convert("RGBA"), (width, height), Image.Resampling.LANCZOS
+        )
+        canvas = Image.new("RGB", (width, height), "white")
+        canvas.paste(
+            fitted,
+            ((width - fitted.width) // 2, (height - fitted.height) // 2),
+            fitted,
+        )
+        output = BytesIO()
+        canvas.save(output, format="PNG")
+        return output.getvalue()
 
 
 def _validate_refs(reference_images, spec: ModelSpec) -> list[Path]:
@@ -185,8 +208,9 @@ def _image_real(
     Reference images go in `input_references` as `image_url` parts.
 
     `aspect_ratio` (e.g. '9:16') must be one the catalog lists for the model;
-    every reference is pre-cropped to that shape so the model's "match the
-    reference aspect" instinct agrees with the request.
+    every reference is fitted and padded to that shape so the model's "match
+    the reference aspect" instinct agrees with the request. All reference
+    content and the original file are preserved.
     """
     import base64
 
@@ -230,16 +254,12 @@ def _image_real(
     for ref in refs:
         ref_path = Path(ref)
         if target_aspect_res:
-            from ..stills import crop_to_aspect
-            try:
-                ref_path = crop_to_aspect(ref_path, target_aspect_res)
-            except Exception as e:
-                log.warning(
-                    "ref pre-crop failed for %s (%s) — passing original",
-                    ref, e,
-                )
-        ref_b64 = base64.b64encode(ref_path.read_bytes()).decode("ascii")
-        suffix = ref_path.suffix.lstrip(".").lower() or "png"
+            ref_bytes = _fit_reference_bytes(ref_path, target_aspect_res)
+            suffix = "png"
+        else:
+            ref_bytes = ref_path.read_bytes()
+            suffix = ref_path.suffix.lstrip(".").lower() or "png"
+        ref_b64 = base64.b64encode(ref_bytes).decode("ascii")
         input_references.append({
             "type": "image_url",
             "image_url": {"url": f"data:image/{suffix};base64,{ref_b64}"},

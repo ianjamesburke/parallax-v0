@@ -48,16 +48,6 @@ def validate_brief(brief_path: str | Path, folder: str | Path) -> dict:
                 "message": f"file not found: {full}",
             })
 
-        # product_ref has no wiring yet (see #83)
-        if asset.kind == "product_ref":
-            warnings.append({
-                "field": f"assets.provided[{i}]",
-                "message": (
-                    "product_ref provided but no wiring exists — "
-                    "will be ignored (see #83)"
-                ),
-            })
-
     # Per-scene image_refs existence
     for scene in brief.script.scenes:
         for j, image_ref in enumerate(scene.image_refs):
@@ -69,7 +59,11 @@ def validate_brief(brief_path: str | Path, folder: str | Path) -> dict:
                     "message": f"file not found: {ref_path}",
                 })
 
-    return _result(errors, warnings)
+    from .pacing import estimate_timeline, review_opening_pacing
+    timeline, basis = estimate_timeline([scene.model_dump() for scene in brief.script.scenes])
+    pacing = review_opening_pacing(timeline, basis)
+    warnings.extend(pacing["warnings"])
+    return {**_result(errors, warnings), "opening_pacing": pacing}
 
 
 def validate_plan(plan_path: str | Path, folder: str | Path) -> dict:
@@ -242,7 +236,65 @@ def validate_plan(plan_path: str | Path, folder: str | Path) -> dict:
                         ),
                     })
 
-    return _result(errors, warnings)
+    from .pacing import review_opening_pacing
+    timeline, basis, first_word = _plan_pacing_timeline(plan, folder)
+    pacing = review_opening_pacing(timeline, basis, first_word_start_s=first_word)
+    warnings.extend(pacing["warnings"])
+    return {**_result(errors, warnings), "opening_pacing": pacing}
+
+
+
+def _plan_pacing_timeline(plan, folder: Path) -> tuple[list[dict], str, float | None]:
+    """Use existing locked timing offline; keep estimates explicit when unavailable."""
+    import json
+    import math
+    import re
+    from copy import deepcopy
+    from .pacing import estimate_timeline
+
+    scenes = [scene.model_dump(exclude_none=True) for scene in plan.scenes]
+    estimated, basis = estimate_timeline(scenes)
+    if not plan.audio_path or not plan.words_path:
+        return estimated, basis, None
+    if plan.voice_postprocess is not None or plan.voice_speed != 1.0 or any(
+        scene.voice_speed not in (None, 1.0) for scene in plan.scenes
+    ):
+        return estimated, basis + "; locked timing not used because audio transform settings are present", None
+    try:
+        audio = Path(plan.audio_path).expanduser()
+        audio = audio if audio.is_absolute() else folder / audio
+        if not audio.is_file():
+            raise ValueError("locked audio file is missing")
+        path = Path(plan.words_path).expanduser()
+        path = path if path.is_absolute() else folder / path
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or not payload.get("words") or "total_duration_s" not in payload:
+            raise ValueError("locked words need words and total_duration_s")
+        total = float(payload["total_duration_s"])
+        words = payload["words"]
+        if not math.isfinite(total) or total <= 0:
+            raise ValueError("locked audio duration is invalid")
+        for word in words:
+            start, end = float(word["start"]), float(word["end"])
+            if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end < start or end > total + 0.05:
+                raise ValueError("locked word timing is invalid")
+        if any(float(a["start"]) > float(b["start"]) for a, b in zip(words, words[1:])):
+            raise ValueError("locked words are not chronological")
+        from .assembly import align_scenes_obj, _norm_word
+        from .text_expand import expand_digits
+        from .stages import _apply_timing_overrides
+        script = " ".join(scene.get("vo_text", "") for scene in scenes)
+        script = re.sub(r"\[[^\]]*\]", "", expand_digits(script))
+        expected = [_norm_word(word) for word in script.split() if _norm_word(word)]
+        actual_text = expand_digits(" ".join(word["word"] for word in words))
+        actual = [_norm_word(word) for word in actual_text.split() if _norm_word(word)]
+        if expected != actual:
+            raise ValueError("locked transcript does not match current scene narration")
+        aligned = align_scenes_obj(deepcopy(scenes), deepcopy(payload))
+        aligned = _apply_timing_overrides(aligned, scenes)
+        return aligned, "aligned locked word timings (including explicit scene overrides)", float(words[0]["start"])
+    except (OSError, ValueError, TypeError, KeyError, IndexError) as exc:
+        return estimated, basis + f"; locked timing unavailable: {exc}", None
 
 
 def _check_voice_model(
