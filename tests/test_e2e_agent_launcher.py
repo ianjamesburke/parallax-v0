@@ -49,3 +49,45 @@ def test_refuses_nonempty_requested_workspace(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "must be empty" in result.stderr
+
+
+def test_copies_supplied_script_and_typed_references(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    script = tmp_path / "foot-script.md"
+    character = tmp_path / "character.webp"
+    product = tmp_path / "product.jpg"
+    script.write_text('"A supplied testimonial."\n')
+    character.write_bytes(b"character input")
+    product.write_bytes(b"product input")
+    env = os.environ | {
+        "PARALLAX_E2E_DRY_RUN": "1",
+        "PARALLAX_E2E_ROOT": str(workspace),
+    }
+
+    subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            "--script",
+            str(script),
+            "--character-ref",
+            str(character),
+            "--product-ref",
+            str(product),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    project = workspace / "fixtures" / "e2e-agent" / "default-project"
+    assert (project / "script.md").read_text() == script.read_text()
+    assert (project / "references" / "character.webp").read_bytes() == character.read_bytes()
+    assert (project / "references" / "product.jpg").read_bytes() == product.read_bytes()
+    references = (project / "references.md").read_text()
+    assert "character-ref" in references
+    assert "product-ref" in references
+    assert str(character) not in references
+    assert str(product) not in references

@@ -1,6 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+usage() {
+    echo "Usage: $0 [--script PATH] [--character-ref PATH] [--product-ref PATH] [--reference PATH]" >&2
+}
+
+script_path=""
+declare -a reference_paths=()
+declare -a reference_kinds=()
+
+while (($# > 0)); do
+    case "$1" in
+        --)
+            shift
+            ;;
+        --script)
+            [[ $# -ge 2 ]] || { usage; exit 2; }
+            [[ -z "$script_path" ]] || { echo "--script may be supplied once" >&2; exit 2; }
+            script_path=$2
+            shift 2
+            ;;
+        --character-ref|--product-ref|--reference)
+            [[ $# -ge 2 ]] || { usage; exit 2; }
+            reference_paths+=("$2")
+            reference_kinds+=("${1#--}")
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            usage
+            exit 2
+            ;;
+    esac
+done
+
 repo_root=$(git rev-parse --show-toplevel)
 tree=$(git write-tree)
 
@@ -21,6 +58,31 @@ project_root="$workspace_root/fixtures/e2e-agent/default-project"
 if [[ ! -f "$project_root/PROJECT.md" ]]; then
     echo "E2E fixture is missing its default project: $project_root" >&2
     exit 1
+fi
+
+if [[ -n "$script_path" ]]; then
+    [[ -f "$script_path" ]] || { echo "Script not found: $script_path" >&2; exit 1; }
+    cp "$script_path" "$project_root/script.md"
+fi
+
+if ((${#reference_paths[@]})); then
+    mkdir -p "$project_root/references"
+    {
+        printf '# Supplied references\n\n'
+        printf '| Kind | Fixture file |\n'
+        printf '| --- | --- |\n'
+    } > "$project_root/references.md"
+
+    for i in "${!reference_paths[@]}"; do
+        source_path=${reference_paths[$i]}
+        kind=${reference_kinds[$i]}
+        [[ -f "$source_path" ]] || { echo "Reference not found: $source_path" >&2; exit 1; }
+        filename=$(basename "$source_path")
+        destination="$project_root/references/$filename"
+        [[ ! -e "$destination" ]] || { echo "Duplicate fixture reference filename: $filename" >&2; exit 1; }
+        cp "$source_path" "$destination"
+        printf '| %s | `references/%s` |\n' "$kind" "$filename" >> "$project_root/references.md"
+    done
 fi
 
 git -C "$workspace_root" init -q

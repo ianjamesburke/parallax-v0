@@ -2,9 +2,9 @@ test:
     uv run pytest -v
 
 # Create a hermetic fixture project and start Codex in it. The fixture contains
-# only index-tracked files, so archived local runs and untracked projects are absent.
-e2e-agent:
-    LC_ALL=C bash scripts/start-e2e-agent.sh
+# only index-tracked files plus the inputs passed to this command.
+e2e-agent *args:
+    LC_ALL=C bash scripts/start-e2e-agent.sh {{args}}
 
 # Install CLI from current directory (works from any worktree)
 install:

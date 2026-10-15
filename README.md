@@ -135,6 +135,16 @@ uv run parallax verify suite tests/fixtures/verify_suite_smoke/
 
 Run `just e2e-agent` to start Codex in a temporary default project. The launcher builds the workspace from the Git index, so ignored local runs and untracked project files are not copied into the test. It launches Codex from that project with the Parallax skill and an intake-only prompt.
 
+Pass a script and reference images as named arguments. The launcher copies them into the fixture, so the agent sees the inputs but not their original host paths:
+
+```sh
+just e2e-agent \
+  -- \
+  --script /absolute/path/to/script.md \
+  --character-ref /absolute/path/to/character.webp \
+  --product-ref /absolute/path/to/product.jpg
+```
+
 This isolates the fixture data. It does not stop an agent that deliberately reads absolute paths outside the fixture. Use a container or VM when the test also needs a hard host-filesystem boundary.
 
 The Claude Code agent guide for operating this CLI lives in a standalone repo: [parallax-skill](https://github.com/ianjamesburke/parallax-skill).
