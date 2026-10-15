@@ -131,4 +131,10 @@ uv run parallax verify suite tests/fixtures/verify_suite_smoke/
 
 `DEV_LOG.md` is the canonical record of architectural decisions, gotchas, and deferrals — newest-first, `Breaks if:` lines on every shipped change.
 
+## Hermetic agent intake test
+
+Run `just e2e-agent` to start Codex in a temporary default project. The launcher builds the workspace from the Git index, so ignored local runs and untracked project files are not copied into the test. It launches Codex from that project with the Parallax skill and an intake-only prompt.
+
+This isolates the fixture data. It does not stop an agent that deliberately reads absolute paths outside the fixture. Use a container or VM when the test also needs a hard host-filesystem boundary.
+
 The Claude Code agent guide for operating this CLI lives in a standalone repo: [parallax-skill](https://github.com/ianjamesburke/parallax-skill).

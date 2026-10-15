@@ -24,6 +24,24 @@ export OPENROUTER_API_KEY=sk-or-...
 
 ---
 
+## Intake: references and a social-first brief
+
+Before planning a new production, inspect the supplied script, project notes, and reference inventory. Ask one compact set of questions only for choices that remain unresolved: whether to preserve the script verbatim, whether the user wants a storyboard or the full video, and any format, voice, or spending constraint.
+
+When a named brand or product must be shown and no usable official visual reference is supplied, call that out before writing the brief and offer to look up official brand/product references on the web. Get the user's approval before researching or adopting an internet-found reference. Once approved, prefer an official source, inspect the candidate rather than relying on its filename or search snippet, save or record its source with the project, and **open the found reference** for the user immediately. Mark unverified/generated placeholders as such; do not present them as approved branding.
+
+Treat a `reference: true` character fallback and explicit `reference_images` as complementary. If a scene needs both character and product identity, include both references explicitly; do not let the product image silently replace the character reference.
+
+### Scene-length and hook check
+
+Before spending on a brief or plan, audit the script scene by scene. A generation scene should express one readable visual beat, not a paragraph, a montage, or a sequence of camera moves. Flag a proposed scene when it has multiple locations/actions, needs a visual change to stay interesting, or would hold a single shot beyond roughly 5 seconds (and never rely on one generated clip to carry more than the selected video model supports). Offer a split into short shots, usually 1–4 seconds for fast social creative, while preserving the user's narration and meaning. Do not silently rewrite an approved script.
+
+If the user has provided only a concept or asks for a script from scratch, propose a concise, platform-appropriate version first: lead with a specific visual/action hook in the first 1–2 seconds, put the tension, benefit, or surprising change on screen early, vary the visual beat before attention drops, and reserve a clean final beat for the CTA. Prefer a 15–45 second initial cut unless the user specifies another duration. For a longer script, say why it needs a cut-down or a multi-shot treatment and offer concrete short-form versions before generating.
+
+Show a scene/reference table before generation: scene index, visual beat, estimated duration, character/product references, and missing assets. Save it as `references.md` with the project.
+
+---
+
 ## Core loop
 
 Two artifacts drive every project:
@@ -312,6 +330,14 @@ Full pipeline runs end-to-end with stub assets. Use to validate brief structure 
 
 ---
 
+## Review and opening generated media
+
+Treat a completed generation as something to show, not merely a path to report. Immediately open the primary artifact in an available viewer after each completed image, audio, video, storyboard, draft, or final render. For a storyboard, open the visual storyboard (or its individual stills), not just the YAML plan. For a completed video, open the video itself; for audio, open/play the audio; for an image, open the image. Report the exact artifact that was actually opened.
+
+Before progressing from storyboard to narration, animation, or final assembly, inspect the generated visual output against the scene/reference map. Do not treat a successful command or a populated reference field as evidence of style, character, or product fidelity. Keep rejected artifacts and their diagnosis, and regenerate only the affected unlocked scenes.
+
+---
+
 ## Output layout
 
 ```
@@ -347,6 +373,7 @@ my-project/
 - **STOP before calling `parallax image generate` with `--model draft` and a non-square aspect (9:16, 16:9, 3:4, 4:3):** `draft` sometimes ignores the aspect ratio. Use `grok-image` or `mid` instead.
 - For non-interactive / sub-agent runs, always pass `-y` to `parallax produce`
 - Run `parallax validate` before `parallax produce` to catch brief/plan errors without spending credits
+- After every generated artifact, open the artifact in an available viewer before declaring that stage complete
 - Output flag is `--out <path>`, never `--output` — that flag does not exist.
 - **macOS screenshot filenames use Unicode characters** (middle dots, narrow no-break spaces), not regular spaces — they cannot be constructed by hand. Always resolve via `find` and copy to `/tmp/` first:
   ```bash
