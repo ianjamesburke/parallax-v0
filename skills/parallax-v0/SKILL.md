@@ -54,6 +54,10 @@ If the user has provided only a concept or asks for a script from scratch, propo
 
 Show the native HTML storyboard before scene-batch generation; it contains the scene/reference map. Record only additional reference provenance or missing assets in project notes, avoiding a second manually maintained scene table. Shared art direction belongs in a short style note, and each executable image prompt must include the necessary style description: plan `style` and `style_hint` currently affect voice synthesis, not still generation.
 
+Treat a storyboard with no assigned visual references as a review blocker, not a silent default. For every editorial still or animation, either assign a compact approved character/style reference or call out the intentional no-reference choice in the storyboard. Graphics may omit image references only when a deliberate code-authored visual system is named. Product, logo, or UI scenes without official references must be visibly marked pending and may not become final branded visuals.
+
+Audit visual variety before paid generation. Motion graphics should earn their place as explanatory beats, transitions, or data moments; they are not a fallback for every line of narration. Flag a storyboard when motion graphics exceed roughly 40% of scenes or when three or more appear consecutively. Propose specific editorial, product, or action alternatives before spending.
+
 ---
 
 ## Review checkpoints

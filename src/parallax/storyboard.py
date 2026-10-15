@@ -90,6 +90,84 @@ def _reference_groups(brief: Brief, folder: Path) -> str:
     return ''.join(sections) + '<p class="meta">References guide the look; they are not scene assets. Review labels record the authored status. Assign scene image_refs explicitly for image generation.</p>'
 
 
+def _reference_and_variety_review(brief: Brief) -> tuple[str, dict[int, str]]:
+    """Return pre-generation advisories for reference coverage and visual variety.
+
+    These are intentionally review gates, not validation errors: an abstract
+    graphic can legitimately have no image input, while an editorial still
+    without any style anchor deserves a human decision before it is billed.
+    """
+    scenes = brief.script.scenes
+    style_anchors = [asset for asset in brief.assets.provided
+                     if asset.kind in {"style_ref", "character_ref"}]
+    scene_advisories: dict[int, str] = {}
+    warnings: list[str] = []
+
+    uncovered = [scene for scene in scenes
+                 if scene.resolved_scene_type != "motion_graphic" and not scene.image_refs]
+    if uncovered:
+        indexes = ", ".join(f"{scene.index:02d}" for scene in uncovered)
+        anchor_note = (
+            "A global style/character reference exists, but these scenes do not name a scene reference."
+            if style_anchors else
+            "No global style or character reference exists."
+        )
+        warnings.append(
+            f"{len(uncovered)} editorial still/animation scene(s) have no explicit image reference "
+            f"({indexes}). {anchor_note} Confirm the intentional no-reference choice or attach a compact style/character anchor before paid still generation."
+        )
+        for scene in uncovered:
+            scene_advisories[scene.index] = "No scene image reference — confirm or attach an approved style/character anchor before generation."
+
+    product_pattern = re.compile(r"\b(?:app|product|logo|ui|brand)\b", re.IGNORECASE)
+    product_exclusion = re.compile(
+        r"\b(?:no|without|avoid|generic|abstract)\s+(?:legible\s+)?(?:branded?\s+)?(?:app|product|logo|ui|brand)\b",
+        re.IGNORECASE,
+    )
+    product_missing = [scene for scene in scenes
+                       if not scene.image_refs
+                       and product_pattern.search(f"{scene.prompt} {scene.on_screen_text}")
+                       and not product_exclusion.search(f"{scene.prompt} {scene.on_screen_text}")]
+    if product_missing:
+        indexes = ", ".join(f"{scene.index:02d}" for scene in product_missing)
+        warnings.append(
+            f"Product/brand-dependent scene(s) {indexes} have no assigned reference. Keep placeholders explicit; attach official logo, product, or UI material before claiming a final branded treatment."
+        )
+        for scene in product_missing:
+            current = scene_advisories.get(scene.index, "")
+            scene_advisories[scene.index] = (current + " " if current else "") + "Brand/product reference missing."
+
+    graphic_count = sum(scene.resolved_scene_type == "motion_graphic" for scene in scenes)
+    if scenes and graphic_count / len(scenes) > 0.4:
+        warnings.append(
+            f"{graphic_count} of {len(scenes)} scenes are motion graphics ({graphic_count / len(scenes):.0%}). Review the beat map for editorial/action alternatives before generating a repetitive card sequence."
+        )
+    run: list[int] = []
+    longest_run: list[int] = []
+    for scene in scenes:
+        if scene.resolved_scene_type == "motion_graphic":
+            run.append(scene.index)
+            if len(run) > len(longest_run):
+                longest_run = run[:]
+        else:
+            run = []
+    if len(longest_run) >= 3:
+        warnings.append(
+            "Consecutive motion-graphic run: " + ", ".join(f"{index:02d}" for index in longest_run) +
+            ". Break it with an editorial, product, or action beat unless the sequence is deliberately one continuous explainer."
+        )
+
+    if not warnings:
+        return "", scene_advisories
+    items = ''.join(f"<li>{escape(warning)}</li>" for warning in warnings)
+    return (
+        '<section class="gate"><h2>Reference and visual-variety review</h2>'
+        '<p class="meta">Pre-generation advisories. Resolve or explicitly accept these before paid still work.</p>'
+        f'<ul>{items}</ul></section>',
+        scene_advisories,
+    )
+
+
 def render_storyboard(brief: Brief, folder: str | Path, timeline: list[dict] | None = None) -> str:
     """Return self-contained layout and image previews; video links stay local."""
     root = Path(folder).expanduser().resolve()
@@ -116,6 +194,7 @@ def render_storyboard(brief: Brief, folder: str | Path, timeline: list[dict] | N
             if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0:
                 first_word_start = float(value)
     pacing = review_opening_pacing(timeline, timing_basis, first_word_start_s=first_word_start)
+    reference_variety_html, reference_variety_advisories = _reference_and_variety_review(brief)
     warning_items = ''.join(f'<li>{escape(w["message"])}</li>' for w in pacing["warnings"])
     review_items = ''.join(f'<li>{escape(item)}</li>' for item in pacing["visual_review_prompts"])
     pacing_html = (
@@ -137,6 +216,8 @@ def render_storyboard(brief: Brief, folder: str | Path, timeline: list[dict] | N
         total += duration
         timing_label = f'{duration:.2f}s supplied timing' if supplied_timing else f'~{duration:.1f}s reading estimate'
         scene_advisory = '<p class="meta">Opening pacing: review this hold longer than 3s.</p>' if any(w.get("scene_index") == scene.index for w in pacing["warnings"]) else ''
+        if reference_variety_advisories.get(scene.index):
+            scene_advisory += '<p class="missing">' + escape(reference_variety_advisories[scene.index]) + '</p>'
         media = []
         if scene.still_path:
             media.append(_asset(root, scene.still_path, "Supplied still"))
@@ -199,6 +280,7 @@ def render_storyboard(brief: Brief, folder: str | Path, timeline: list[dict] | N
 <p class="meta">{type_summary}</p>
 <div class="summary">{timing_summary}</div>
 {pacing_html}
+{reference_variety_html}
 {opening_sheet}
 <section class="gate"><h2>Checkpoint 1 — Storyboard</h2><p>Review scene order, narration, visual direction, scene types, references, and on-screen copy before generating assets.</p><p>Next: review stills and motion-graphic frames → approve a motion sample → animate approved stills and render graphics → review the final edit.</p><p class="meta">This document records proposals, not approval. Share decisions in the conversation; rendering it does not authorize generation.</p></section>
 {'<h2>Success criteria</h2><ul>' + criteria + '</ul>' if criteria else ''}
