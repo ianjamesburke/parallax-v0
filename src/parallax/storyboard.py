@@ -168,6 +168,25 @@ def _reference_and_variety_review(brief: Brief) -> tuple[str, dict[int, str]]:
     )
 
 
+def _scene_layout_and_composition_advisory(scene) -> str:
+    """Catch likely overflow and multi-frame still directions before image work.
+
+    This is deliberately conservative. It identifies directions which require a
+    reviewer to choose a single frame or an explicit local multi-panel design;
+    it never attempts to split narration automatically.
+    """
+    messages: list[str] = []
+    copy_lines = scene.on_screen_text.splitlines() if scene.on_screen_text else []
+    if any(len(line.strip()) > 18 for line in copy_lines):
+        messages.append("On-screen copy has a line longer than the 9:16 safe-layout heuristic. Wrap, shorten, or test it in the actual graphic template before approving.")
+    direction = f"{scene.prompt} {scene.motion_prompt or ''}"
+    compound = re.search(r"\b(?:diptych|split[ -]?screen|before[ /-]after|montage|collage)\b", direction, re.IGNORECASE)
+    temporal_pair = re.search(r"\b(?:same .{0,80}\bthen\b|turns? .{0,80}\band\b .{0,80}\bwakes?)", direction, re.IGNORECASE)
+    if compound or temporal_pair:
+        messages.append("Compound visual direction. Choose one representative generated frame, split it into separate scenes, or specify a deliberate code-authored multi-panel graphic; do not ask a single image generation to depict multiple scenes or moments.")
+    return " ".join(messages)
+
+
 def render_storyboard(brief: Brief, folder: str | Path, timeline: list[dict] | None = None) -> str:
     """Return self-contained layout and image previews; video links stay local."""
     root = Path(folder).expanduser().resolve()
@@ -216,8 +235,10 @@ def render_storyboard(brief: Brief, folder: str | Path, timeline: list[dict] | N
         total += duration
         timing_label = f'{duration:.2f}s supplied timing' if supplied_timing else f'~{duration:.1f}s reading estimate'
         scene_advisory = '<p class="meta">Opening pacing: review this hold longer than 3s.</p>' if any(w.get("scene_index") == scene.index for w in pacing["warnings"]) else ''
-        if reference_variety_advisories.get(scene.index):
-            scene_advisory += '<p class="missing">' + escape(reference_variety_advisories[scene.index]) + '</p>'
+        layout_advisory = _scene_layout_and_composition_advisory(scene)
+        combined_advisory = " ".join(filter(None, (reference_variety_advisories.get(scene.index), layout_advisory)))
+        if combined_advisory:
+            scene_advisory += '<p class="missing">' + escape(combined_advisory) + '</p>'
         media = []
         if scene.still_path:
             media.append(_asset(root, scene.still_path, "Supplied still"))
