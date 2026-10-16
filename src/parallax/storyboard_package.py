@@ -125,20 +125,24 @@ def _qa_notes(manifest: dict) -> str:
         lines += [f"  - `{c['id']}`: {c['summary']} ({c['human_decision']})" for c in gate["choices"]]
     if not manifest["gates"]:
         lines += ["None."]
-    lines += ["", "## Scene advisories", ""]
+    lines += ["", "## Advisories (non-blocking; a human decides)", ""]
     for a in manifest["advisories"]:
-        lines += [f"- Scene {a['scene']:02d} [{a['kind']}]: {a['message']}"]
+        where = f"Scene {a['scene']:02d}" if a["scene"] is not None else "Storyboard"
+        lines += [f"- {where} [{a['kind']}]: {a['message']}{' (acknowledged: narration is locked)' if a.get('acknowledged') else ''}"]
         lines += [f"  - {r['id']}: {r['how']}" for r in a.get("remedies", [])]
     lines += [] if manifest["advisories"] else ["None."]
-    lines += ["", "## Visual variety", ""]
-    lines += [f"- {w['message']}" for w in manifest["variety"]] or ["None."]
-    lines += ["", "## Opening pacing", ""]
-    for w in manifest["pacing_warnings"]:
-        lines += [f"- {w['message']}{' (acknowledged: narration is locked)' if w['acknowledged'] else ''}", f"  - remedy: {w['remedy']}"]
-    lines += [] if manifest["pacing_warnings"] else ["None."]
     lines += ["", "## Missing assets", ""]
     lines += [f"- {path}" for path in manifest["missing_assets"]] or ["None."]
     return "\n".join(lines) + "\n"
+
+
+def _advisories(review: dict) -> list[dict]:
+    """One vocabulary for everything non-blocking: scene advisories, pacing, and visual variety."""
+    scene = [{"scene": index, **a} for index, items in review["scene_advisories"].items() for a in items]
+    pacing = [{"scene": w.get("scene_index"), "kind": w["code"], "message": w["message"], "remedies": w["remedies"],
+               "acknowledged": w["acknowledged"]} for w in review["pacing"]["warnings"]]
+    variety = [{"scene": None, **w} for w in review["variety"]]
+    return scene + pacing + variety
 
 
 def _next_steps(gates: list[dict], folder: str, brief_path: str) -> list[dict]:
@@ -169,9 +173,7 @@ def _manifest(brief: Brief, review: dict, files: dict[str, str], contact: list[i
         "missing_assets": missing,
         "timing": {"basis": review["timing_basis"], "total_s": round(float(timeline[-1]["end_s"]), 3) if timeline else 0.0},
         "gates": review["gates"],
-        "advisories": [{"scene": index, **a} for index, items in review["scene_advisories"].items() for a in items],
-        "variety": review["variety"],
-        "pacing_warnings": review["pacing"]["warnings"],
+        "advisories": _advisories(review),
         "next_steps": _next_steps(review["gates"], folder, brief_path),
     }
 
@@ -219,3 +221,13 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
     (package / "qa-notes.md").write_text(_qa_notes(on_disk), encoding="utf-8")
     (package / "handoff.json").write_text(json.dumps(on_disk, indent=2) + "\n", encoding="utf-8")
     return _manifest(brief, review, files, contact, missing, str(root), str(brief_path))
+
+
+def check_storyboard(brief_path: str | Path, folder: str | Path, timing_path: str | Path | None = None) -> dict:
+    """Same manifest as write_package (status, gates, advisories) without writing anything."""
+    brief_path = Path(brief_path).expanduser().resolve()
+    root = Path(folder).expanduser().resolve()
+    brief = Brief.from_yaml(brief_path)
+    review = review_storyboard(brief, root, brief_path, _load_timing(timing_path) if timing_path else None)
+    missing = [raw for raw in _referenced_paths(brief) if not (root / raw).is_file()]
+    return {"checked_only": True, **_manifest(brief, review, {}, [], missing, str(root), str(brief_path))}

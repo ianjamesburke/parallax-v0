@@ -82,12 +82,20 @@ def _storyboard_cmd(
     brief: str = typer.Option(..., "--brief", help="Path to the authored brief.yaml."),
     timing: Optional[str] = typer.Option(None, "--timing", help="Aligned manifest YAML/JSON with index, start_s, end_s for every scene; replaces reading estimates."),
     package_dir: Optional[str] = typer.Option(None, "--package-dir", help="Package output directory (default: <folder>/storyboard-package)."),
+    check: bool = typer.Option(False, "--check", help="Print the status, open gates, and advisories as JSON without writing a package."),
     as_json: bool = typer.Option(False, "--json", help="Print the handoff manifest as JSON: status, open reference gates with choices and resolving commands, advisories."),
 ) -> int:
     """Write a portable storyboard package and its reference gates. No provider calls."""
     import json
     from pathlib import Path
-    from ..storyboard_package import write_package
+    from ..storyboard_package import check_storyboard, write_package
+    if check:
+        try:
+            typer.echo(json.dumps(check_storyboard(brief, folder, timing_path=timing), indent=2))
+        except (ValueError, OSError) as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            return 2
+        return 0
     destination = Path(package_dir) if package_dir else Path(folder) / "storyboard-package"
     try:
         manifest = write_package(brief, folder, destination, timing_path=timing)
@@ -140,10 +148,17 @@ def _refuse_open_gates(brief_path, folder: str) -> int | None:
         print(f"Error: failed to read brief {brief_path}: {e}", file=sys.stderr)
         return 1
     if gates:
+        lines = []
+        for gate in gates:
+            if gate["state"] == "authorized_pending_generation":
+                attach = next(c["command"] for c in gate["choices"] if c["id"] == "generated_anchor")
+                lines.append(f"  {gate['id']}: anchor authorized ({'; '.join(sorted(set(gate['authorized_scenes'].values())))}) but not generated or attached. "
+                             f"Generate it, then run: {attach}")
+            else:
+                lines.append(f"  {gate['id']}: a human must answer it")
         print(
-            f"Error: {len(gates)} reference gate(s) open ({', '.join(g['id'] for g in gates)}); "
-            "a human must answer them before any generation. "
-            f"Run: parallax storyboard --folder {folder} --brief {brief_path} --json",
+            f"Error: {len(gates)} reference gate(s) block generation:\n" + "\n".join(lines) +
+            f"\nSee: parallax storyboard --folder {folder} --brief {brief_path} --json",
             file=sys.stderr,
         )
         return 1

@@ -172,9 +172,10 @@ def open_gates(brief: Brief, folder: str | Path, brief_path: str | Path) -> list
     editorial = [s.index for s in scenes
                  if s.resolved_scene_type != "motion_graphic" and not _referenced(brief, s) and s.index not in waived]
     if editorial:
-        anchors = [a for a in brief.assets.provided if a.kind in {"style_ref", "character_ref"}]
-        note = ("A global style/character reference exists, but these scenes do not name a scene reference."
-                if anchors else "No global style or character reference exists.")
+        kinds = sorted(_kinds(brief) & {"style_ref", "character_ref", "product_ref"})
+        note = (f"Global reference(s) exist ({', '.join(kinds)}) but do not cover these scenes: a style_ref never covers a scene by itself "
+                "(list it in the scene's image_refs), a character_ref covers shot_type: character scenes, and a product_ref covers shot_type: broll scenes."
+                if kinds else "No global style or character reference exists.")
         gates.append(_gate(brief, folder, brief_path, EDITORIAL, "unanchored_editorial_scenes", editorial,
                            f"{len(editorial)} editorial still/animation scene(s) have no explicit image reference "
                            f"({_indexes(editorial)}). {note} How should their look be anchored before paid still generation?"))

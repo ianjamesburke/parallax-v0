@@ -160,9 +160,9 @@ def _scene_layout_and_composition_advisories(scene) -> list[dict]:
 
 
 _PACING_REMEDIES = {
-    "opening_long_hold": "Split the scene at a word boundary into shots of at most 3s, distributing vo_text verbatim; or keep it and show a clear change of action inside the shot.",
-    "opening_few_cuts": "Add scene boundaries inside the first 6s by distributing vo_text across more scenes at word boundaries; or accept it when the opening is one deliberate continuous action.",
-    "opening_delayed_first_word": "After narration exists, remove verified leading quiet with `parallax audio trim-leading-quiet --first-word-by 0.1`.",
+    "opening_long_hold": ("split_or_vary_action", "Split the scene at a word boundary into shots of at most 3s, distributing vo_text verbatim; or keep it and show a clear change of action inside the shot."),
+    "opening_few_cuts": ("add_cuts_or_accept", "Add scene boundaries inside the first 6s by distributing vo_text across more scenes at word boundaries; or accept it when the opening is one deliberate continuous action."),
+    "opening_delayed_first_word": ("trim_leading_quiet", "After narration exists, remove verified leading quiet with `parallax audio trim-leading-quiet --first-word-by 0.1`."),
 }
 
 
@@ -182,7 +182,8 @@ def _resolve_timeline(brief: Brief, timeline: list[dict] | None) -> tuple[list[d
 
 def _pacing_with_remedies(pacing: dict, narration_locked: bool) -> dict:
     """Attach a remedy to each warning; with locked narration they are acknowledged, not action items."""
-    warnings = [{**w, "remedy": _PACING_REMEDIES[w["code"]], "acknowledged": narration_locked} for w in pacing["warnings"]]
+    warnings = [{**w, "remedies": [dict(zip(("id", "how"), _PACING_REMEDIES[w["code"]]))], "acknowledged": narration_locked}
+                for w in pacing["warnings"]]
     return {**pacing, "warnings": warnings}
 
 
@@ -206,7 +207,10 @@ def review_storyboard(brief: Brief, folder: str | Path, brief_path: str | Path, 
         message = ("No scene image reference — resolve the reference gate before generation."
                    if gate["id"] == EDITORIAL else "Brand/product reference missing.")
         for index in gate["scenes"]:
-            scene_advisories[index].insert(0, {"kind": gate["kind"], "message": message})
+            if str(index) in gate.get("authorized_scenes", {}):
+                scene_advisories[index].insert(0, {"kind": "generated_anchor_pending", "message": "Anchor authorized but not yet generated; attach it before `parallax produce`."})
+            else:
+                scene_advisories[index].insert(0, {"kind": gate["kind"], "message": message})
     return {
         "timeline": timeline,
         "timing_basis": timing_basis,

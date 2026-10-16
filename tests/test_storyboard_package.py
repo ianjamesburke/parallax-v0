@@ -328,13 +328,19 @@ def test_advisories_carry_numeric_threshold_and_machine_readable_remedies(tmp_pa
     assert "exactly" in remedies["split_scenes"]["how"] and remedies["split_scenes"]["narration"] == "distribute_verbatim"
 
 
-def test_pacing_warnings_have_remedies_and_locked_narration_acknowledges_them(tmp_path, capsys):
+def _pacing(manifest):
+    return [a for a in manifest["advisories"] if a["kind"].startswith("opening_")]
+
+
+def test_pacing_advisories_have_remedies_and_locked_narration_acknowledges_them(tmp_path, capsys):
     scenes = [{"vo_text": "one two three four five six seven eight", "image_refs": ["s.png"]}]
     _png(tmp_path / "s.png")
-    open_ = _storyboard(tmp_path, _scenes_brief(tmp_path, scenes), capsys)["pacing_warnings"]
-    assert open_ and all(w["remedy"] and w["acknowledged"] is False for w in open_)
-    locked = _storyboard(tmp_path, _scenes_brief(tmp_path, scenes, narration_locked=True), capsys)["pacing_warnings"]
-    assert [w["code"] for w in locked] == [w["code"] for w in open_] and all(w["acknowledged"] for w in locked)
+    manifest = _storyboard(tmp_path, _scenes_brief(tmp_path, scenes), capsys)
+    open_ = _pacing(manifest)
+    assert open_ and all(w["remedies"][0]["how"] and w["acknowledged"] is False for w in open_)
+    assert "pacing_warnings" not in manifest and "variety" not in manifest
+    locked = _pacing(_storyboard(tmp_path, _scenes_brief(tmp_path, scenes, narration_locked=True), capsys))
+    assert [w["kind"] for w in locked] == [w["kind"] for w in open_] and all(w["acknowledged"] for w in locked)
     assert "acknowledged" in (tmp_path / "storyboard-package/qa-notes.md").read_text()
 
 
@@ -363,7 +369,7 @@ def test_produce_plan_cannot_bypass_an_open_gate(tmp_path, capsys, monkeypatch):
     capsys.readouterr()
     for extra in ([], ["--scene", "0"]):
         assert cli.main(["produce", "--folder", str(folder), "--plan", str(plan), *extra]) == 1
-        assert "reference gate(s) open" in capsys.readouterr().err
+        assert "reference gate(s) block generation" in capsys.readouterr().err
     # the check follows the brief: removing it is an error, not a silent pass
     brief.rename(tmp_path / "moved.yaml")
     assert cli.main(["produce", "--folder", str(folder), "--plan", str(plan)]) == 1
@@ -382,3 +388,49 @@ def test_produce_plan_proceeds_once_gates_are_answered(tmp_path, capsys, monkeyp
         status="ok", run_id="t", output_dir=tmp_path, final_video=tmp_path / "o.mp4", stills_dir=None, cost_usd=0.0, error=None))
     assert cli.main(["produce", "--folder", str(folder), "--plan", str(folder / "parallax/scratch/plan.yaml")]) == 0
     assert called["plan_path"].endswith("plan.yaml")
+
+
+def test_produce_refusal_names_the_real_blocker_for_a_pending_anchor(tmp_path, capsys):
+    folder, brief = _project(tmp_path)
+    _resolve(folder, brief, "--gate", "editorial-reference", "--choice", "generated_anchor", "--authorized-by", "Ian")
+    _resolve(folder, brief, "--gate", "product-reference", "--choice", "no_reference", "--reason", "placeholder")
+    capsys.readouterr()
+    assert cli.main(["produce", "--folder", str(folder), "--brief", str(brief)]) == 1
+    err = capsys.readouterr().err
+    assert "authorized (authorized by Ian) but not generated or attached" in err
+    assert "--choice generated_anchor --asset <asset>" in err
+    assert "must answer" not in err
+
+
+def test_open_gate_refusal_still_asks_for_a_human_answer(tmp_path, capsys):
+    folder, brief = _project(tmp_path)
+    assert cli.main(["produce", "--folder", str(folder), "--brief", str(brief)]) == 1
+    assert "editorial-reference: a human must answer it" in capsys.readouterr().err
+
+
+def test_pending_anchor_scenes_get_a_pending_note_not_a_contradictory_instruction(tmp_path, capsys):
+    folder, brief = _project(tmp_path)
+    _resolve(folder, brief, "--gate", "editorial-reference", "--choice", "generated_anchor", "--authorized-by", "Ian")
+    manifest = _storyboard(folder, brief, capsys)
+    kinds = {(a["scene"], a["kind"]) for a in manifest["advisories"]}
+    assert (0, "generated_anchor_pending") in kinds and (0, "unanchored_editorial_scenes") not in kinds
+    notes = (Path(manifest["package_dir"]) / "qa-notes.md").read_text()
+    scene_0 = [line for line in notes.splitlines() if line.startswith("- Scene 00")]
+    assert scene_0 and not any("resolve the reference gate" in line for line in scene_0)
+
+
+def test_style_ref_only_gate_message_says_what_covers_a_scene(tmp_path, capsys):
+    _png(tmp_path / "s.png")
+    brief = _scenes_brief(tmp_path, [{}], assets={"provided": [{"path": "s.png", "kind": "style_ref"}]})
+    question = _storyboard(tmp_path, brief, capsys)["gates"][0]["question"]
+    assert "style_ref never covers a scene by itself" in question and "image_refs" in question and "character_ref covers shot_type: character" in question
+
+
+def test_check_previews_gates_without_writing_a_package(tmp_path, capsys):
+    folder, brief = _project(tmp_path)
+    assert cli.main(["storyboard", "--folder", str(folder), "--brief", str(brief), "--check"]) == 0
+    checked = json.loads(capsys.readouterr().out)
+    assert checked["checked_only"] is True and checked["status"] == "needs_reference_decision"
+    assert {g["id"] for g in checked["gates"]} == {"editorial-reference", "product-reference"}
+    assert not (folder / "storyboard-package").exists()
+    assert cli.main(["storyboard", "--folder", str(folder), "--brief", str(tmp_path / "absent.yaml"), "--check"]) == 2

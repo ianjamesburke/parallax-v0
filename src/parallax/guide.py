@@ -39,6 +39,20 @@ _BRIEF = {
         "on_screen_text": "Review copy, not narration. Keep each line at most 18 characters for 9:16; put a newline between lines.",
         "narration_locked": "Top-level brief field. true marks the narration as final so pacing advisories are reported as acknowledged.",
     },
+    "vocabulary": {
+        "gate": "A blocking decision a human must answer. Listed in storyboard `gates`; blocks `produce`, not review.",
+        "advisory": "A non-blocking finding a human weighs. Everything non-blocking is in storyboard `advisories`: per-scene advisories, opening pacing, and visual variety. Each has `kind`, `scene` (null for the whole storyboard), `message`, and `remedies`; pacing items add `acknowledged`.",
+        "validate": "`parallax validate` calls its non-blocking findings `warnings`. Pacing items use the same identifier: validate `code` equals storyboard advisory `kind` (opening_long_hold, opening_few_cuts, opening_delayed_first_word).",
+    },
+    "script_mapping": {
+        "note": "No command parses a script file; the operator maps it into brief.yaml by this rule.",
+        "headline": "A labeled Headline:/H: section becomes top-level `headline`: opening on-screen text, never spoken, never in vo_text.",
+        "narration": "Body text becomes scene `vo_text`, split across scenes at word boundaries; the scenes' vo_text joined in order must equal the body text exactly. Do not paraphrase.",
+        "direction": "Visual direction is authored into scene `prompt` (and `motion_prompt` for animation). On-screen copy goes in `on_screen_text`.",
+    },
+    "brief_fields": {
+        "character_reference": "Top-level bool, default false. Read only by `brief.to_plan_skeleton`: when true, every shot_type: character scene gets `reference: true` in plan.yaml so still generation uses character_image. The planner already does this whenever a character_ref asset exists, so the flag changes nothing in that case. The reference gate does not read it; the gate reads assets.provided kinds and per-scene image_refs.",
+    },
     "reference_gates": {
         "detection": DETECTION,
         "order": "Resolve the product gate before the editorial gate; any image_refs on a scene removes it from the editorial gate. Restructure scenes (splits, merges) before resolving, because gate scene lists follow the brief.",
@@ -79,7 +93,8 @@ _STAGES = [
             "command": "storyboard",
             "use": "Read `status`, `gates`, `advisories`, `next_steps` from the JSON.",
             "pass": ["--folder", "--brief", "--json"],
-            "json_fields": ["status", "package_dir", "files", "gates", "advisories", "variety", "pacing_warnings", "next_steps"],
+            "json_fields": ["status", "package_dir", "html", "files", "gates", "advisories", "next_steps"],
+            "check_only": "Add --check (instead of writing a package) to preview status, gates, and advisories as JSON without writing files.",
             "writes": ["<folder>/storyboard-package/"],
         }],
         "preconditions": ["brief validates"],
