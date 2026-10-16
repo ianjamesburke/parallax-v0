@@ -142,7 +142,7 @@ def test_local_graphic_full_pipeline_assembles_without_still(tmp_path, monkeypat
     ]}
     source = tmp_path / 'plan.yaml'
     source.write_text(yaml.safe_dump(plan))
-    result = run_plan(tmp_path, source, mode=ProductionMode.TEST, yes=True, debug_level=1)
+    result = run_plan(tmp_path, source, mode=ProductionMode.TEST, debug_level=1)
     assert result.error is None, result.error
     assert Path(result.final_video).is_file()
     probe = subprocess.run([

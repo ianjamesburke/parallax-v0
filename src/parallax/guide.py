@@ -142,6 +142,21 @@ _STAGES = [
         "commands": [{"command": "plan", "use": "Materialize plan.yaml.", "pass": ["--folder", "--brief"], "writes": ["<folder>/parallax/scratch/plan.yaml"]}],
         "preconditions": ["human approved the storyboard"],
         "spends_money": False,
+        "next": "spend_approval",
+    },
+    {
+        "id": "spend_approval",
+        "goal": "Record the human's budget so paid commands may run. Every paid command (produce, image generate, video animate, audio voiceover) refuses without it.",
+        "commands": [{
+            "command": "approve spend",
+            "use": "Run only with the budget and name the human gave you. `--yes` and a non-TTY shell grant nothing. A refused paid command prints the exact command and a JSON payload (`gate: spend-approval`, `estimate_usd`, `approve_command`).",
+            "pass": ["--folder", "--budget-usd", "--authorized-by"],
+            "writes": ["<folder>/spend-approval.yaml"],
+        }],
+        "preconditions": ["plan exists", "human knows the estimate (the cost table `produce` prints, or `parallax models list` prices)"],
+        "human_decision": {"question": "How many USD in total may this project spend, and who is authorizing it?", "ask_only_if_unresolved": False},
+        "review_boundary": "Never invent the budget or the authorizer. Spend is reserved in the same file before each paid run; approving again replaces the budget and keeps the ledger. PARALLAX_TEST_MODE stubs spend nothing and need no approval.",
+        "spends_money": False,
         "next": "produce",
     },
     {
@@ -149,10 +164,10 @@ _STAGES = [
         "goal": "Generate stills, narration, and the video. Outside the storyboard package.",
         "commands": [
             {"command": "models list", "use": "Choose models and read price estimates."},
-            {"command": "produce", "use": "Refuses to start while reference gates are open, with --brief or --plan (a plan records its source brief). `--yes` never grants approval or budget.", "pass": ["--folder", "--brief"]},
+            {"command": "produce", "use": "Refuses to start while reference gates are open (--brief, or --plan: a plan records its source brief) and until `parallax approve spend` recorded a budget covering the cost estimate.", "pass": ["--folder", "--brief"]},
         ],
-        "preconditions": ["human approved the storyboard", "no open reference gates"],
-        "human_decision": {"question": "Authorize paid generation and set a budget cap.", "ask_only_if_unresolved": False},
+        "preconditions": ["human approved the storyboard", "no open reference gates", "spend approval recorded for the estimate"],
+        "human_decision": {"question": "Authorize paid generation and set a budget cap (recorded in the spend_approval stage).", "ask_only_if_unresolved": False},
         "review_boundary": "Dry run first with PARALLAX_TEST_MODE=1 (stub assets, no network). Lock approved assets before re-running; unlocked scenes regenerate and cost money.",
         "spends_money": True,
         "next": None,
@@ -195,6 +210,7 @@ def build_guide(group: click.Group) -> dict:
         "rules": [
             "Every decision that spends money or chooses a creative direction belongs to the human.",
             "Open reference gates block `parallax produce --brief`.",
+            "No paid command runs without a human budget in <folder>/spend-approval.yaml (`parallax approve spend`). `--yes` does not exist; a refusal's JSON says what to ask the human.",
             "Prefer --json outputs and read their fields instead of scraping text.",
         ],
         "brief": _BRIEF,

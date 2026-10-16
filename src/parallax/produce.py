@@ -148,7 +148,6 @@ def run_plan(
     plan_path: str | Path,
     aspect: str | None = None,
     mode: "ProductionMode | None" = None,
-    yes: bool = False,
     hq: bool = False,
     debug_level: int = 0,
 ) -> ProductionResult:
@@ -217,15 +216,25 @@ def run_plan(
     _tmo_token = _tmo.set(settings.mode == ProductionMode.TEST)
 
     try:
+        # Cost gate first: nothing touches a provider until a recorded human budget covers the estimate.
+        from .preflight import compute_preflight, format_preflight
+        from .spend_guard import SpendRefused, require_approval
+        _pf_result = compute_preflight(plan, folder=folder, output_resolution=settings.resolution)
+        print(format_preflight(_pf_result), flush=True)
+        try:
+            require_approval(folder, _pf_result.estimated_total_usd, f"produce --plan {plan_path.name}")
+        except SpendRefused as e:
+            return ProductionResult(status="error", run_id=None, output_dir=None,
+                                    final_video=None, stills_dir=None, cost_usd=0.0, error=str(e))
+
         # Pre-flight: in real-mode, check OpenRouter credits before any work runs.
         # 402 mid-pipeline is brutal (partial spend on stills, then dies on i2v);
         # checking once at the top fails loud, fails early.
-        _credits_balance: float | None = None
         if settings.mode == ProductionMode.REAL:
             from . import openrouter
             try:
                 balance = openrouter.check_credits(min_balance_usd=0.50)
-                _credits_balance = balance.remaining
+                _pf_result.balance_usd = balance.remaining
                 settings.events("log", {
                     "msg": f"openrouter credits: ${balance.remaining:.2f} remaining "
                            f"(${balance.total:.2f} total, ${balance.used:.2f} used)"
@@ -239,14 +248,6 @@ def run_plan(
                     "msg": f"WARNING: credits pre-flight check failed ({type(e).__name__}: {e}); "
                            f"continuing — first OpenRouter call will surface the real error"
                 })
-
-        from .preflight import compute_preflight, prompt_proceed as _prompt_proceed
-        _pf_result = compute_preflight(plan, balance_usd=_credits_balance, folder=folder, output_resolution=settings.resolution)
-        if not _prompt_proceed(_pf_result, yes=yes):
-            return ProductionResult(
-                status="cancelled", run_id=None, output_dir=None,
-                final_video=None, stills_dir=None, cost_usd=0.0, error=None,
-            )
 
         import uuid as _uuid
         current_session_id.set(f"produce-{_uuid.uuid4().hex[:8]}")

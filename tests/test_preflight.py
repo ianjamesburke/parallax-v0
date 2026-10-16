@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from parallax.preflight import compute_preflight, format_preflight, prompt_proceed
+from parallax.preflight import compute_preflight, format_preflight
 
 
 # ---------------------------------------------------------------------------
@@ -147,37 +147,6 @@ def test_format_preflight_shows_balance_when_provided():
 
 
 # ---------------------------------------------------------------------------
-# 6. prompt_proceed with yes=True returns True without prompting
-# ---------------------------------------------------------------------------
-
-def test_prompt_proceed_yes_flag_returns_true(capsys):
-    plan = _make_plan(scenes=[{"index": 0}])
-    result = compute_preflight(plan)
-    ret = prompt_proceed(result, yes=True)
-    assert ret is True
-    captured = capsys.readouterr()
-    assert "proceeding" in captured.out
-
-
-# ---------------------------------------------------------------------------
-# 7. prompt_proceed with stdout not a TTY returns True
-# ---------------------------------------------------------------------------
-
-def test_prompt_proceed_non_tty_returns_true():
-    plan = _make_plan(scenes=[{"index": 0}])
-    result = compute_preflight(plan)
-    with patch("sys.stdout") as mock_stdout:
-        mock_stdout.isatty.return_value = False
-        # We need write/flush to work so the output is captured
-        import io
-        buf = io.StringIO()
-        mock_stdout.write = buf.write
-        mock_stdout.flush = buf.flush
-        ret = prompt_proceed(result, yes=False)
-    assert ret is True
-
-
-# ---------------------------------------------------------------------------
 # 8. compute_preflight passes balance_usd through to result
 # ---------------------------------------------------------------------------
 
@@ -262,16 +231,14 @@ def test_format_preflight_shows_overwrite_warning(tmp_path):
     assert "overwrite" in text.lower()
 
 
-def test_prompt_proceed_shows_overwrite_warning(tmp_path, capsys):
+def test_format_preflight_shows_overwrite_warning(tmp_path):
     assets = tmp_path / "parallax" / "assets"
     assets.mkdir(parents=True)
     (assets / "scene_00_still.png").touch()
 
     plan = _make_plan(scenes=[{"index": 0}])
     result = compute_preflight(plan, folder=tmp_path)
-    prompt_proceed(result, yes=True)
-    captured = capsys.readouterr()
-    assert "overwrite" in captured.out.lower()
+    assert "overwrite" in format_preflight(result).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -390,16 +357,14 @@ def test_warnings_appear_in_format_preflight():
     assert "WARNING" in text
 
 
-def test_warnings_visible_in_non_interactive_run(capsys):
+def test_locked_audio_warnings_in_table():
     plan = _make_plan(
         scenes=[{"index": 0}],
         audio_path="audio.mp3",
         voice_speed=1.5,
     )
     result = compute_preflight(plan)
-    prompt_proceed(result, yes=True)
-    captured = capsys.readouterr()
-    assert "voice_speed" in captured.out
+    assert "voice_speed" in format_preflight(result)
 
 
 # ---------------------------------------------------------------------------
