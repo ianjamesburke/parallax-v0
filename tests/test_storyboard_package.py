@@ -65,7 +65,10 @@ def test_package_contains_every_visible_file_and_needs_no_hidden_state(tmp_path,
     assert manifest["contact_sheet_scenes"] == [0]
     assert (package / "brief.yaml").read_bytes() == brief.read_bytes()
     assert manifest["requires_parallax"] is False and manifest["provider_calls"] == 0 and manifest["approved"] is False
-    assert json.loads((package / "handoff.json").read_text()) == {k: v for k, v in manifest.items() if k not in {"package_dir", "html"}}
+    on_disk = json.loads((package / "handoff.json").read_text())
+    assert {k: v for k, v in on_disk.items() if k not in {"gates", "next_steps"}} == {
+        k: v for k, v in manifest.items() if k not in {"package_dir", "html", "gates", "next_steps"}}
+    assert [g["id"] for g in on_disk["gates"]] == [g["id"] for g in manifest["gates"]]
     assert manifest["html"] == str(package / "storyboard.html") and Path(manifest["html"]).is_file()
     script = (package / "script.md").read_text()
     assert "Wake up sharp" in script and "One two three." in script
@@ -328,3 +331,49 @@ def test_pacing_warnings_have_remedies_and_locked_narration_acknowledges_them(tm
     locked = _storyboard(tmp_path, _scenes_brief(tmp_path, scenes, narration_locked=True), capsys)["pacing_warnings"]
     assert [w["code"] for w in locked] == [w["code"] for w in open_] and all(w["acknowledged"] for w in locked)
     assert "acknowledged" in (tmp_path / "storyboard-package/qa-notes.md").read_text()
+
+
+def test_package_files_carry_no_machine_paths_and_commands_use_placeholders(tmp_path, capsys):
+    folder, brief = _project(tmp_path)
+    manifest = _storyboard(folder, brief, capsys)
+    package = Path(manifest["package_dir"])
+    here = {str(tmp_path), str(tmp_path.resolve())}
+    for name in ("handoff.json", "qa-notes.md", "storyboard.html", "references.yaml", "scenes.yaml", "script.md"):
+        text = (package / name).read_text()
+        assert not any(path in text for path in here), f"{name} leaks a machine path"
+    command = json.loads((package / "handoff.json").read_text())["gates"][0]["choices"][0]["command"]
+    assert "--folder <project-folder> --brief <brief.yaml>" in command
+    # stdout keeps exact, runnable commands
+    assert str(brief) in manifest["gates"][0]["choices"][0]["command"]
+
+
+def test_produce_plan_cannot_bypass_an_open_gate(tmp_path, capsys, monkeypatch):
+    from parallax import produce as produce_mod
+    monkeypatch.setattr(produce_mod, "run_plan", lambda **kw: pytest.fail("spend reached with an open gate"))
+    monkeypatch.setattr(produce_mod, "test_scene", lambda **kw: pytest.fail("scene render reached with an open gate"))
+    folder, brief = _project(tmp_path)
+    assert cli.main(["plan", "--folder", str(folder), "--brief", str(brief)]) == 0
+    plan = folder / "parallax/scratch/plan.yaml"
+    assert yaml.safe_load(plan.read_text())["source_brief"] == "brief.yaml"
+    capsys.readouterr()
+    for extra in ([], ["--scene", "0"]):
+        assert cli.main(["produce", "--folder", str(folder), "--plan", str(plan), *extra]) == 1
+        assert "reference gate(s) open" in capsys.readouterr().err
+    # the check follows the brief: removing it is an error, not a silent pass
+    brief.rename(tmp_path / "moved.yaml")
+    assert cli.main(["produce", "--folder", str(folder), "--plan", str(plan)]) == 1
+    assert "no longer exists" in capsys.readouterr().err
+
+
+def test_produce_plan_proceeds_once_gates_are_answered(tmp_path, capsys, monkeypatch):
+    from parallax import produce as produce_mod
+    from parallax.produce import ProductionResult
+    folder, brief = _project(tmp_path)
+    for gate in ("editorial-reference", "product-reference"):
+        assert _resolve(folder, brief, "--gate", gate, "--choice", "no_reference", "--reason", "test") == 0
+    assert cli.main(["plan", "--folder", str(folder), "--brief", str(brief)]) == 0
+    called = {}
+    monkeypatch.setattr(produce_mod, "run_plan", lambda **kw: called.update(kw) or ProductionResult(
+        status="ok", run_id="t", output_dir=tmp_path, final_video=tmp_path / "o.mp4", stills_dir=None, cost_usd=0.0, error=None))
+    assert cli.main(["produce", "--folder", str(folder), "--plan", str(folder / "parallax/scratch/plan.yaml")]) == 0
+    assert called["plan_path"].endswith("plan.yaml")

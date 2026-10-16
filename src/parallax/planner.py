@@ -42,6 +42,7 @@ _TOP_LEVEL_ORDER = (
     "image_model",
     "video_model",
     "caption_style",
+    "source_brief",
     "character_image",
     "product_image",
     "scenes",
@@ -225,6 +226,8 @@ def plan_from_brief(
     plan["video_model"] = video_model
     plan["voice_model"] = voice_model
     plan["caption_style"] = caption_style
+    resolved_brief = brief_path.expanduser().resolve()
+    plan["source_brief"] = str(resolved_brief.relative_to(folder)) if resolved_brief.is_relative_to(folder) else str(resolved_brief)
 
     character_image = _first_character_ref(brief, folder)
     if character_image is not None:

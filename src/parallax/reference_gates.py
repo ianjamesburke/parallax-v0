@@ -78,8 +78,13 @@ def _referenced(brief: Brief, scene) -> bool:
                 or (scene.shot_type == "broll" and "product_ref" in kinds))
 
 
+def _arg(value: str) -> str:
+    """Shell-quote a path; leave <placeholders> readable."""
+    return value if value.startswith("<") and value.endswith(">") else shlex.quote(value)
+
+
 def _command(folder: str, brief_path: str, gate: str, choice: str, scenes: list[int], flags: str) -> str:
-    return (f"parallax reference resolve --folder {shlex.quote(folder)} --brief {shlex.quote(brief_path)} "
+    return (f"parallax reference resolve --folder {_arg(folder)} --brief {_arg(brief_path)} "
             f"--gate {gate} --choice {choice} {flags} --scenes {','.join(map(str, scenes))}")
 
 

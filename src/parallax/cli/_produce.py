@@ -129,6 +129,49 @@ def _inject_resolution(plan_path: str, resolution: str) -> None:
     p.write_text(_yaml.dump(data, sort_keys=False, allow_unicode=True))
 
 
+def _refuse_open_gates(brief_path, folder: str) -> int | None:
+    """Return exit code 1 when the brief has open reference gates; nothing may spend until a human answers them."""
+    from ..brief import Brief
+    from ..reference_gates import open_gates
+
+    try:
+        gates = open_gates(Brief.from_yaml(brief_path), folder, brief_path)
+    except Exception as e:
+        print(f"Error: failed to read brief {brief_path}: {e}", file=sys.stderr)
+        return 1
+    if gates:
+        print(
+            f"Error: {len(gates)} reference gate(s) open ({', '.join(g['id'] for g in gates)}); "
+            "a human must answer them before any generation. "
+            f"Run: parallax storyboard --folder {folder} --brief {brief_path} --json",
+            file=sys.stderr,
+        )
+        return 1
+    return None
+
+
+def _refuse_plan_open_gates(plan_path: str, folder: str) -> int | None:
+    """A plan materialized from a brief carries `source_brief`; that brief's gates still apply."""
+    from pathlib import Path
+    import yaml
+
+    try:
+        source = (yaml.safe_load(Path(plan_path).expanduser().read_text(encoding="utf-8")) or {}).get("source_brief")
+    except (OSError, yaml.YAMLError, AttributeError) as e:
+        print(f"Error: failed to read plan {plan_path}: {e}", file=sys.stderr)
+        return 1
+    if source is None:
+        return None
+    brief_path = Path(source).expanduser()
+    if not brief_path.is_absolute():
+        brief_path = Path(folder).expanduser() / brief_path
+    if not brief_path.is_file():
+        print(f"Error: plan {plan_path} was made from brief {brief_path}, which no longer exists; "
+              "restore it or re-plan from the current brief so its reference gates can be checked.", file=sys.stderr)
+        return 1
+    return _refuse_open_gates(str(brief_path), folder)
+
+
 def _run_produce(
     folder: str,
     plan: Optional[str],
@@ -150,22 +193,8 @@ def _run_produce(
         if not brief_path.is_file():
             print(f"Error: brief not found: {brief_path}", file=sys.stderr)
             return 1
-        from ..brief import Brief
-        from ..reference_gates import open_gates
-
-        try:
-            gates = open_gates(Brief.from_yaml(brief_path), folder, brief_path)
-        except Exception as e:
-            print(f"Error: failed to read brief: {e}", file=sys.stderr)
-            return 1
-        if gates:
-            print(
-                f"Error: {len(gates)} reference gate(s) open ({', '.join(g['id'] for g in gates)}); "
-                "a human must answer them before any generation. "
-                f"Run: parallax storyboard --folder {folder} --brief {brief_path} --json",
-                file=sys.stderr,
-            )
-            return 1
+        if (code := _refuse_open_gates(brief_path, folder)) is not None:
+            return code
         try:
             result = plan_from_brief(brief_path, folder=folder)
         except Exception as e:
@@ -184,6 +213,8 @@ def _run_produce(
     else:
         assert plan is not None  # validated: brief/plan mutex, at least one is required
         plan_path = plan
+        if (code := _refuse_plan_open_gates(plan_path, folder)) is not None:
+            return code
 
     if resolution is not None:
         _inject_resolution(plan_path, resolution)

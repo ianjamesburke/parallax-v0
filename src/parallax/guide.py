@@ -130,7 +130,7 @@ _STAGES = [
         "goal": "Generate stills, narration, and the video. Outside the storyboard package.",
         "commands": [
             {"command": "models list", "use": "Choose models and read price estimates."},
-            {"command": "produce", "use": "Refuses to start while reference gates are open. `--yes` never grants approval or budget.", "pass": ["--folder", "--brief"]},
+            {"command": "produce", "use": "Refuses to start while reference gates are open, with --brief or --plan (a plan records its source brief). `--yes` never grants approval or budget.", "pass": ["--folder", "--brief"]},
         ],
         "preconditions": ["human approved the storyboard", "no open reference gates"],
         "human_decision": {"question": "Authorize paid generation and set a budget cap.", "ask_only_if_unresolved": False},

@@ -222,6 +222,10 @@ class Plan(BaseModel):
     # Video generation resolution (plan-level default; per-scene overrides allowed)
     animate_resolution: str | None = None
 
+    # Brief this plan was materialized from (path relative to the project folder when inside it).
+    # produce re-checks that brief's reference gates, so a plan cannot bypass them.
+    source_brief: str | None = None
+
     # Character / avatar / product
     character_image: str | None = None
     product_image: str | None = None

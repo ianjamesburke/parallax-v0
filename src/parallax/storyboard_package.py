@@ -22,6 +22,7 @@ import yaml
 from PIL import Image, ImageOps
 
 from .brief import Brief
+from .reference_gates import _arg, open_gates
 from .storyboard import render_storyboard, review_storyboard
 
 _FILES = {
@@ -35,6 +36,7 @@ _FILES = {
     "handoff.json": "This manifest.",
 }
 _CELL, _COLUMNS = 320, 4
+FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER = "<project-folder>", "<brief.yaml>"
 
 
 def _load_timing(path: str | Path) -> list[dict]:
@@ -140,44 +142,10 @@ def _qa_notes(manifest: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_package(brief_path: str | Path, folder: str | Path, package_dir: str | Path,
-                  timing_path: str | Path | None = None) -> dict:
-    """Write the storyboard package and return its handoff manifest. Makes no provider calls."""
-    brief_path = Path(brief_path).expanduser().resolve()
-    root = Path(folder).expanduser().resolve()
-    package = Path(package_dir).expanduser().resolve()
-    if package.exists() and any(package.iterdir()) and not (package / "handoff.json").is_file():
-        raise ValueError(f"{package} exists and is not a storyboard package (no handoff.json); choose an empty --package-dir")
-    brief = Brief.from_yaml(brief_path)
-    review = review_storyboard(brief, root, brief_path, _load_timing(timing_path) if timing_path else None)
-    package.mkdir(parents=True, exist_ok=True)
-    assets = package / "assets"
-    missing = _copy_assets(brief, root, assets)
+def _manifest(brief: Brief, review: dict, files: dict[str, str], contact: list[int], missing: list[str],
+              folder: str, brief_path: str) -> dict:
     timeline = review["timeline"]
-    contact = _contact_sheet(brief, assets, package / "contact-sheet.jpg")
-
-    (package / "brief.yaml").write_bytes(brief_path.read_bytes())
-    (package / "script.md").write_text(_script_md(brief), encoding="utf-8")
-    (package / "storyboard.html").write_text(render_storyboard(brief, assets, review, link_base=package), encoding="utf-8")
-    (package / "references.yaml").write_text(_dump({
-        "asset_root": "assets",
-        "review_status_note": "review_status is set to approved by editing brief.yaml after the human accepts the asset. The CLI never approves.",
-        "provided": [{**a.model_dump(exclude_none=True), "present": a.path not in missing} for a in brief.assets.provided],
-        "decisions": [d.model_dump() for d in brief.reference_decisions],
-        "open_gates": [g["id"] for g in review["gates"]],
-    }), encoding="utf-8")
-    (package / "scenes.yaml").write_text(_dump({
-        "asset_root": "assets",
-        "timing_basis": review["timing_basis"],
-        "scenes": [
-            {**scene.model_dump(exclude_none=True), "scene_type": scene.resolved_scene_type,
-             "start_s": round(float(t["start_s"]), 3), "end_s": round(float(t["end_s"]), 3)}
-            for scene, t in zip(brief.script.scenes, timeline)
-        ],
-    }), encoding="utf-8")
-
-    files = {name: role for name, role in _FILES.items() if name != "contact-sheet.jpg" or contact}
-    manifest = {
+    return {
         "package_version": 1,
         "concept": brief.concept_name or brief.goal,
         "goal": brief.goal,
@@ -200,9 +168,51 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
             [{"step": "answer_gates", "detail": "Ask the human each gate question, run the chosen choice command, then re-run `parallax storyboard`. A gate in state authorized_pending_generation needs its anchor generated and attached."}]
             if review["gates"] else
             [{"step": "human_review", "detail": "The human reviews storyboard.html and approves or requests changes. Approval is not recorded by the CLI."},
-             {"step": "plan", "command": f"parallax plan --folder {root} --brief {brief_path}"}]
+             {"step": "plan", "command": f"parallax plan --folder {_arg(folder)} --brief {_arg(brief_path)}"}]
         ),
     }
-    (package / "qa-notes.md").write_text(_qa_notes(manifest), encoding="utf-8")
-    (package / "handoff.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    return manifest
+
+
+def write_package(brief_path: str | Path, folder: str | Path, package_dir: str | Path,
+                  timing_path: str | Path | None = None) -> dict:
+    """Write the storyboard package and return its handoff manifest. Makes no provider calls."""
+    brief_path = Path(brief_path).expanduser().resolve()
+    root = Path(folder).expanduser().resolve()
+    package = Path(package_dir).expanduser().resolve()
+    if package.exists() and any(package.iterdir()) and not (package / "handoff.json").is_file():
+        raise ValueError(f"{package} exists and is not a storyboard package (no handoff.json); choose an empty --package-dir")
+    brief = Brief.from_yaml(brief_path)
+    review = review_storyboard(brief, root, brief_path, _load_timing(timing_path) if timing_path else None)
+    package.mkdir(parents=True, exist_ok=True)
+    assets = package / "assets"
+    missing = _copy_assets(brief, root, assets)
+    timeline = review["timeline"]
+    contact = _contact_sheet(brief, assets, package / "contact-sheet.jpg")
+
+    (package / "brief.yaml").write_bytes(brief_path.read_bytes())
+    (package / "script.md").write_text(_script_md(brief), encoding="utf-8")
+    (package / "references.yaml").write_text(_dump({
+        "asset_root": "assets",
+        "review_status_note": "review_status is set to approved by editing brief.yaml after the human accepts the asset. The CLI never approves.",
+        "provided": [{**a.model_dump(exclude_none=True), "present": a.path not in missing} for a in brief.assets.provided],
+        "decisions": [d.model_dump() for d in brief.reference_decisions],
+        "open_gates": [g["id"] for g in review["gates"]],
+    }), encoding="utf-8")
+    (package / "scenes.yaml").write_text(_dump({
+        "asset_root": "assets",
+        "timing_basis": review["timing_basis"],
+        "scenes": [
+            {**scene.model_dump(exclude_none=True), "scene_type": scene.resolved_scene_type,
+             "start_s": round(float(t["start_s"]), 3), "end_s": round(float(t["end_s"]), 3)}
+            for scene, t in zip(brief.script.scenes, timeline)
+        ],
+    }), encoding="utf-8")
+
+    files = {name: role for name, role in _FILES.items() if name != "contact-sheet.jpg" or contact}
+    # Files on disk carry placeholders instead of this machine's paths; the returned manifest has exact commands.
+    portable = {**review, "gates": open_gates(brief, FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER)}
+    on_disk = _manifest(brief, portable, files, contact, missing, FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER)
+    (package / "storyboard.html").write_text(render_storyboard(brief, assets, portable, link_base=package), encoding="utf-8")
+    (package / "qa-notes.md").write_text(_qa_notes(on_disk), encoding="utf-8")
+    (package / "handoff.json").write_text(json.dumps(on_disk, indent=2) + "\n", encoding="utf-8")
+    return _manifest(brief, review, files, contact, missing, str(root), str(brief_path))
