@@ -6,7 +6,7 @@ from typing import Optional
 import typer
 
 from .. import __version__
-from . import _audio, _image, _log, _meta, _models, _produce, _reference, _schema, _validate, _video
+from . import _audio, _guide, _image, _log, _meta, _models, _produce, _reference, _schema, _validate, _video
 
 
 app = typer.Typer(
@@ -57,6 +57,7 @@ _log.register_log(app)
 _meta.register_meta(app)
 _schema.register_schema(app)
 _validate.register_validate(app)
+_guide.register_guide(app)
 
 
 def main(argv: list[str] | None = None) -> int:
