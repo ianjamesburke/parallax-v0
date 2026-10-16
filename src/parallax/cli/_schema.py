@@ -24,6 +24,7 @@ def _schema_cmd(
     target: Optional[SchemaTarget] = typer.Argument(default=None, help="Which schema to emit. Omit to print a human-readable field overview of both."),
     output: Optional[str] = typer.Option(None, "--output", metavar="FILE", help="Write schema to FILE instead of stdout (requires a target)."),
 ) -> int:
+    """Print the brief, plan, or CLI schema (`schema brief`, `schema plan`, `schema cli`)."""
     from ..brief import Brief
     from ..plan import Plan
 

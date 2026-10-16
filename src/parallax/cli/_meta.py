@@ -38,12 +38,14 @@ def register_meta(app: typer.Typer) -> None:
 def _usage_cmd(
     include_test: bool = typer.Option(False, "--include-test", help="Include PARALLAX_TEST_MODE records (excluded by default)."),
 ) -> int:
+    """Summarize recorded generation spend."""
     from .. import usage
     _print_usage(usage.summarize(include_test=include_test))
     return 0
 
 
 def _credits_cmd() -> int:
+    """Show the OpenRouter credit balance."""
     from ..openrouter import InsufficientCreditsError, check_credits
     try:
         balance = check_credits(min_balance_usd=0.0)
@@ -64,6 +66,7 @@ def _credits_cmd() -> int:
 
 
 def _update_cmd() -> int:
+    """Upgrade the installed parallax from its original source."""
     return _run_update()
 
 
