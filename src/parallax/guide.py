@@ -5,7 +5,7 @@ read from the live CLI so the guide cannot drift from `--help`.
 """
 from __future__ import annotations
 
-import click
+from typing import Any
 
 from . import __version__
 from .reference_gates import DETECTION
@@ -182,29 +182,31 @@ _STAGES = [
 ]
 
 
-def _flags(command: click.Command) -> list[dict]:
+def _flags(command: Any) -> list[dict]:
+    # Duck-typed: typer >= 0.27 vendors click, so isinstance against click classes is False.
     flags = []
     for param in command.params:
-        if isinstance(param, click.Option) and param.name in ("help", "version", "verbose"):
+        is_option = param.param_type_name == "option"
+        if is_option and param.name in ("help", "version", "verbose"):
             continue
         flags.append({
-            "name": "/".join(param.opts) if isinstance(param, click.Option) else param.name.upper(),
+            "name": "/".join(param.opts) if is_option else param.name.upper(),
             "required": param.required,
-            "is_flag": isinstance(param, click.Option) and param.is_flag,
+            "is_flag": is_option and param.is_flag,
             "help": getattr(param, "help", None),
         })
     return flags
 
 
-def build_guide(group: click.Group) -> dict:
+def build_guide(group: Any) -> dict:
     """Return the workflow map, with each command's flags read from the live CLI."""
     stages = []
     for stage in _STAGES:
         commands = []
         for entry in stage["commands"]:
-            node: click.Command = group
+            node = group
             for part in entry["command"].split():
-                if not isinstance(node, click.Group) or part not in node.commands:
+                if part not in getattr(node, "commands", {}):
                     raise ValueError(f"guide references unknown command `parallax {entry['command']}`; fix src/parallax/guide.py")
                 node = node.commands[part]
             commands.append({**entry, "command": f"parallax {entry['command']}", "flags": _flags(node)})

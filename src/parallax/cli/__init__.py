@@ -62,24 +62,22 @@ _guide.register_guide(app)
 
 
 def main(argv: list[str] | None = None) -> int:
-    import click
     try:
         result = app(standalone_mode=False, args=argv)
         return result if isinstance(result, int) else 0
     except SystemExit as e:
         return int(e.code) if e.code is not None else 0
-    except click.exceptions.Exit as e:
-        code = getattr(e, "code", 0)
-        return int(code) if code is not None else 0
-    except click.exceptions.NoArgsIsHelpError:
-        # Bare sub-group invocation prints help — treat as success
-        return 0
-    except click.UsageError as e:
-        e.show(file=sys.stderr)
-        return 2
-    except click.Abort:
+    except typer.Exit as e:
+        return e.exit_code
+    except typer.Abort:
         return 130
     except Exception as e:
+        # Usage errors are ClickExceptions, which typer >= 0.27 vendors, so match on the
+        # shared protocol (`show`, `exit_code`) rather than a click class.
+        if hasattr(e, "show") and hasattr(e, "exit_code"):
+            e.show(file=sys.stderr)
+            # Bare sub-group invocation prints help: success
+            return 0 if type(e).__name__ == "NoArgsIsHelpError" else e.exit_code
         import logging
         logging.getLogger(__name__).exception("unhandled error in main")
         print(f"\nError: {type(e).__name__}: {e}\n", file=sys.stderr)
