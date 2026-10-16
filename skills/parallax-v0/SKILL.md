@@ -28,6 +28,8 @@ export OPENROUTER_API_KEY=sk-or-...
 
 Before planning a new production, inspect the supplied script, project notes, and reference inventory. Ask one compact set of questions only for choices that remain unresolved: whether to preserve the script verbatim, whether the user wants a storyboard or the full video, and any format, voice, or spending constraint.
 
+Unless the user specifies another source, treat the selected project folder as the complete input boundary: use its script and resources to create the Parallax project. Pass that folder as `--folder`; Parallax creates and updates its working files under `<folder>/parallax/`. Do not search adjacent projects, archived runs, or other host folders for substitute inputs.
+
 Choose the performance mode from the brief: voiceover with B-roll, on-screen presenter, or an explicitly requested mix. A first-person voiceover does not imply a talking avatar. For voiceover-led social videos, read [voiceover-broll.md](references/voiceover-broll.md) before storyboarding or revising shots.
 
 When a named brand or product appears in the video, gather missing visual references from its official website or verified app-store listing as part of storyboard preparation, unless the user limits browsing or supplies a complete brand kit. Inspect and save the actual logos and useful product images with their source URLs. Show them in the storyboard as official-source references pending creative review. Preserve real logos and UI; generated approximations are not official assets. A supplied composite style sample is enough to start reference development; ask for cleaner files only when a particular shot needs them.
