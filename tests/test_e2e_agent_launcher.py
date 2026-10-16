@@ -29,7 +29,7 @@ def test_dry_run_creates_fixture_from_index_only(tmp_path: Path) -> None:
 
     assert f"E2E workspace: {workspace}" in result.stdout
     assert (workspace / "fixtures" / "e2e-agent" / "default-project" / "PROJECT.md").is_file()
-    assert (workspace / "skills" / "parallax-v0" / "SKILL.md").is_file()
+    assert not (workspace / "skills").exists()
     assert not (workspace / "runs").exists()
     assert f"Parallax command: uv run --frozen --python 3.11 --project {workspace} parallax" in result.stdout
 

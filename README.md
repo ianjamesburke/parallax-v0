@@ -8,7 +8,7 @@ Agentic creative production CLI. A brief goes in, a finished short-form video co
 curl -LsSf https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/install.sh | sh
 ```
 
-Installs uv (Python toolchain manager) and ffmpeg if either is missing, then installs parallax. If you already have both, it just runs the last step.
+Installs uv (Python toolchain manager) and ffmpeg if either is missing, then installs parallax with every dependency pinned to the repo's `uv.lock` (`just install` does the same from a checkout). If you already have both, it just runs the last step.
 
 From a local checkout:
 
@@ -112,7 +112,7 @@ Other commands: `parallax usage`, `parallax credits`, `parallax log <run|latest|
 
 ## Storyboard package
 
-`parallax guide` prints the whole workflow as JSON (stages, commands, flags, preconditions, review boundaries, what needs a human decision). An agent needs only `--help` and that guide.
+`parallax guide` prints the whole workflow as JSON (stages, commands, flags, preconditions, review boundaries, what needs a human decision). `parallax guide <topic>` prints one slice (a stage id, or `produce_loop`, `asset_locking`, `models`, `cost`, `motion_graphic`, `voiceover_broll`). An agent needs only `--help`, `parallax schema`, and the guide; there is no separate operator skill.
 
     parallax storyboard --folder ./my-project --brief ./my-project/brief.yaml --json
 
@@ -167,7 +167,7 @@ uv run parallax verify suite tests/fixtures/verify_suite_smoke/
 
 ## Hermetic agent intake test
 
-Run `just e2e-agent` to start Codex in a temporary default project. The launcher builds the workspace from the Git index, so ignored local runs and untracked project files are not copied into the test. It launches Codex from that project with the Parallax skill and an intake-only prompt.
+Run `just e2e-agent` to start Codex in a temporary default project. The launcher builds the workspace from the Git index, so ignored local runs and untracked project files are not copied into the test. It launches Codex from that project with an intake-only prompt; the agent learns Parallax from `parallax --help` and `parallax guide`.
 
 Pass a script and reference images as named arguments. The launcher copies them into the fixture, so the agent sees the inputs but not their original host paths:
 
@@ -180,5 +180,3 @@ just e2e-agent \
 ```
 
 This isolates the fixture data. It does not stop an agent that deliberately reads absolute paths outside the fixture. Use a container or VM when the test also needs a hard host-filesystem boundary.
-
-The Claude Code agent guide for operating this CLI lives in a standalone repo: [parallax-skill](https://github.com/ianjamesburke/parallax-skill).

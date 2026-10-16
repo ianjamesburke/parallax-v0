@@ -41,6 +41,7 @@ Plan YAML schema:
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import traceback
 from dataclasses import dataclass
@@ -174,6 +175,13 @@ def run_plan(
         return ProductionResult(status="error", run_id=None, output_dir=None,
                                 final_video=None, stills_dir=None, cost_usd=0.0,
                                 error=f"invalid plan {plan_path}:\n{e}")
+
+    missing = [tool for tool in ("ffmpeg", "ffprobe") if shutil.which(tool) is None]
+    if missing:
+        return ProductionResult(status="error", run_id=None, output_dir=None,
+                                final_video=None, stills_dir=None, cost_usd=0.0,
+                                error=f"{' and '.join(missing)} not found on PATH. produce needs ffmpeg (with ffprobe) even in PARALLAX_TEST_MODE. "
+                                      "Install: macOS `brew install ffmpeg-full`, Debian/Ubuntu `sudo apt install ffmpeg`, then re-run.")
 
     # The mutable stage blackboard stays dict-shaped so stages can write
     # _runtime without touching the frozen Pydantic model.

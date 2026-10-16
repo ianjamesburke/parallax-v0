@@ -177,29 +177,7 @@ def _run_update() -> int:
     if result.returncode != 0:
         return result.returncode
 
-    _update_skill()
     return 0
-
-
-def _update_skill() -> None:
-    import pathlib
-    skill_dir = pathlib.Path.home() / ".claude" / "skills" / "parallax"
-    if not skill_dir.is_dir():
-        return
-    git = shutil.which("git")
-    if not git:
-        return
-    print("Updating parallax skill…")
-    result = subprocess.run(
-        [git, "-C", str(skill_dir), "pull", "--ff-only"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode == 0:
-        msg = result.stdout.strip() or result.stderr.strip()
-        print(f"  Skill: {msg}")
-    else:
-        print(f"  Skill update failed: {result.stderr.strip()}", file=sys.stderr)
 
 
 def _detect_shell() -> str:

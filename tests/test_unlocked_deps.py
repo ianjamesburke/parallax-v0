@@ -1,7 +1,8 @@
-"""Run the CLI against freshly resolved dependencies, as `just install` does (it ignores uv.lock).
+"""Run the CLI against freshly resolved dependencies, ignoring uv.lock.
 
-The locked env can pass while users get newer typer/click, so this builds an isolated env
-without the lock. Needs `uv` and network access for package resolution; skipped without `uv`.
+`just install` and install.sh pin to uv.lock, so users get the tested set. This is the early warning
+for the next typer/click release: it builds an isolated env without the lock. Needs `uv` and network
+access for package resolution; skipped without `uv`.
 """
 from __future__ import annotations
 
