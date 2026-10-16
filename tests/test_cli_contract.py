@@ -21,6 +21,12 @@ from parallax import cli
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _approve(folder) -> None:
+    """Record a spend budget so paid commands under test pass the cost gate (their providers are stubbed)."""
+    from parallax.spend_guard import approve
+    approve(folder, 5, "test")
+
+
 def _help_exits_zero(*args: str) -> None:
     rc = cli.main(list(args) + ["--help"])
     assert rc == 0, f"Expected 0 for {args!r} --help, got {rc}"
@@ -413,7 +419,8 @@ class TestAudio:
             return {"raw_audio_path": str(src), "audio_path": str(src), "total_duration_s": 2.0}
 
         monkeypatch.setattr(vo_mod, "generate_voiceover_dict", fake_voiceover)
-        rc = cli.main(["audio", "voiceover", "--text", "hello world", "--out", str(out)])
+        _approve(tmp_path)
+        rc = cli.main(["audio", "voiceover", "--text", "hello world", "--out", str(out), "--folder", str(tmp_path)])
         assert rc == 0
         assert called[0]["trim_pauses"] is False
         assert out.read_bytes() == src.read_bytes()
@@ -421,7 +428,7 @@ class TestAudio:
 
         rc = cli.main([
             "audio", "voiceover", "--text", "hello world", "--out", str(out),
-            "--trim-pauses",
+            "--trim-pauses", "--folder", str(tmp_path),
         ])
         assert rc == 0
         assert called[1]["trim_pauses"] is True
@@ -437,13 +444,14 @@ class TestAudio:
         processed = tmp_path / "processed.mp3"
         processed.write_bytes(b"speed input")
         out = tmp_path / "out.mp3"
+        _approve(tmp_path)
         monkeypatch.setattr(vo_mod, "generate_voiceover_dict", lambda **kw: {
             "raw_audio_path": str(raw), "audio_path": str(processed), "total_duration_s": 2.0,
         })
         monkeypatch.setattr(audio_mod, "speedup", lambda _src, dst, _speed: dst.write_bytes(b"sped up"))
         monkeypatch.setattr(ffmpeg_mod, "run_ffmpeg", lambda *_args, **_kwargs: type("Probe", (), {"stdout": "1.667"})())
         rc = cli.main([
-            "audio", "voiceover", "--text", "hello", "--out", str(out), "--speed", "1.2",
+            "audio", "voiceover", "--text", "hello", "--out", str(out), "--speed", "1.2", "--folder", str(tmp_path),
         ])
         assert rc == 0
         assert out.read_bytes() == b"sped up"
@@ -568,8 +576,9 @@ class TestVideo:
         import parallax.openrouter as or_mod
         out = tmp_path / "out.mp4"
         monkeypatch.setattr(or_mod, "generate_video", lambda *a, **kw: out)
+        _approve(tmp_path)
         rc = cli.main(["video", "animate", "--prompt", "fly through space",
-                       "--out", str(tmp_path)])
+                       "--out", str(tmp_path), "--folder", str(tmp_path)])
         assert rc == 0
         assert str(out) in capsys.readouterr().out
 
@@ -593,7 +602,8 @@ class TestImage:
         import parallax.openrouter as or_mod
         out = tmp_path / "img.png"
         monkeypatch.setattr(or_mod, "generate_image", lambda *a, **kw: out)
-        rc = cli.main(["image", "generate", "a lion at sunset", "--out", str(tmp_path)])
+        _approve(tmp_path)
+        rc = cli.main(["image", "generate", "a lion at sunset", "--out", str(tmp_path), "--folder", str(tmp_path)])
         assert rc == 0
         assert str(out) in capsys.readouterr().out
 
@@ -608,7 +618,8 @@ class TestImage:
         img = tmp_path / "img.png"
         img.write_bytes(b"\x89PNG")
         monkeypatch.setattr(or_mod, "analyze_image", lambda *a, **kw: "A lion is shown.")
-        rc = cli.main(["image", "analyze", str(img)])
+        _approve(tmp_path)
+        rc = cli.main(["image", "analyze", str(img), "--folder", str(tmp_path)])
         assert rc == 0
         assert "lion" in capsys.readouterr().out
 
@@ -753,7 +764,7 @@ class TestProduce:
         plan = tmp_path / "plan.yaml"
         plan.write_text("scenes: []\n")
         monkeypatch.setattr(produce_mod, "run_plan", lambda **kw: self._fake_result(tmp_path))
-        rc = cli.main(["produce", "--folder", str(tmp_path), "--plan", str(plan), "--yes"])
+        rc = cli.main(["produce", "--folder", str(tmp_path), "--plan", str(plan)])
         assert rc == 0
 
     def test_hq_flag_accepted(self, monkeypatch, tmp_path, capsys):
@@ -767,7 +778,7 @@ class TestProduce:
             return self._fake_result(tmp_path)
 
         monkeypatch.setattr(produce_mod, "run_plan", fake_run)
-        cli.main(["produce", "--folder", str(tmp_path), "--plan", str(plan), "--yes", "--hq"])
+        cli.main(["produce", "--folder", str(tmp_path), "--plan", str(plan), "--hq"])
         assert captured.get("hq") is True
 
     def test_debug_level_passed(self, monkeypatch, tmp_path):
@@ -781,5 +792,5 @@ class TestProduce:
             return self._fake_result(tmp_path)
 
         monkeypatch.setattr(produce_mod, "run_plan", fake_run)
-        cli.main(["produce", "--folder", str(tmp_path), "--plan", str(plan), "--yes", "--debug", "2"])
+        cli.main(["produce", "--folder", str(tmp_path), "--plan", str(plan), "--debug", "2"])
         assert captured.get("debug_level") == 2

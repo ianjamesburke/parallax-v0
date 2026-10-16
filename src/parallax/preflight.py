@@ -1,18 +1,16 @@
 """Pre-flight cost estimation for `parallax produce`.
 
-Computes a per-scene cost table before any generation runs, then optionally
-prompts the user to confirm before proceeding.
+Computes a per-scene cost table before any generation runs. Approval is not decided
+here: see spend_guard.py.
 
 Public API:
   compute_preflight(plan, balance_usd=None) -> PreflightResult
   format_preflight(result) -> str
-  prompt_proceed(result, yes=False) -> bool
 """
 
 from __future__ import annotations
 
 import hashlib
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -250,8 +248,7 @@ def format_preflight(result: PreflightResult) -> str:
     """Return the formatted pre-flight cost table as a multi-line string.
 
     Includes the header line, per-scene rows, separator, total, and balance.
-    Does NOT include the "proceed?" prompt — that is printed by prompt_proceed.
-    """
+        """
     lines: list[str] = ["==> pre-flight cost estimate"]
 
     if result.has_overwrites:
@@ -300,20 +297,3 @@ def format_preflight(result: PreflightResult) -> str:
         lines.append(f"    current balance:             ${result.balance_usd:.2f}")
 
     return "\n".join(lines)
-
-
-def prompt_proceed(result: PreflightResult, yes: bool = False) -> bool:
-    """Print the cost table and ask for confirmation.
-
-    Returns True if production should proceed, False if the user cancelled.
-    When `yes=True` or stdout is not a TTY, proceeds immediately without prompting.
-    """
-    print(format_preflight(result), flush=True)
-
-    if yes or not sys.stdout.isatty():
-        print("==> proceeding (--yes / non-interactive)", flush=True)
-        return True
-
-    print("==> proceed? [y/N] ", end="", flush=True)
-    answer = input().strip().lower()
-    return answer == "y"

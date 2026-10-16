@@ -290,11 +290,15 @@ def audio_voiceover(
     speed: Optional[float] = typer.Option(None, "--speed", help="atempo multiplier applied after synthesis (e.g. 1.2 = 20% faster)."),
     style: Optional[str] = typer.Option(None, "--style", help="Delivery style preset: rapid_fire, fast, calm, natural."),
     trim_pauses: bool = typer.Option(False, "--trim-pauses", help="Opt in to timestamp-based pause trimming. By default, preserve the provider's original audio."),
+    folder: Optional[str] = typer.Option(None, "--folder", help="Project root holding spend-approval.yaml (see `parallax approve spend`). Required for paid runs; not needed with PARALLAX_TEST_MODE."),
 ) -> int:
+    """Synthesize speech. Spends money; refused unless a human budget is recorded for --folder."""
     import shutil
     import tempfile
     from pathlib import Path as _P
 
+    from ..models import TTS_MODELS
+    from ..spend_guard import SpendRefused, require_approval
     from ..voiceover import generate_voiceover_dict
 
     text_val = text or sys.stdin.read().strip()
@@ -302,6 +306,12 @@ def audio_voiceover(
         print("ERROR: provide --text or pipe text via stdin.", file=sys.stderr)
         return 1
 
+    spec = TTS_MODELS.get(voice_model)
+    try:
+        require_approval(folder, spec.estimate_tts_usd(len(text_val)) if spec else None, f"audio voiceover --voice-model {voice_model}")
+    except SpendRefused as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
     out_path = _P(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     speed_applied = speed is not None and speed != 1.0

@@ -74,7 +74,7 @@ def test_run_plan_hq_overrides_models(tmp_path):
         from parallax.produce import run_plan
         # We don't need it to succeed — just capture what resolve_settings was called with
         try:
-            run_plan(folder=str(tmp_path), plan_path=str(plan_path), mode=ProductionMode.TEST, hq=True, yes=True)
+            run_plan(folder=str(tmp_path), plan_path=str(plan_path), mode=ProductionMode.TEST, hq=True)
         except Exception:
             pass
 

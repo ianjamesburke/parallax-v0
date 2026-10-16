@@ -17,6 +17,7 @@ def _make_args(**kwargs) -> argparse.Namespace:
         "size": None,
         "refs": None,
         "out": None,
+        "folder": None,
     }
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)

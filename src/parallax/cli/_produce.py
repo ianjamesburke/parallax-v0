@@ -33,12 +33,11 @@ def _produce_cmd(
     brief: Optional[str] = typer.Option(None, "--brief", help="Path to a brief.yaml. Materialized into plan.yaml via the planner first."),
     aspect: str = typer.Option("9:16", "--aspect", help="Output aspect ratio. Overrides plan.aspect when set. Default: 9:16."),
     scene: Optional[int] = typer.Option(None, "--scene", help="If set, render only this scene index (no full pipeline)."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the pre-flight confirmation prompt (non-interactive mode)."),
     hq: bool = typer.Option(False, "--hq", help="Use premium-tier models."),
     debug: int = typer.Option(0, "--debug", help="Burn debug overlay on every scene: 1=scene index, 2=+prompt, 3=+script and motion. Default: 0 (off)."),
     resolution: Optional[str] = typer.Option(None, "--resolution", help="Override output resolution, e.g. 480x854 or 1080x1920."),
 ) -> int:
-    """Generate stills, narration, and video from a plan or brief. Spends money; refuses while reference gates are open."""
+    """Generate stills, narration, and video from a plan or brief. Spends money; refuses while reference gates are open or no `parallax approve spend` budget covers the estimate."""
     if plan is None and brief is None:
         typer.echo("Error: one of --plan or --brief is required", err=True)
         return 2
@@ -57,7 +56,7 @@ def _produce_cmd(
     except ValueError as e:
         typer.echo(f"Error: {e}", err=True)
         return 2
-    return _run_produce(folder, plan, brief, aspect, scene, yes, hq, debug, resolution)
+    return _run_produce(folder, plan, brief, aspect, scene, hq, debug, resolution)
 
 
 def _plan_cmd(
@@ -193,7 +192,6 @@ def _run_produce(
     brief: Optional[str],
     aspect: str,
     scene: Optional[int],
-    yes: bool,
     hq: bool,
     debug: int,
     resolution: Optional[str] = None,
@@ -244,16 +242,13 @@ def _run_produce(
     try:
         result = run_plan(
             folder=folder, plan_path=plan_path,
-            aspect=aspect, yes=yes,
+            aspect=aspect,
             hq=hq,
             debug_level=debug,
         )
     except Exception as e:
         print(f"\nError: {type(e).__name__}: {e}\n", file=sys.stderr)
         return 1
-    if result.status == "cancelled":
-        print("produce cancelled.", flush=True)
-        return 0
     if result.status != "ok":
         print(f"\nError: {result.error}\n", file=sys.stderr)
         return 1

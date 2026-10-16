@@ -46,7 +46,9 @@ def video_animate(
     start: Optional[str] = typer.Option(None, "--start", metavar="IMAGE", help="Start frame image path."),
     ref: Optional[List[str]] = typer.Option(None, "--ref", metavar="IMAGE", help="Reference image (repeatable). Mutually exclusive with --start/--end."),
     end: Optional[str] = typer.Option(None, "--end", metavar="IMAGE", help="End frame image path. Requires --start."),
+    folder: Optional[str] = typer.Option(None, "--folder", help="Project root holding spend-approval.yaml (see `parallax approve spend`). Required for paid runs; not needed with PARALLAX_TEST_MODE."),
 ) -> int:
+    """Animate one clip. Spends money; refused unless a human budget is recorded for --folder."""
     # Validate mutual exclusion of --start and --ref
     if start is not None and ref:
         typer.echo("Error: --start and --ref are mutually exclusive", err=True)
@@ -57,13 +59,21 @@ def video_animate(
         return 2
 
     from pathlib import Path
+    from ..models import resolve
     from ..openrouter import generate_video
+    from ..spend_guard import SpendRefused, require_approval
 
     out_dir = Path(out) if out else Path.cwd()
     start_path = Path(start) if start else None
     end_path = Path(end) if end else None
     refs = [Path(r) for r in ref] if ref else None
 
+    spec = resolve(model, kind="video")
+    try:
+        require_approval(folder, spec.cost_usd * float(spec.request_duration(duration)), f"video animate --model {model}")
+    except SpendRefused as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
     path = generate_video(
         prompt,
         model,

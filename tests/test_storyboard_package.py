@@ -548,7 +548,7 @@ def test_produce_refuses_motion_graphic_scenes_without_a_clip(tmp_path, capsys, 
     monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
     plan = tmp_path / "plan.yaml"
     plan.write_text(yaml.safe_dump({"scenes": [{"index": 0, "scene_type": "motion_graphic", "clip_path": "clips/collage.mp4", "duration_s": 1.0}]}))
-    assert cli.main(["produce", "--folder", str(tmp_path), "--plan", str(plan), "--yes"]) == 1
+    assert cli.main(["produce", "--folder", str(tmp_path), "--plan", str(plan)]) == 1
     assert "clip_path is missing" in capsys.readouterr().err
 
 
