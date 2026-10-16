@@ -1,10 +1,11 @@
 ---
 id: "0007"
 title: "Storyboard PDF export and Rise infographic storyboard"
-status: in-progress
+status: done
 priority: p1
 size: m
 created_at: "2026-10-16T16:33:00Z"
+completed_at: "2026-10-16T16:44:00Z"
 blocked_by: []
 gh_issue: []
 area:
