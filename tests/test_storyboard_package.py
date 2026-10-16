@@ -513,3 +513,47 @@ def test_gate_explains_why_a_global_reference_does_not_reach_a_scene(tmp_path, c
     assert "a product_ref exists but scene 0 is shot_type: character" in note
     assert "only reaches shot_type: broll scenes" in note and "Add the file to scene 0 image_refs or change its shot_type" in note
     assert note in gate["question"]
+
+
+def _graphic_brief(tmp_path, **scene):
+    return _scenes_brief(tmp_path, [{"scene_type": "motion_graphic", "prompt": "timeline graphic", **scene}])
+
+
+def test_missing_motion_graphic_clip_is_an_advisory_with_a_plain_remedy(tmp_path, capsys):
+    brief = _graphic_brief(tmp_path, clip_path="clips/collage.mp4")
+    manifest = _storyboard(tmp_path, brief, capsys)
+    assert manifest["status"] == "ready_for_review", "non-blocking"
+    advisory = next(a for a in manifest["advisories"] if a["kind"] == "motion_graphic_clip_missing")
+    assert advisory["scene"] == 0 and "clips/collage.mp4" in advisory["message"]
+    how = advisory["remedies"][0]["how"]
+    assert "does not author" in how and "enforces no clip contract" in how and "not validated" in how
+    (tmp_path / "clips").mkdir()
+    (tmp_path / "clips/collage.mp4").write_bytes(b"x")
+    assert not [a for a in _storyboard(tmp_path, brief, capsys)["advisories"] if a["kind"] == "motion_graphic_clip_missing"]
+    unset = _storyboard(tmp_path, _graphic_brief(tmp_path), capsys)
+    assert any("no clip_path is set" in a["message"] for a in unset["advisories"])
+
+
+def test_produce_refuses_motion_graphic_scenes_without_a_clip(tmp_path, capsys, monkeypatch):
+    from parallax import produce as produce_mod
+    monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
+    monkeypatch.setattr(produce_mod, "run_plan", lambda **kw: pytest.fail("run_plan reached without the clip"))
+    missing = _graphic_brief(tmp_path, clip_path="clips/collage.mp4")
+    assert cli.main(["produce", "--folder", str(tmp_path), "--brief", str(missing)]) == 1
+    assert "required asset(s) missing" in capsys.readouterr().err
+    unset = _graphic_brief(tmp_path)
+    assert cli.main(["produce", "--folder", str(tmp_path), "--brief", str(unset)]) == 1
+    assert "motion_graphic needs a locally rendered clip_path" in capsys.readouterr().err
+    monkeypatch.undo()
+    monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
+    plan = tmp_path / "plan.yaml"
+    plan.write_text(yaml.safe_dump({"scenes": [{"index": 0, "scene_type": "motion_graphic", "clip_path": "clips/collage.mp4", "duration_s": 1.0}]}))
+    assert cli.main(["produce", "--folder", str(tmp_path), "--plan", str(plan), "--yes"]) == 1
+    assert "clip_path is missing" in capsys.readouterr().err
+
+
+def test_guide_states_that_a_direction_only_beat_cannot_be_its_own_scene():
+    import typer
+    from parallax.guide import build_guide
+    mapping = build_guide(typer.main.get_group(cli.app))["brief"]["script_mapping"]["direction_only_beats"]
+    assert "cannot be its own scene" in mapping and "0.05s" in mapping

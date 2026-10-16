@@ -151,12 +151,25 @@ def _scene_layout_and_composition_advisories(scene) -> list[dict]:
             "remedies": [
                 {"id": "representative_frame", "how": "Rewrite prompt as one composition, e.g. the single most telling moment. Narration is unchanged."},
                 {"id": "split_scenes", "how": "Replace the scene with several scenes, each with one composition. Distribute the original vo_text across them in order at word boundaries; "
-                                               "the concatenated vo_text must equal the original narration exactly. Sharing one narration span between scenes (empty vo_text) is not supported in a brief: BriefScene has no duration field and alignment assigns scene boundaries from vo_text words.",
+                                               "the concatenated vo_text must equal the original narration exactly. A beat with no narration cannot be its own brief scene: vo_text is a required string, an empty one is accepted by the schema but alignment gives it about 0.05s, and BriefScene has no duration field (plan.yaml can pin duration_s after planning, by hand).",
                  "narration": "distribute_verbatim"},
                 {"id": "motion_graphic", "how": "Set scene_type: motion_graphic and supply a locally rendered clip_path before production. No AI generation is used; the panel layout itself is not defined by Parallax."},
             ],
         })
     return advisories
+
+
+def _missing_clip_advisory(scene) -> dict:
+    where = f"clip_path {scene.clip_path!r} does not exist" if scene.clip_path else "no clip_path is set"
+    return {
+        "kind": "motion_graphic_clip_missing",
+        "message": f"Motion graphic: {where}. Parallax does not author or generate this clip; production refuses to run until it exists.",
+        "remedies": [{
+            "id": "supply_clip",
+            "how": "Parallax does not author this clip. A human or another tool must render the clip locally and set clip_path in the brief. Parallax enforces no clip contract: it only checks the file exists. "
+                   "Convention (skills/parallax-v0/references/motion-graphics.md, not validated): silent MP4 at the project output dimensions and frame rate, with the measured scene duration.",
+        }],
+    }
 
 
 def _resolve_timeline(brief: Brief, timeline: list[dict] | None) -> tuple[list[dict], str]:
@@ -194,6 +207,9 @@ def review_storyboard(brief: Brief, folder: str | Path, brief_path: str | Path, 
                 first_word_start = float(value)
     gates = open_gates(brief, folder, brief_path)
     scene_advisories: dict[int, list[dict]] = {scene.index: _scene_layout_and_composition_advisories(scene) for scene in brief.script.scenes}
+    for scene in brief.script.scenes:
+        if scene.resolved_scene_type == "motion_graphic" and not (scene.clip_path and (Path(folder) / scene.clip_path).is_file()):
+            scene_advisories[scene.index].append(_missing_clip_advisory(scene))
     for gate in gates:
         message = ("No scene image reference — resolve the reference gate before generation."
                    if gate["id"] == EDITORIAL else "Brand/product reference missing.")

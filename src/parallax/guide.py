@@ -48,6 +48,7 @@ _BRIEF = {
         "note": "No command parses a script file; the operator maps it into brief.yaml by this rule.",
         "headline": "A labeled Headline:/H: section becomes top-level `headline`: opening on-screen text, never spoken, never in vo_text.",
         "narration": "Body text becomes scene `vo_text`, split across scenes at word boundaries; the scenes' vo_text joined in order must equal the body text exactly. Do not paraphrase.",
+        "direction_only_beats": "A beat with direction but no narration cannot be its own scene. vo_text is required; an empty vo_text passes the schema but alignment gives that scene about 0.05s, and a brief has no duration field. Split a neighboring scene's vo_text at a word boundary to give the beat narration, or pin duration_s by hand in plan.yaml after planning.",
         "direction": "Visual direction is authored into scene `prompt` (and `motion_prompt` for animation). On-screen copy goes in `on_screen_text`.",
     },
     "brief_fields": {
