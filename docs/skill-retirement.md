@@ -77,7 +77,7 @@ Dispositions: **G** = `parallax guide <topic>`, **A** = advisory or error alread
 | Stills-only batch before graphics exist | G | `produce_loop.stills_only`. |
 | Reassemble with approved audio and word locks | G | `motion_graphic.workflow`, `asset_locking.audio_locks`. |
 | "Keep workflow here, compositions in `graphics/`" | G | `motion_graphic.output_contract` (convention only; `clip_path` may be any project path). |
-| Use Remotion guidance when installed | D | Third-party tooling; `renderer` says any local renderer. |
+| Use Remotion guidance when installed | G/A | `motion_graphic.renderer`, `motion_graphic.workflow`, `_missing_clip_advisory`. |
 
 ## references/voiceover-broll.md
 

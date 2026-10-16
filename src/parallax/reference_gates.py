@@ -84,8 +84,8 @@ def _unreached_notes(brief: Brief, scene_indexes: list[int]) -> dict[str, str]:
 
 
 def undeclared_image_refs(brief: Brief) -> list[tuple[int, str]]:
-    """Scene image_refs entries missing from assets.provided; gates only see declared assets."""
-    declared = {a.path for a in brief.assets.provided}
+    """Scene image_refs entries missing from assets.provided (or another scene's still_path for continuity)."""
+    declared = {a.path for a in brief.assets.provided} | {s.still_path for s in brief.script.scenes if s.still_path}
     return [(scene.index, ref) for scene in brief.script.scenes for ref in scene.image_refs if ref not in declared]
 
 

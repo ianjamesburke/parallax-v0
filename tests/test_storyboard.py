@@ -45,6 +45,37 @@ def test_motion_graphic_allowed_for_storyboard_but_not_unlocked_plan():
         brief.to_plan_skeleton()
     with pytest.raises(ValueError, match="locally rendered clip_path"):
         PlanScene(**_scene(scene_type="motion_graphic"))
+    with pytest.raises(ValueError, match="locally rendered clip_path"):
+        Plan(scenes=[_scene(scene_type="motion_graphic")])
+    skeleton = brief.to_plan_skeleton(stills_only=True)
+    assert skeleton["stills_only"] is True
+    plan = Plan.model_validate(skeleton)
+    assert plan.stills_only is True and plan.scenes[0].scene_type == "motion_graphic"
+
+
+def test_stills_only_allows_planning_and_producing_with_unrendered_motion_graphic(tmp_path, monkeypatch):
+    monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
+    monkeypatch.setenv("PARALLAX_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("PARALLAX_USAGE_LOG", str(tmp_path / "usage.ndjson"))
+    poster = tmp_path / "poster.png"
+    Image.new("RGB", (32, 32), "#112233").save(poster)
+    brief = Brief(
+        goal="Campaign",
+        reference_decisions=[{"gate": "editorial-reference", "choice": "no_reference", "scenes": [0], "note": "test"}],
+        script={"scenes": [
+            _scene(scene_type="still"),
+            dict(index=1, vo_text="Chart.", prompt="Timeline graphic", scene_type="motion_graphic", still_path="poster.png"),
+        ]},
+    )
+    source = tmp_path / "brief.yaml"
+    source.write_text(yaml.safe_dump(brief.to_dict()))
+    assert main(["plan", "--folder", str(tmp_path), "--brief", str(source)]) == 1
+    assert main(["plan", "--folder", str(tmp_path), "--brief", str(source), "--stills-only"]) == 0
+    plan_data = yaml.safe_load((tmp_path / "parallax/scratch/plan.yaml").read_text())
+    assert plan_data["stills_only"] is True
+    pf = compute_preflight(plan_data, folder=tmp_path)
+    assert pf.voiceover_cost_usd == 0.0 and pf.voiceover_locked is True
+    assert main(["produce", "--folder", str(tmp_path), "--brief", str(source), "--stills-only"]) == 0
 
 
 def test_local_graphic_propagates_to_plan_and_missing_clip_blocks(tmp_path):

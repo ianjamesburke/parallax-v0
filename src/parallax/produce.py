@@ -144,6 +144,26 @@ def _init_vo_text_hashes(plan: dict, plan_path: Path) -> None:
                        sort_keys=False, width=10000)
 
 
+def _refresh_storyboard_package(plan: dict[str, Any], settings: Any) -> None:
+    """Refresh <folder>/storyboard-package/ from source_brief after real-mode asset generation."""
+    if settings.mode != ProductionMode.REAL:
+        return
+    source_brief = plan.get("source_brief")
+    if not source_brief:
+        return
+    brief_path = Path(source_brief).expanduser()
+    if not brief_path.is_absolute():
+        brief_path = settings.folder / brief_path
+    if not brief_path.is_file():
+        return
+    from .storyboard_package import write_package
+
+    try:
+        write_package(brief_path, settings.folder, settings.folder / "storyboard-package")
+    except Exception as exc:
+        log.warning("failed to refresh storyboard-package from %s: %s", brief_path, exc)
+
+
 def run_plan(
     folder: str | Path,
     plan_path: str | Path,
@@ -296,6 +316,7 @@ def run_plan(
                 plan = _wrap_stage(stage_scan)(plan, settings, state)
                 plan = _wrap_stage(stage_stills)(plan, settings, state)
                 settings.events("log", {"msg": "stills_only — skipping audio, video, and assembly stages"})
+                _refresh_storyboard_package(plan, settings)
                 run_cost = settings.usage.total_cost_usd
                 cost_data = {
                     "run_id": run_id,
@@ -320,6 +341,7 @@ def run_plan(
             for stage in STAGES:
                 plan = stage(plan, settings, state)
 
+            _refresh_storyboard_package(plan, settings)
             runlog.end_run(status="ok", final_video=str(state.current_video))
             return ProductionResult(
                 status="ok",

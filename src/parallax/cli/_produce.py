@@ -36,6 +36,7 @@ def _produce_cmd(
     hq: bool = typer.Option(False, "--hq", help="Use premium-tier models."),
     debug: int = typer.Option(0, "--debug", help="Burn debug overlay on every scene: 1=scene index, 2=+prompt, 3=+script and motion. Default: 0 (off)."),
     resolution: Optional[str] = typer.Option(None, "--resolution", help="Override output resolution, e.g. 480x854 or 1080x1920."),
+    stills_only: bool = typer.Option(False, "--stills-only", help="Generate stills only (writes stills_only: true into plan); skips voiceover, animation, and assembly."),
 ) -> int:
     """Generate stills, narration, and video from a plan or brief. Spends money; prints the estimated cost first; refuses while reference gates are open."""
     if plan is None and brief is None:
@@ -56,7 +57,7 @@ def _produce_cmd(
     except ValueError as e:
         typer.echo(f"Error: {e}", err=True)
         return 2
-    return _run_produce(folder, plan, brief, aspect, scene, hq, debug, resolution)
+    return _run_produce(folder, plan, brief, aspect, scene, hq, debug, resolution, stills_only=stills_only)
 
 
 def _plan_cmd(
@@ -66,6 +67,7 @@ def _plan_cmd(
     model: str = typer.Option("mid", "--model", help="Image model alias for the plan (default: mid)."),
     caption_style: str = typer.Option("anton", "--caption-style", help="Caption preset name written into the plan (default: anton)."),
     resolution: Optional[str] = typer.Option(None, "--resolution", help="Set output resolution in the generated plan, e.g. 480x854."),
+    stills_only: bool = typer.Option(False, "--stills-only", help="Generate stills only (writes stills_only: true into plan); skips voiceover, animation, and assembly."),
 ) -> int:
     """Materialize brief.yaml into plan.yaml. No provider calls."""
     try:
@@ -73,7 +75,7 @@ def _plan_cmd(
     except ValueError as e:
         typer.echo(f"Error: {e}", err=True)
         return 2
-    return _run_plan_command(folder, brief, out, model, caption_style, resolution)
+    return _run_plan_command(folder, brief, out, model, caption_style, resolution, stills_only=stills_only)
 
 
 def _storyboard_cmd(
@@ -136,6 +138,17 @@ def _inject_resolution(plan_path: str, resolution: str) -> None:
     p.write_text(_yaml.dump(data, sort_keys=False, allow_unicode=True))
 
 
+def _inject_stills_only(plan_path: str) -> None:
+    """Load plan YAML, set stills_only: true, write back."""
+    import yaml as _yaml
+    from pathlib import Path as _Path
+
+    p = _Path(plan_path)
+    data = _yaml.safe_load(p.read_text()) or {}
+    data["stills_only"] = True
+    p.write_text(_yaml.dump(data, sort_keys=False, allow_unicode=True))
+
+
 def _refuse_open_gates(brief_path, folder: str) -> int | None:
     """Return exit code 1 when the brief has open reference gates; nothing may spend until a human answers them."""
     from ..brief import Brief
@@ -195,6 +208,8 @@ def _run_produce(
     hq: bool,
     debug: int,
     resolution: Optional[str] = None,
+    *,
+    stills_only: bool = False,
 ) -> int:
     from pathlib import Path
     from ..produce import run_plan, test_scene
@@ -209,7 +224,7 @@ def _run_produce(
         if (code := _refuse_open_gates(brief_path, folder)) is not None:
             return code
         try:
-            result = plan_from_brief(brief_path, folder=folder)
+            result = plan_from_brief(brief_path, folder=folder, stills_only=stills_only)
         except Exception as e:
             print(f"Error: failed to plan from brief: {e}", file=sys.stderr)
             return 1
@@ -228,6 +243,8 @@ def _run_produce(
         plan_path = plan
         if (code := _refuse_plan_open_gates(plan_path, folder)) is not None:
             return code
+        if stills_only:
+            _inject_stills_only(plan_path)
 
     if resolution is not None:
         _inject_resolution(plan_path, resolution)
@@ -266,6 +283,8 @@ def _run_plan_command(
     model: str,
     caption_style: str,
     resolution: Optional[str] = None,
+    *,
+    stills_only: bool = False,
 ) -> int:
     from pathlib import Path
     from ..planner import plan_from_brief
@@ -287,6 +306,7 @@ def _run_plan_command(
             out_path=out,
             image_model=model,
             caption_style=caption_style,
+            stills_only=stills_only,
         )
     except Exception as e:
         print(f"Error: failed to plan from brief: {e}", file=sys.stderr)

@@ -77,6 +77,7 @@ def compute_preflight(
     image_model = plan.get("image_model", "mid")
     video_model = plan.get("video_model", "mid")
     voice_model = plan.get("voice_model", "tts-mini")
+    stills_only = bool(plan.get("stills_only", False))
     output_resolution = output_resolution or plan.get("resolution") or None
 
     assets_dir = (Path(folder) / "parallax" / "assets") if folder is not None else None
@@ -87,13 +88,14 @@ def compute_preflight(
         idx = s["index"]
 
         if s.get("scene_type") == "motion_graphic":
-            if not s.get("clip_path"):
-                raise ValueError(f"scene {idx}: motion_graphic requires a locally rendered clip_path")
-            if folder is not None:
-                clip = Path(s["clip_path"]).expanduser()
-                clip = clip if clip.is_absolute() else Path(folder) / clip
-                if not clip.is_file():
-                    raise ValueError(f"scene {idx}: motion_graphic clip_path is missing: {clip}. Render the local graphic before producing.")
+            if not stills_only:
+                if not s.get("clip_path"):
+                    raise ValueError(f"scene {idx}: motion_graphic requires a locally rendered clip_path")
+                if folder is not None:
+                    clip = Path(s["clip_path"]).expanduser()
+                    clip = clip if clip.is_absolute() else Path(folder) / clip
+                    if not clip.is_file():
+                        raise ValueError(f"scene {idx}: motion_graphic clip_path is missing: {clip}. Render the local graphic before producing.")
             scenes.append(PreflightScene(
                 index=idx, kind="clip", model_alias="local",
                 duration_s=float(s.get("duration_s") or 0), locked=True, cost_usd=0.0,
@@ -126,8 +128,8 @@ def compute_preflight(
         log.info("preflight scene %d: still (%s) locked=%s overwrite=%s ~$%.3f",
                  idx, still_alias, still_locked, still_overwrite, still_cost)
 
-        # --- Clip (only if animate=True) ---
-        if s.get("animate", False):
+        # --- Clip (only if animate=True and not stills_only) ---
+        if s.get("animate", False) and not stills_only:
             clip_alias = s.get("video_model") or video_model
             clip_locked = bool(s.get("clip_path"))
             duration = float(s.get("duration_s") or DEFAULT_CLIP_DURATION_S)
@@ -162,7 +164,7 @@ def compute_preflight(
                      idx, clip_alias, duration, clip_locked, clip_overwrite, clip_cost)
 
     # --- Voiceover ---
-    vo_locked = bool(plan.get("audio_path"))
+    vo_locked = bool(plan.get("audio_path")) or stills_only
     vo_cost = 0.0
     vo_warnings: list[str] = []
     if not vo_locked:
