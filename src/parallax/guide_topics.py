@@ -17,9 +17,8 @@ TOPICS: dict[str, dict] = {
         "flow": [
             {"step": "validate", "command": "parallax validate --folder F --brief B", "spends": False, "use": "Catches brief and plan errors before any spend; prints JSON with `errors` and `warnings`."},
             {"step": "plan", "command": "parallax plan --folder F --brief B", "spends": False, "use": "Writes plan.yaml. Inspect and edit it before producing (model picks, locks, caption settings)."},
-            {"step": "dry_run", "command": "PARALLAX_TEST_MODE=1 parallax produce --folder F --plan P", "spends": False, "use": "Full pipeline on stub assets with no network; needs no spend approval."},
-            {"step": "spend_approval", "command": "parallax approve spend", "spends": False, "use": "Human only. See `parallax guide spend_approval`."},
-            {"step": "produce", "command": "parallax produce --folder F --plan P", "spends": True, "use": "Real run. Prints a pre-flight cost table first. Re-running regenerates only unlocked scenes."},
+            {"step": "dry_run", "command": "PARALLAX_TEST_MODE=1 parallax produce --folder F --plan P", "spends": False, "use": "Full pipeline on stub assets with no network; spends nothing."},
+            {"step": "produce", "command": "parallax produce --folder F --plan P", "spends": True, "use": "Real run. Prints a pre-flight cost estimate first, then proceeds. Re-running regenerates only unlocked scenes."},
         ],
         "one_shot": "`parallax produce --folder F --brief B` plans from the brief then produces in one command. Use the two-step form when the plan needs inspection or edits first.",
         "produce_flags": {
@@ -38,7 +37,7 @@ TOPICS: dict[str, dict] = {
         "stills_only": "Plan field `stills_only: true` runs only the stills stage: no audio, animation, or assembly. Use it in a separate execution plan to generate and approve stills first.",
         "review_checkpoints": [
             "Storyboard: `parallax storyboard --json`, answer open gates, show storyboard-package/storyboard.html, collect feedback on scene breakdown and treatments.",
-            "Stills: after storyboard approval and a recorded budget, generate stills (stills_only plan), inspect them against the scene/reference map, lock the approved ones.",
+            "Stills: after storyboard approval, generate stills (stills_only plan), inspect them against the scene/reference map, lock the approved ones.",
             "Narrated draft and motion: with approved stills, produce a draft with captions skipped (`captions: skip`), check narration against vo_text, then a small animation pilot before extending to every shot.",
             "Final: inspect captions and every scene transition in the assembled video, decode the export. Mechanical checks are not human acceptance.",
         ],
@@ -90,10 +89,10 @@ TOPICS: dict[str, dict] = {
         "next": "cost",
     },
     "cost": {
-        "summary": "Every paid command needs a human budget recorded by `parallax approve spend`. Catalog prices are estimates.",
+        "summary": "Paid commands print their estimated cost first and then proceed. There is no approval step: watch the printed estimate. The OpenRouter key limit is your own backstop. Catalog prices are estimates.",
         "estimate_before_spending": [
             "`parallax models list` for per-image, per-second, and per-1k-character prices.",
-            "`parallax produce` prints a pre-flight cost table before paid work; locked scenes cost nothing.",
+            "`parallax produce` prints a pre-flight cost table before paid work; locked scenes cost nothing. `image generate`, `image analyze`, `video animate`, and `audio voiceover` print `Estimated cost: ...` to stderr before the provider call.",
             "`parallax ingest <path> --estimate` reports clip duration and transcription cost without transcribing.",
         ],
         "track_actuals": {
@@ -102,9 +101,9 @@ TOPICS: dict[str, dict] = {
             "parallax log latest | parallax log list": "Run summary / all runs. <folder>/parallax/output/vN/cost.json holds each run's cost.",
         },
         "budget_rule": "Count billed calls, including failed and retried ones, against the agreed cap. Estimates are not receipts.",
-        "handoff": "An agent never runs `parallax approve spend` or invents the budget or authorizer: see `parallax guide spend_approval` for the exact human handoff. There is no `--yes` and no `-y`.",
-        "dry_run": "PARALLAX_TEST_MODE=1 stubs every provider call: no network, no spend, no approval, and nothing is written into plan.yaml.",
-        "next": "spend_approval",
+        "approval": "There is no approval step, budget file, or `--yes`. Show the user the printed estimate; they can stop the run.",
+        "dry_run": "PARALLAX_TEST_MODE=1 stubs every provider call: no network, no spend, and nothing is written into plan.yaml.",
+        "next": "produce",
     },
     "motion_graphic": {
         "summary": "scene_type: motion_graphic is a locally rendered clip. Parallax never AI-generates it and does not render it for you.",

@@ -71,13 +71,7 @@ parallax produce --folder ./my-project --plan ./my-project/parallax/scratch/plan
 parallax produce --folder ./my-project --brief ./my-project/brief.yaml
 ```
 
-Paid commands (`produce`, `image generate`, `video animate`, `audio voiceover`) refuse until a human records a budget, which `parallax approve spend` writes to `<folder>/spend-approval.yaml`:
-
-```sh
-parallax approve spend --folder ./my-project --budget-usd 5 --authorized-by "<name>"
-```
-
-Each paid run reserves its cost estimate in that file; a run that would exceed the budget is refused with the exact command and a JSON payload. There is no `--yes`, and a non-TTY shell grants nothing. `PARALLAX_TEST_MODE=1` spends nothing and needs no approval. `parallax guide` lists this as the `spend_approval` stage.
+Paid commands (`produce`, `image generate`, `image analyze`, `video animate`, `audio voiceover`) print their estimated cost before the provider call and then proceed. There is no approval step or budget file; watch the estimate, and set a limit on your OpenRouter key as your own backstop. `PARALLAX_TEST_MODE=1` spends nothing.
 
 Iterate by editing `plan.yaml` between runs. Lock approved stills with `still_path:`, audio with `audio_path:` + `words_path:`, animated clips with `clip_path:` — locked assets are reused and only changed scenes regenerate. Per-scene `aspect:` overrides the brief-level value when a single scene needs a different shape.
 
