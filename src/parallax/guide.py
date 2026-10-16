@@ -57,6 +57,7 @@ _BRIEF = {
         "detection": DETECTION,
         "order": "Resolve the product gate before the editorial gate; any image_refs on a scene removes it from the editorial gate. Restructure scenes (splits, merges) before resolving, because gate scene lists follow the brief.",
         "scoping": "`reference resolve` is scene-scoped: it adds the file to image_refs of the named scenes only and records the asset with scene_scope, so it never becomes global wiring. A hand-authored assets.provided entry with no scene_scope is global: a character_ref covers every shot_type: character scene and a product_ref every shot_type: broll scene.",
+        "declaration": "Every scene image_refs entry must also be declared in assets.provided with a kind. `validate` and `storyboard` error on an undeclared file instead of ignoring it.",
         "review_status": "Provided assets start as review_status: pending. Only a human acceptance sets approved, by editing brief.yaml; the CLI never approves.",
     },
 }

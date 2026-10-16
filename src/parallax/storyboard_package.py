@@ -22,7 +22,7 @@ import yaml
 from PIL import Image, ImageOps
 
 from .brief import Brief
-from .reference_gates import _arg, open_gates
+from .reference_gates import _arg, open_gates, undeclared_image_refs, undeclared_message
 from .storyboard import render_storyboard, review_storyboard
 
 _FILES = {
@@ -154,6 +154,13 @@ def _next_steps(gates: list[dict], folder: str, brief_path: str) -> list[dict]:
     return steps + [{"step": "plan", "command": f"parallax plan --folder {_arg(folder)} --brief {_arg(brief_path)}"}]
 
 
+def _load_brief(brief_path: Path) -> Brief:
+    brief = Brief.from_yaml(brief_path)
+    if missing := undeclared_image_refs(brief):
+        raise ValueError("; ".join(undeclared_message(scene, ref) for scene, ref in missing))
+    return brief
+
+
 def _manifest(brief: Brief, review: dict, files: dict[str, str], contact: list[int], missing: list[str],
               folder: str, brief_path: str) -> dict:
     timeline = review["timeline"]
@@ -186,7 +193,7 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
     package = Path(package_dir).expanduser().resolve()
     if package.exists() and any(package.iterdir()) and not (package / "handoff.json").is_file():
         raise ValueError(f"{package} exists and is not a storyboard package (no handoff.json); choose an empty --package-dir")
-    brief = Brief.from_yaml(brief_path)
+    brief = _load_brief(brief_path)
     review = review_storyboard(brief, root, brief_path, _load_timing(timing_path) if timing_path else None)
     package.mkdir(parents=True, exist_ok=True)
     assets = package / "assets"
@@ -227,7 +234,7 @@ def check_storyboard(brief_path: str | Path, folder: str | Path, timing_path: st
     """Same manifest as write_package (status, gates, advisories) without writing anything."""
     brief_path = Path(brief_path).expanduser().resolve()
     root = Path(folder).expanduser().resolve()
-    brief = Brief.from_yaml(brief_path)
+    brief = _load_brief(brief_path)
     review = review_storyboard(brief, root, brief_path, _load_timing(timing_path) if timing_path else None)
     missing = [raw for raw in _referenced_paths(brief) if not (root / raw).is_file()]
     return {"checked_only": True, **_manifest(brief, review, {}, [], missing, str(root), str(brief_path))}

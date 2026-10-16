@@ -48,6 +48,10 @@ def validate_brief(brief_path: str | Path, folder: str | Path) -> dict:
                 "message": f"file not found: {full}",
             })
 
+    from .reference_gates import undeclared_image_refs, undeclared_message
+    for index, ref in undeclared_image_refs(brief):
+        errors.append({"field": f"script.scenes[{index}].image_refs", "message": undeclared_message(index, ref)})
+
     # Per-scene image_refs existence
     for scene in brief.script.scenes:
         for j, image_ref in enumerate(scene.image_refs):

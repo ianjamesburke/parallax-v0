@@ -66,6 +66,34 @@ def _kinds(brief: Brief) -> set[str]:
     return {a.kind for a in brief.assets.provided if a.scene_scope is None}
 
 
+_REACH = {"character_ref": "character", "product_ref": "broll"}
+
+
+def _unreached_notes(brief: Brief, scene_indexes: list[int]) -> dict[str, str]:
+    """For scenes a global reference exists for but does not reach, say why and how to fix it."""
+    kinds = _kinds(brief)
+    notes = {}
+    for scene in brief.script.scenes:
+        if scene.index not in scene_indexes or scene.image_refs:
+            continue
+        reasons = [f"a {kind} exists but scene {scene.index} is shot_type: {scene.shot_type}, and a global {kind} only reaches shot_type: {reach} scenes"
+                   for kind, reach in _REACH.items() if kind in kinds and scene.shot_type != reach]
+        if reasons:
+            notes[str(scene.index)] = "; ".join(reasons) + f". Add the file to scene {scene.index} image_refs or change its shot_type."
+    return notes
+
+
+def undeclared_image_refs(brief: Brief) -> list[tuple[int, str]]:
+    """Scene image_refs entries missing from assets.provided; gates only see declared assets."""
+    declared = {a.path for a in brief.assets.provided}
+    return [(scene.index, ref) for scene in brief.script.scenes for ref in scene.image_refs if ref not in declared]
+
+
+def undeclared_message(scene: int, ref: str) -> str:
+    return (f"scene {scene} image_refs entry {ref!r} is not declared in assets.provided. Declare it there with a kind "
+            "(style_ref, product_ref or character_ref) so reference gates can see it.")
+
+
 def _referenced(brief: Brief, scene) -> bool:
     """True when production will feed this scene a reference image.
 
@@ -151,6 +179,10 @@ def _gate(brief: Brief, folder: str, brief_path: str, gate_id: str, kind: str, s
         "blocks": ["parallax produce --brief"],
         "choices": choices,
     }
+    notes = _unreached_notes(brief, scenes)
+    if notes:
+        gate["scene_notes"] = notes
+        gate["question"] += " " + " ".join(f"Scene {i}: {note}" for i, note in notes.items())
     if authorized:
         gate["authorized_scenes"] = {str(i): note for i, note in authorized.items()}
     if gate_id == PRODUCT:

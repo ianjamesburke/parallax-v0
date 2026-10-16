@@ -336,11 +336,12 @@ def _pacing(manifest):
 def test_pacing_advisories_have_remedies_and_locked_narration_acknowledges_them(tmp_path, capsys):
     scenes = [{"vo_text": "one two three four five six seven eight", "image_refs": ["s.png"]}]
     _png(tmp_path / "s.png")
-    manifest = _storyboard(tmp_path, _scenes_brief(tmp_path, scenes), capsys)
+    declared = {"assets": {"provided": [{"path": "s.png", "kind": "style_ref"}]}}
+    manifest = _storyboard(tmp_path, _scenes_brief(tmp_path, scenes, **declared), capsys)
     open_ = _pacing(manifest)
     assert open_ and all(w["remedies"][0]["how"] and w["locked_by_narration"] is False for w in open_)
     assert "pacing_warnings" not in manifest and "variety" not in manifest
-    locked = _pacing(_storyboard(tmp_path, _scenes_brief(tmp_path, scenes, narration_locked=True), capsys))
+    locked = _pacing(_storyboard(tmp_path, _scenes_brief(tmp_path, scenes, narration_locked=True, **declared), capsys))
     assert [w["kind"] for w in locked] == [w["kind"] for w in open_] and all(w["locked_by_narration"] for w in locked)
     assert "locked_by_narration" in (tmp_path / "storyboard-package/qa-notes.md").read_text()
 
@@ -464,8 +465,51 @@ def test_hand_authored_global_product_ref_still_covers_broll(tmp_path, capsys):
 
 
 def test_validate_pacing_warnings_carry_remedies(tmp_path, capsys):
-    brief = _scenes_brief(tmp_path, [{"vo_text": "one two three four five six seven eight", "image_refs": ["s.png"]}], narration_locked=True)
+    _png(tmp_path / "s.png")
+    brief = _scenes_brief(tmp_path, [{"vo_text": "one two three four five six seven eight", "image_refs": ["s.png"]}], narration_locked=True,
+                          assets={"provided": [{"path": "s.png", "kind": "style_ref"}]})
     assert cli.main(["validate", "--folder", str(tmp_path), "--brief", str(brief)]) in (0, 1)
     warnings = json.loads(capsys.readouterr().out)["warnings"]
     pacing = [w for w in warnings if w["code"].startswith("opening_")]
     assert pacing and all(w["remedies"][0]["how"] and w["locked_by_narration"] is True for w in pacing)
+
+
+def test_undeclared_image_ref_fails_fast_in_storyboard_and_validate(tmp_path, capsys):
+    _png(tmp_path / "refs/crunch.png")
+    brief = _scenes_brief(tmp_path, [{"image_refs": ["refs/crunch.png"]}])
+    for argv in (["storyboard", "--folder", str(tmp_path), "--brief", str(brief), "--json"],
+                 ["storyboard", "--folder", str(tmp_path), "--brief", str(brief), "--check"]):
+        assert cli.main(argv) == 2
+        err = capsys.readouterr().err
+        assert "'refs/crunch.png' is not declared in assets.provided" in err and "Declare it there with a kind" in err
+    assert not (tmp_path / "storyboard-package").exists()
+    assert cli.main(["validate", "--folder", str(tmp_path), "--brief", str(brief)]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["valid"] is False and "not declared in assets.provided" in result["errors"][0]["message"]
+
+
+def test_scoped_asset_exempts_only_its_own_scenes(tmp_path, capsys):
+    _png(tmp_path / "p.png")
+    _png(tmp_path / "c.png")
+    assets = {"provided": [{"path": "c.png", "kind": "character_ref"},
+                           {"path": "p.png", "kind": "product_ref", "scene_scope": [2]}]}
+    scenes = [{"shot_type": "character", "prompt": "fox"}, {"shot_type": "broll", "prompt": "the product box"},
+              {"shot_type": "broll", "prompt": "the product hero", "image_refs": ["p.png"]},
+              {"shot_type": "broll", "prompt": "the product again"}]
+    brief = _scenes_brief(tmp_path, scenes, assets=assets)
+    assert _gate_scenes(tmp_path, brief, capsys)["product-reference"] == [1, 3], "a scoped product_ref exempts only scene 2"
+    scenes[2].pop("image_refs")
+    brief = _scenes_brief(tmp_path, scenes, assets=assets)
+    assert 2 in _gate_scenes(tmp_path, brief, capsys)["product-reference"], "scope alone feeds nothing; the scene must list the file"
+
+
+def test_gate_explains_why_a_global_reference_does_not_reach_a_scene(tmp_path, capsys):
+    _png(tmp_path / "p.png")
+    _png(tmp_path / "c.png")
+    assets = {"provided": [{"path": "c.png", "kind": "character_ref"}, {"path": "p.png", "kind": "product_ref"}]}
+    brief = _scenes_brief(tmp_path, [{"shot_type": "character", "prompt": "fox pours the brand cereal product"}], assets=assets)
+    gate = next(g for g in _storyboard(tmp_path, brief, capsys)["gates"] if g["id"] == "product-reference")
+    note = gate["scene_notes"]["0"]
+    assert "a product_ref exists but scene 0 is shot_type: character" in note
+    assert "only reaches shot_type: broll scenes" in note and "Add the file to scene 0 image_refs or change its shot_type" in note
+    assert note in gate["question"]
