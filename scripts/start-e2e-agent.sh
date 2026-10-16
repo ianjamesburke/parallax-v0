@@ -89,10 +89,14 @@ git -C "$workspace_root" init -q
 git -C "$workspace_root" add -A
 git -C "$workspace_root" -c user.name=parallax-e2e -c user.email=parallax-e2e@local commit -qm "E2E fixture snapshot"
 
-prompt=$(<"$workspace_root/fixtures/e2e-agent/kickoff-prompt.md")
+parallax_cmd="uv run --frozen --project $workspace_root parallax"
+prompt="$(<"$workspace_root/fixtures/e2e-agent/kickoff-prompt.md")
+
+Run Parallax from this checkout, never an installed copy: \`$parallax_cmd\` stands in for \`parallax\` everywhere."
 
 echo "E2E workspace: $workspace_root"
 echo "Codex project: $project_root"
+echo "Parallax command: $parallax_cmd"
 echo "This workspace contains only the Git-index snapshot. It does not include local runs or ignored files."
 
 if [[ "${PARALLAX_E2E_DRY_RUN:-}" == "1" ]]; then

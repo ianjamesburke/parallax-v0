@@ -31,6 +31,15 @@ def test_dry_run_creates_fixture_from_index_only(tmp_path: Path) -> None:
     assert (workspace / "fixtures" / "e2e-agent" / "default-project" / "PROJECT.md").is_file()
     assert (workspace / "skills" / "parallax-v0" / "SKILL.md").is_file()
     assert not (workspace / "runs").exists()
+    assert f"Parallax command: uv run --frozen --project {workspace} parallax" in result.stdout
+
+
+def test_kickoff_prompt_teaches_the_cli_not_the_skill() -> None:
+    prompt = (REPO_ROOT / "fixtures" / "e2e-agent" / "kickoff-prompt.md").read_text()
+    assert "parallax --help" in prompt and "parallax guide" in prompt
+    assert "Use the Parallax skill" not in prompt
+    script = SCRIPT.read_text()
+    assert "uv run --frozen --project" in script and "never an installed copy" in script
 
 
 def test_refuses_nonempty_requested_workspace(tmp_path: Path) -> None:
