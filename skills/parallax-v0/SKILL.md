@@ -50,9 +50,17 @@ Record references in `assets.provided` with `origin: supplied`, `generated`, or 
 
 Before spending on a brief or plan, audit the script scene by scene. A generation scene should express one readable visual beat, not a paragraph, a montage, or a sequence of camera moves. Flag a proposed scene when it has multiple locations/actions, needs a visual change to stay interesting, or would hold a single shot beyond roughly 5 seconds (and never rely on one generated clip to carry more than the selected video model supports). Offer a split into short shots—usually 1–4 seconds for fast social creative—while preserving the user's narration and meaning. Do not silently rewrite an approved script.
 
+Do not send a compound direction to a single-image model. A diptych, split screen, before/after, collage, or “does X, then does Y” direction must become separate scene beats or an explicitly approved code-authored multi-panel graphic. A motion prompt may describe temporal change only after its still/start-frame has one clear composition. Treat this as a planning error, not an image-generation retry problem.
+
+Treat on-screen copy as layout, not prompt prose. For vertical 9:16 work, keep every text element within title, caption, and platform-safe margins; wrap or shorten long copy before rendering. Code-authored graphics must use bounded text layout and a rendered-frame inspection. Do not repair one overflowing card by hand while leaving the template capable of producing the same error elsewhere.
+
 If the user has provided only a concept or asks for a script from scratch, propose a concise, platform-appropriate version first: lead with a specific visual/action hook in the first 1–2 seconds, put the tension, benefit, or surprising change on screen early, vary the visual beat before attention drops, and reserve a clean final beat for the CTA. Prefer a 15–45 second initial cut unless the user specifies another duration. For a longer script, say why it needs a cut-down or a multi-shot treatment and offer concrete short-form versions before generating.
 
 Show the native HTML storyboard before scene-batch generation; it contains the scene/reference map. Record only additional reference provenance or missing assets in project notes, avoiding a second manually maintained scene table. Shared art direction belongs in a short style note, and each executable image prompt must include the necessary style description: plan `style` and `style_hint` currently affect voice synthesis, not still generation.
+
+Treat a storyboard with no assigned visual references as a review blocker, not a silent default. For every editorial still or animation, either assign a compact approved character/style reference or call out the intentional no-reference choice in the storyboard. Graphics may omit image references only when a deliberate code-authored visual system is named. Product, logo, or UI scenes without official references must be visibly marked pending and may not become final branded visuals.
+
+Audit visual variety before paid generation. Motion graphics should earn their place as explanatory beats, transitions, or data moments; they are not a fallback for every line of narration. Flag a storyboard when motion graphics exceed roughly 40% of scenes or when three or more appear consecutively. Propose specific editorial, product, or action alternatives before spending.
 
 ---
 

@@ -203,6 +203,42 @@ def test_reference_provenance_defaults_groups_status_and_escaped_url(tmp_path):
             ProvidedAsset(path='logo.png', kind='product_ref', source_url=url)
 
 
+def test_storyboard_flags_unanchored_editorial_scenes_and_graphic_repetition(tmp_path):
+    def scene(index, **kwargs):
+        prompt = kwargs.pop('prompt', None)
+        payload = _scene(**kwargs)
+        payload['index'] = index
+        if prompt is not None:
+            payload['prompt'] = prompt
+        return payload
+    brief = Brief(goal='Campaign', script={'scenes': [
+        scene(0, scene_type='still'),
+        scene(1, scene_type='motion_graphic'),
+        scene(2, scene_type='motion_graphic'),
+        scene(3, scene_type='motion_graphic', prompt='Show the app logo and product UI'),
+    ]})
+    html = render_storyboard(brief, tmp_path)
+    assert 'Reference and visual-variety review' in html
+    assert 'no explicit image reference' in html
+    assert 'Product/brand-dependent scene(s) 03 have no assigned reference' in html
+    assert '3 of 4 scenes are motion graphics (75%)' in html
+    assert 'Consecutive motion-graphic run: 01, 02, 03' in html
+    assert 'No scene image reference' in html
+
+
+def test_storyboard_flags_overflow_copy_and_compound_generated_frame(tmp_path):
+    brief = Brief(goal='Campaign', script={'scenes': [{
+        'index': 0,
+        'vo_text': 'One two three.',
+        'prompt': 'Dynamic diptych: the same adult turns off a bedside light, then wakes alert into sunrise.',
+        'on_screen_text': 'NO AFTERNOON CRASH?',
+    }]})
+    html = render_storyboard(brief, tmp_path)
+    assert '9:16 safe-layout heuristic' in html
+    assert 'Compound visual direction' in html
+    assert 'do not ask a single image generation to depict multiple scenes or moments' in html
+
+
 def test_concept_name_and_id_identify_storyboard_without_changing_production(tmp_path):
     brief = _brief()
     brief.concept_name = "A better <morning>"
