@@ -215,7 +215,7 @@ words_per_chunk: smart        # tiny-word grouping | integer maximum; both stop 
 caption_shift_s: 0.0
 default_transition: null      # transition type
 default_transition_duration_s: 0.5
-stills_only: false            # true = generate stills and stop before narration/assembly
+stills_only: false            # true = images only; skips audio, animation, assembly
 trim_pauses: true             # true | false | float (max pause seconds)
 style: null                   # voice synthesis direction; not a shared image prompt
 style_hint: null              # additional voice direction
@@ -258,12 +258,6 @@ After a run, `output/vN/plan.yaml` is a read-only snapshot. The working plan is 
   still_path: parallax/output/v1/stills/openrouter_mid_1234567_n1080x1920.png
   vo_text: "..."
 
-# Lock audio
-- index: 1
-  audio_path: parallax/output/v1/audio/voiceover.wav
-  words_path: parallax/output/v1/audio/vo_words.json
-  vo_text: "..."   # must match what was rendered
-
 # Lock a generated clip
 - index: 2
   clip_path: parallax/output/v1/video/openrouter_kling_1234567.mp4
@@ -276,6 +270,15 @@ After a run, `output/vN/plan.yaml` is a read-only snapshot. The working plan is 
     - brand/hero.png
   vo_text: "..."
 ```
+
+Audio locks belong at the **top level** of the plan, not inside a scene:
+
+```yaml
+audio_path: parallax/review-audio/voiceover.wav
+words_path: parallax/review-audio/vo_words.json
+```
+
+Copy approved audio and timing files to these run-local paths first. Keep scene narration matched to the recording and preserve the reviewed voice speed/postprocessing settings.
 
 Re-run to regenerate only unlocked scenes:
 ```bash
