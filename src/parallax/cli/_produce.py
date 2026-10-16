@@ -23,6 +23,7 @@ def _validate_resolution(resolution: Optional[str]) -> None:
 def register_produce(app: typer.Typer) -> None:
     app.command("produce")(_produce_cmd)
     app.command("plan")(_plan_cmd)
+    app.command("storyboard")(_storyboard_cmd)
     app.command("ingest")(_ingest_cmd)
 
 
@@ -34,7 +35,7 @@ def _produce_cmd(
     scene: Optional[int] = typer.Option(None, "--scene", help="If set, render only this scene index (no full pipeline)."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the pre-flight confirmation prompt (non-interactive mode)."),
     hq: bool = typer.Option(False, "--hq", help="Use premium-tier models."),
-    debug: int = typer.Option(0, "--debug", help="Burn debug overlay on every scene: 1=scene index, 2=+prompt, 3=+refs. Default: 0 (off)."),
+    debug: int = typer.Option(0, "--debug", help="Burn debug overlay on every scene: 1=scene index, 2=+prompt, 3=+script and motion. Default: 0 (off)."),
     resolution: Optional[str] = typer.Option(None, "--resolution", help="Override output resolution, e.g. 480x854 or 1080x1920."),
 ) -> int:
     if plan is None and brief is None:
@@ -72,6 +73,24 @@ def _plan_cmd(
         typer.echo(f"Error: {e}", err=True)
         return 2
     return _run_plan_command(folder, brief, out, model, caption_style, resolution)
+
+
+def _storyboard_cmd(
+    folder: str = typer.Option(..., "--folder", help="Project root for resolving assets."),
+    brief: str = typer.Option(..., "--brief", help="Path to the authored brief.yaml."),
+    timing: Optional[str] = typer.Option(None, "--timing", help="Aligned manifest YAML/JSON with index, start_s, end_s for every scene; replaces reading estimates."),
+    out: Optional[str] = typer.Option(None, "--out", help="HTML output (default: <folder>/parallax/scratch/storyboard.html)."),
+) -> int:
+    """Render an offline HTML storyboard for review before generation."""
+    from ..storyboard import storyboard_from_brief
+    try:
+        path = storyboard_from_brief(brief, folder, out, timing_path=timing)
+    except (ValueError, OSError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        return 2
+    typer.echo(f"Storyboard: {path}")
+    typer.echo("Review scene types and direction before generating assets. No provider calls made.")
+    return 0
 
 
 def _ingest_cmd(

@@ -399,6 +399,14 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
                 f"scene {idx}: aspect={scene_aspect!r} is not a supported aspect "
                 f"ratio. Choices: {sorted(VALID_ASPECTS)}"
             )
+        if s.get("scene_type") == "motion_graphic":
+            clip = Path(s.get("clip_path") or "").expanduser()
+            clip = clip if clip.is_absolute() else settings.folder / clip
+            if not _is_clip_reusable(str(clip), settings.mode):
+                raise ValueError(f"scene {idx}: motion_graphic clip_path is missing or unusable: {clip}. Render the local graphic before producing.")
+            # Assembly consumes the clip directly; no AI still or animation is needed.
+            still_paths[idx] = ""
+            continue
         _locked_still: str | None = s.get("still_path")
         if _locked_still is not None and not (
             settings.mode == ProductionMode.REAL and is_mock_asset(_locked_still)
@@ -914,6 +922,14 @@ def stage_speed_adjust(plan: dict[str, Any], settings: Settings, state: Pipeline
     return plan
 
 
+def _report_opening_pacing(aligned: list[dict[str, Any]], settings: Settings, basis: str, first_word_start_s: float | None = None) -> None:
+    from .pacing import review_opening_pacing
+    report = review_opening_pacing(aligned, basis, first_word_start_s=first_word_start_s)
+    runlog.event("qa.opening_pacing", level="INFO", **report)
+    for warning in report["warnings"]:
+        _log(settings, f"[pacing advisory] {warning['message']}")
+
+
 def stage_align(plan: dict[str, Any], settings: Settings, state: PipelineState) -> dict[str, Any]:
     """Assign per-scene start/end/duration from the aligned words.
 
@@ -939,6 +955,7 @@ def stage_align(plan: dict[str, Any], settings: Settings, state: PipelineState) 
             _log(settings, f"  [{s['index']:02d}] {s.get('start_s', 0):.2f}s – {s.get('end_s', 0):.2f}s ({s.get('duration_s', 0):.2f}s)")
         state.aligned = aligned
         state.aligned_json = json.dumps(aligned)
+        _report_opening_pacing(aligned, settings, "declared no-voiceover timeline")
         return plan
 
     vo_result = state.vo_result
@@ -968,6 +985,8 @@ def stage_align(plan: dict[str, Any], settings: Settings, state: PipelineState) 
         _log(settings, f"  [{s['index']:02d}] {s.get('start_s', 0):.2f}s – {s.get('end_s', 0):.2f}s ({s.get('duration_s', 0):.2f}s)")
     state.aligned = aligned
     state.aligned_json = json.dumps(aligned)
+    _report_opening_pacing(aligned, settings, "aligned narration timeline (including explicit overrides)",
+                           first_word_start_s=float(vo_result["words"][0]["start"]) if vo_result["words"] else None)
 
     # Write corrected words back — cross-check may have patched TTS
     # hallucinations (e.g. "sweatsh" → "switch") in the words list.
@@ -1140,6 +1159,10 @@ def stage_headline(plan: dict[str, Any], settings: Settings, state: PipelineStat
         "output_path": final_path,
         "fontsize": h_fontsize,
     }
+    if settings.headline_y_position is not None:
+        headline_kwargs["y_position"] = settings.headline_y_position
+    if settings.headline_font is not None:
+        headline_kwargs["font_name"] = settings.headline_font
     if settings.headline_bg:
         headline_kwargs["bg_color"] = settings.headline_bg
     if settings.headline_color:
@@ -1273,7 +1296,7 @@ def stage_finalize(plan: dict[str, Any], settings: Settings, state: PipelineStat
 
 _KNOWN_SCENE_FIELDS = {
     "index", "shot_type", "vo_text", "prompt",
-    "still_path", "reference", "reference_images",
+    "still_path", "reference", "reference_images", "scene_type",
     "animate", "motion_prompt", "clip_path", "animate_resolution",
     "end_frame_path",
     # Per-scene model overrides (image_model / video_model / voice_model

@@ -60,10 +60,13 @@ def generate_voiceover_dict(
     pronunciations: dict[str, str] | None = None,
     trim_pauses: bool | float = True,
 ) -> dict:
-    """Generate voiceover and trim overlong inter-word silences.
+    """Generate voiceover and optionally cap overlong inter-word silences.
 
     Calls `openrouter.generate_tts` (always Gemini TTS via OpenRouter),
-    then post-processes with `_trim_long_pauses`. Speed adjustment is
+    then optionally caps gaps with bilateral lead-in and crossfades. A true
+    ``trim_pauses`` caps gaps at 0.75s; a float sets the cap (minimum 0.4s).
+    Standalone CLI synthesis opts out by default to preserve provider audio.
+    Speed adjustment is
     handled separately by `audio.speedup` / `stage_speed_adjust`.
 
     `voice` is an OpenAI voice name (e.g. 'nova', 'shimmer', 'alloy'). See
@@ -76,6 +79,9 @@ def generate_voiceover_dict(
     """
     dest = Path(out_dir or str(output_dir()))
     dest.mkdir(parents=True, exist_ok=True)
+
+    if isinstance(trim_pauses, float) and not isinstance(trim_pauses, bool) and trim_pauses < 0.4:
+        raise ValueError("trim_pauses gap cap must be at least 0.4s to retain word lead-in")
 
     pronunciations = pronunciations or {}
 
@@ -141,6 +147,7 @@ def generate_voiceover_dict(
     log.info("voiceover: done duration=%.2fs elapsed=%dms", duration, elapsed)
 
     return {
+        "raw_audio_path": str(raw_path),
         "audio_path": str(audio_path),
         "words_path": str(words_path),
         "words": words_trimmed,
@@ -180,24 +187,21 @@ def _trim_long_pauses(
     audio_path: Path,
     words: list[dict],
     out_path: Path,
-    max_gap_s: float = 0.4,
-    keep_gap_s: float = 0.1,
+    max_gap_s: float = 0.75,
 ) -> tuple[list[dict], float, int, float]:
-    """Remove inter-word gaps > max_gap_s, trimming each to keep_gap_s.
+    """Cap long gaps with lead-in on both sides and a silent crossfade.
 
-    Uses ffmpeg atrim+concat for surgical cuts driven by word timestamps.
-    No amplitude detection — purely timestamp-based.
-    Returns (adjusted_words, new_duration_s).
+    Alignment can place a word's start after its first audible phoneme, so
+    joining at the timestamp itself can clip that phoneme. ``cap_pauses``
+    retains half of ``max_gap_s`` before the next word (at least 0.2s),
+    crossfades inside the retained quiet region, and adjusts word times for
+    both the removed gap and crossfade overlap.
     """
     import shutil
+    import tempfile
 
-    gaps: list[tuple[float, float]] = []
-    for i in range(len(words) - 1):
-        gap = words[i + 1]["start"] - words[i]["end"]
-        if gap > max_gap_s:
-            gaps.append((words[i]["end"] + keep_gap_s, words[i + 1]["start"]))
-
-
+    if max_gap_s < 0.4:
+        raise ValueError("trim_pauses gap cap must be at least 0.4s to retain word lead-in")
 
     probe = run_ffmpeg(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -205,70 +209,45 @@ def _trim_long_pauses(
         capture_output=True, text=True,
     )
     total_dur = float(probe.stdout.strip()) if probe.stdout.strip() else (words[-1]["end"] if words else 0.0)
-
-    if not gaps:
+    if not any(b["start"] - a["end"] > max_gap_s for a, b in zip(words, words[1:])):
         shutil.copy2(audio_path, out_path)
         return list(words), max(words[-1]["end"], total_dur) if words else total_dur, 0, 0.0
 
-    # Build the audio segments to keep
-    keep: list[tuple[float, float]] = []
-    cursor = 0.0
-    for trim_start, trim_end in gaps:
-        if cursor < trim_start:
-            keep.append((cursor, trim_start))
-        cursor = trim_end
-    if cursor < total_dur:
-        keep.append((cursor, total_dur))
+    from .audio import cap_pauses
+    with tempfile.TemporaryDirectory() as temp_dir:
+        capped_wav = Path(temp_dir) / "capped.wav"
+        result = cap_pauses(
+            str(audio_path), str(capped_wav), max_gap_s=max_gap_s,
+            crossfade_s=0.05, words=words,
+        )
+        encode = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                  "-i", str(capped_wav)]
+        if out_path.suffix.lower() == ".mp3":
+            encode += ["-c:a", "libmp3lame", "-b:a", "128k"]
+        encode.append(str(out_path))
+        run_ffmpeg(encode, check=True, capture_output=True, text=True)
 
-    n = len(keep)
-    parts = [
-        f"[0:a]atrim=start={s}:end={e},asetpts=PTS-STARTPTS[s{i}]"
-        for i, (s, e) in enumerate(keep)
-    ]
-    concat_in = "".join(f"[s{i}]" for i in range(n))
-    parts.append(f"{concat_in}concat=n={n}:v=0:a=1[out]")
-
-    result = run_ffmpeg(
-        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-         "-i", str(audio_path),
-         "-filter_complex", ";".join(parts),
-         "-map", "[out]", "-c:a", "libmp3lame", "-b:a", "128k",
-         str(out_path)],
+    adjusted = result["adjusted_words"]
+    gaps = result["gaps_trimmed"]
+    total_removed = result["seconds_removed"]
+    final_probe = run_ffmpeg(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(out_path)],
         capture_output=True, text=True,
     )
-    if result.returncode != 0:
-        log.warning("_trim_long_pauses: ffmpeg failed (%s), keeping original", result.stderr[:200])
-        shutil.copy2(audio_path, out_path)
-        return list(words), words[-1]["end"] if words else 0.0, 0, 0.0
-
-    # Shift timestamps: each word shifts back by total gap removed before it
-    shifts = [0.0] * len(words)
-    for trim_start, trim_end in gaps:
-        removed = trim_end - trim_start
-        for j, w in enumerate(words):
-            if w["start"] >= trim_end:
-                shifts[j] += removed
-
-    adjusted = [
-        {"word": w["word"],
-         "start": round(w["start"] - shifts[j], 3),
-         "end": round(w["end"] - shifts[j], 3)}
-        for j, w in enumerate(words)
-    ]
-    total_removed = sum(e - s for s, e in gaps)
-    new_dur = max(adjusted[-1]["end"], total_dur - total_removed) if adjusted else 0.0
-    log.info("_trim_long_pauses: %d gaps removed (%.2fs total), duration %.2fs→%.2fs",
-             len(gaps), total_removed, total_dur, new_dur)
+    new_dur = float(final_probe.stdout.strip()) if final_probe.stdout.strip() else result["new_duration_s"]
+    log.info("_trim_long_pauses: %d gaps safely capped (%.2fs removed), duration %.2fs→%.2fs",
+             gaps, total_removed, total_dur, new_dur)
     from . import runlog
     runlog.event(
         "audio.trim_pauses",
         level="DEBUG",
-        gap_count=len(gaps),
+        gap_count=gaps,
         seconds_removed=round(total_removed, 3),
         duration_before_s=round(total_dur, 3),
         duration_after_s=round(new_dur, 3),
     )
-    return adjusted, new_dur, len(gaps), total_removed
+    return adjusted, new_dur, gaps, total_removed
 
 
 def mock_words(text: str) -> list[dict]:
@@ -300,6 +279,7 @@ def _mock_voiceover(text: str, dest: Path) -> str:
     words_path = dest / "vo_words.json"
     words_path.write_text(json.dumps({"words": words, "total_duration_s": total}, indent=2))
     return json.dumps({
+        "raw_audio_path": str(audio_path),
         "audio_path": str(audio_path),
         "words_path": str(words_path),
         "words": words,

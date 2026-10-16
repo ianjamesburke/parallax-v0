@@ -98,6 +98,7 @@ class PlanScene(BaseModel):
 
     index: int
     shot_type: Literal["character", "broll", "screen"] = "broll"
+    scene_type: Literal["still", "animation", "motion_graphic"] | None = None
     vo_text: str = ""
     prompt: str = ""
 
@@ -161,6 +162,15 @@ class PlanScene(BaseModel):
                 data["clip_trim_start_s"] = data.pop("clip_offset_s")
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def _scene_type_animation(cls, data: Any) -> Any:
+        from .scene_types import normalize_scene_type
+        data = normalize_scene_type(data)
+        if isinstance(data, dict) and data.get("scene_type") == "motion_graphic" and not data.get("clip_path"):
+            raise ValueError(f"scene {data.get('index', '?')}: motion_graphic requires a locally rendered clip_path; AI generation is not supported")
+        return data
+
     @field_validator("aspect")
     @classmethod
     def _check_aspect(cls, v: str | None) -> str | None:
@@ -204,6 +214,8 @@ class Plan(BaseModel):
     # Headline
     headline: str | None = None
     headline_fontsize: int | None = None
+    headline_y_position: str | None = None  # ffmpeg expression for top of text block
+    headline_font: Literal["bangers", "impact", "bebas", "anton", "clean"] | None = None
     headline_bg: str | None = None
     headline_color: str | None = None
 
@@ -224,7 +236,7 @@ class Plan(BaseModel):
 
     # Pipeline behavior
     stills_only: bool = False
-    trim_pauses: bool | float = True  # Remove overlong inter-word gaps in the raw TTS audio during voiceover generation. True uses the default threshold (0.4s); pass a float to override; False skips entirely. Does NOT touch scene boundaries.
+    trim_pauses: bool | float = True  # Safely cap long inter-word gaps with bilateral lead-in and crossfade. True caps at 0.75s; a float >=0.4 sets the cap; False preserves provider audio. Does NOT touch scene boundaries.
     voice_postprocess: VoicePostprocess | None = None
     titles: list[dict[str, Any]] | None = None
 
@@ -241,6 +253,13 @@ class Plan(BaseModel):
         if isinstance(data, dict):
             _check_renamed(data, scope="plan")
         return data
+
+    @field_validator("trim_pauses")
+    @classmethod
+    def _validate_trim_pauses(cls, value: bool | float) -> bool | float:
+        if isinstance(value, float) and value < 0.4:
+            raise ValueError("trim_pauses gap cap must be at least 0.4s to retain word lead-in")
+        return value
 
     # ---------------------------------------------------------------- I/O
 

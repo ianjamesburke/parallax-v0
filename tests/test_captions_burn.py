@@ -286,3 +286,19 @@ def test_burn_captions_adapts_to_resolution(tmp_path, w, h):
     assert (out_w, out_h) == (w, h), (
         f"caption pass must not change frame size; got {out_w}x{out_h} from {w}x{h}"
     )
+
+
+@pytest.mark.parametrize('mode', [3, 'smart'])
+def test_burn_routes_sentence_safe_chunks_to_renderer(tmp_path, monkeypatch, mode):
+    import parallax.captions.burn as burn_module
+    import parallax.ffmpeg_utils as ffmpeg
+    monkeypatch.setattr(ffmpeg, '_ffmpeg_has_drawtext', lambda: True)
+    captured = []
+    monkeypatch.setattr(burn_module, '_burn_captions_drawtext', lambda video, chunks, *args: captured.extend(chunks))
+    words = [{'word': word, 'start': i * .3, 'end': i * .3 + .2}
+             for i, word in enumerate(['Go.', 'I', 'can', 'start.'])]
+    burn_module.burn_captions(str(tmp_path / 'input.mp4'), json.dumps(words),
+                              words_per_chunk=mode, caption_style='anton', gap_hold_frames=0)
+    assert captured[0]['text'] == 'Go.'
+    assert captured[0]['end'] == .2
+    assert ' '.join(chunk['text'] for chunk in captured) == 'Go. I can start.'

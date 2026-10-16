@@ -173,3 +173,29 @@ def test_burn_titles_adapts_to_resolution(tmp_path, w, h):
     assert (out_w, out_h) == (w, h), (
         f"titles pass must not change frame size; got {out_w}x{out_h} from {w}x{h}"
     )
+
+
+@pytest.mark.parametrize('typed', [True, False])
+@pytest.mark.parametrize('overrides', [{}, {'headline_y_position': 'h*18/100', 'headline_font': 'anton'}])
+def test_pipeline_forwards_headline_safe_area_and_font(tmp_path, monkeypatch, typed, overrides):
+    from parallax.plan import Plan
+    from parallax.settings import resolve_settings, ProductionMode
+    from parallax.stages import PipelineState, stage_headline
+    import parallax.stages as stages
+
+    raw = {'headline': 'Opening overlay', 'resolution': '1080x1920', 'scenes': [], **overrides}
+    plan = Plan.model_validate(raw) if typed else raw
+    settings = resolve_settings(plan, tmp_path, tmp_path / 'plan.yaml', mode=ProductionMode.TEST)
+    calls = []
+    monkeypatch.setattr(stages, 'burn_headline', lambda **kwargs: calls.append(kwargs))
+    state = PipelineState(video_dir=str(tmp_path), current_video='input.mp4', aligned=[{'end_s': 3.2}])
+    stage_headline(raw, settings, state)
+    assert calls[0]['end_time_s'] == 3.2
+    assert calls[0]['text'] == 'Opening overlay'
+    if overrides:
+        assert calls[0]['y_position'] == 'h*18/100'
+        assert calls[0]['font_name'] == 'anton'
+    else:
+        assert 'y_position' not in calls[0]  # retain burn_headline defaults
+        assert 'font_name' not in calls[0]
+    assert state.current_video == calls[0]['output_path']
