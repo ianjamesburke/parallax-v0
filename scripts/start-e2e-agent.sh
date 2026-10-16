@@ -89,7 +89,7 @@ git -C "$workspace_root" init -q
 git -C "$workspace_root" add -A
 git -C "$workspace_root" -c user.name=parallax-e2e -c user.email=parallax-e2e@local commit -qm "E2E fixture snapshot"
 
-parallax_cmd="uv run --frozen --project $workspace_root parallax"
+parallax_cmd="uv run --frozen --python 3.11 --project $workspace_root parallax"
 prompt="$(<"$workspace_root/fixtures/e2e-agent/kickoff-prompt.md")
 
 Run Parallax from this checkout, never an installed copy: \`$parallax_cmd\` stands in for \`parallax\` everywhere."

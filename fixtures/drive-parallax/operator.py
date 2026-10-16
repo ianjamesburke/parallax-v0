@@ -17,7 +17,7 @@ from typing import Callable
 import yaml
 
 REPO = Path(__file__).resolve().parents[2]
-LOCAL_PARALLAX = ["uv", "run", "--frozen", "--project", str(REPO), "parallax"]
+LOCAL_PARALLAX = ["uv", "run", "--frozen", "--python", "3.11", "--project", str(REPO), "parallax"]
 
 
 class Operator:
