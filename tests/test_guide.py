@@ -58,3 +58,101 @@ def test_every_top_level_command_has_one_line_help():
     group = typer.main.get_group(cli.app)
     missing = [name for name, command in group.commands.items() if not (command.get_short_help_str() or "").strip()]
     assert missing == []
+
+
+def _topic(capsys, name):
+    assert cli.main(["guide", name]) == 0
+    return json.loads(capsys.readouterr().out)
+
+
+def test_guide_topic_prints_a_small_parsable_slice(capsys):
+    from parallax.guide import topic_names
+    assert cli.main(["guide"]) == 0
+    full = json.loads(capsys.readouterr().out)
+    listed = full["topics"]["stages"] + full["topics"]["reference"]
+    assert listed == topic_names()
+    for name in listed:
+        assert cli.main(["guide", name]) == 0
+        out = capsys.readouterr().out
+        assert json.loads(out)["topic"] == name
+        assert len(out) < 16_000, f"guide {name} is too large to read in one call"
+
+
+def test_guide_unknown_topic_names_the_choices(capsys):
+    assert cli.main(["guide", "nope"]) == 2
+    err = capsys.readouterr().err
+    assert "unknown guide topic 'nope'" in err and "produce_loop" in err
+
+
+def test_guide_topics_chain_and_cross_references_resolve(capsys):
+    from parallax.guide import topic_names
+    names = set(topic_names())
+    full_stages = {}
+    for name in names:
+        data = _topic(capsys, name)
+        if "stage" in data:
+            full_stages[name] = data["stage"]
+        target = data.get("next") if "stage" not in data else data["stage"]["next"]
+        assert target is None or target in names
+        for ref in (data["stage"].get("see", []) if "stage" in data else data.get("see", [])):
+            assert ref in names
+    assert {"produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll"} <= names
+
+
+def test_guide_topics_only_name_real_commands(capsys):
+    """Every `parallax <cmd> [sub]` mentioned in an operator topic exists in the CLI."""
+    import re
+    import typer
+    from parallax.guide_topics import TOPICS
+
+    group = typer.main.get_group(cli.app)
+    text = json.dumps(TOPICS)
+    for mention in set(re.findall(r"`?parallax ((?:[a-z][a-z-]*)(?: [a-z][a-z-]*)?)", text)):
+        words = mention.split()
+        node = group
+        assert words[0] in node.commands, f"`parallax {mention}` is not a command"
+        node = node.commands[words[0]]
+        if len(words) > 1 and hasattr(node, "commands"):
+            assert words[1] in node.commands or words[1] in {"latest", "list", "scene"}, f"`parallax {mention}`: unknown subcommand"
+
+
+def test_guide_topics_only_name_real_plan_fields():
+    from parallax.plan import Plan, PlanScene
+    plan_fields = {"stills_only", "audio_path", "words_path", "vo_text_hashes", "voice_postprocess", "trim_pauses", "voice_speed",
+                   "image_model", "video_model", "voice_model", "style", "style_hint", "caption_style", "fontsize", "words_per_chunk",
+                   "caption_shift_s", "captions", "resolution"}
+    scene_fields = {"still_path", "clip_path", "end_frame_path", "regenerate", "reference", "reference_images", "image_model",
+                    "video_model", "voice_model", "duration_s", "start_offset_s", "scene_type", "motion_prompt"}
+    assert plan_fields <= set(Plan.model_fields)
+    assert scene_fields <= set(PlanScene.model_fields)
+
+
+def test_guide_says_there_is_no_yes_flag_on_paid_commands():
+    import typer
+    group = typer.main.get_group(cli.app)
+    for name in ("produce", "plan"):
+        opts = {opt for p in group.commands[name].params for opt in p.opts}
+        assert "-y" not in opts and "--yes" not in opts
+
+
+def test_dry_run_locks_stub_assets_into_the_plan_without_locking_audio(monkeypatch, tmp_path):
+    """Pins what `guide produce_loop` states: produce locks stills in plan.yaml, audio stays unlocked, and a dry run's locks look like real ones."""
+    import yaml
+    from parallax.produce import run_plan
+
+    monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
+    monkeypatch.setenv("PARALLAX_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("PARALLAX_USAGE_LOG", str(tmp_path / "usage.ndjson"))
+    folder = tmp_path / "project"
+    folder.mkdir()
+    plan_path = folder / "plan.yaml"
+    plan_path.write_text(yaml.safe_dump({
+        "captions": "skip",
+        "scenes": [{"index": 0, "shot_type": "broll", "vo_text": "A typed pipeline.", "prompt": "A still."}],
+    }))
+
+    assert run_plan(folder=folder, plan_path=plan_path).status == "ok"
+
+    locked = yaml.safe_load(plan_path.read_text())
+    assert locked["scenes"][0]["still_path"] == "parallax/assets/scene_00_still.png"
+    assert "audio_path" not in locked and "words_path" not in locked

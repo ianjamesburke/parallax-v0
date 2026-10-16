@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import __version__
+from .guide_topics import TOPICS
 from .reference_gates import DETECTION
 
 _BRIEF = {
@@ -54,6 +55,19 @@ _BRIEF = {
     "brief_fields": {
         "character_reference": "Top-level bool, default false. Read only by `brief.to_plan_skeleton`: when true, every shot_type: character scene gets `reference: true` in plan.yaml so still generation uses character_image. The planner already does this whenever a character_ref asset exists, so the flag changes nothing in that case. The reference gate does not read it; the gate reads assets.provided kinds and per-scene image_refs.",
     },
+    "scene_craft": {
+        "one_beat": "A scene is one readable visual beat: one location and action. Offer a split when a scene holds several actions or locations or would hold a single shot beyond about 5s (1-4s is typical for fast social creative). Split narration at word boundaries and never rewrite an approved script silently.",
+        "compound_direction": "A diptych, split screen, before/after, collage, or 'does X, then does Y' direction must become separate scene beats or an approved motion_graphic. It raises advisory `compound_direction`. A motion_prompt may describe change over time only once the still has one clear composition.",
+        "on_screen_text_layout": "Copy is layout, not prompt prose. Keep every element inside title, caption, and platform-safe margins for 9:16; wrap or shorten long copy (advisory `unsafe_vertical_text`).",
+        "style": "Plan `style` and `style_hint` steer voice synthesis only. Put the shared art direction into every executable still prompt.",
+        "headline": "The production headline overlay lasts through the first scene.",
+        "identity": "Keep an existing project title. Otherwise propose a short `concept_name` as a proposal; accept a user-supplied `concept_id` and never invent one. The storyboard heading and browser tab use them; keep the longer objective in `goal`.",
+        "script_from_scratch": "For a concept with no script, propose a concise platform-appropriate version first: a specific visual or action hook in the first 1-2s, the tension or benefit on screen early, a varied beat before attention drops, a clean final CTA beat. Prefer a 15-45s first cut; for longer scripts offer concrete short versions before generating.",
+        "reference_provenance": "Record every reference in assets.provided with origin (supplied | generated | official), review_status (pending | approved), and source_url for web sources. `provided` means the file exists as an input even if generated earlier. Official brand or product references come from the official site or a verified app-store listing, saved with their source URLs; generated approximations are not official assets. Keep original sources and the prompt, model, and billed cost of any generated reference.",
+        "reference_sets": "To turn a style sample into a consistent character or world, a small reusable set (a clean character sheet plus one environment frame) can be generated within the authorized budget (paid) and shown as pending candidates in the storyboard. Use approved assets as per-scene image_refs instead of repeatedly feeding a broad screenshot with unrelated characters and text.",
+        "global_vs_scene_refs": "Global character/product references merge with scene references. For mixed character shots and diagrams prefer explicit per-scene image_refs and no global character or product asset, so unrelated images do not condition graphics.",
+        "variety": "Motion graphics are explanatory beats, not a fallback for every line (advisories `motion_graphic_share` above 40% of scenes, `motion_graphic_run` for 3+ in a row). Pacing advisories cover the opening; see `parallax guide voiceover_broll`.",
+    },
     "reference_gates": {
         "detection": DETECTION,
         "order": "Resolve the product gate before the editorial gate; any image_refs on a scene removes it from the editorial gate. Restructure scenes (splits, merges) before resolving, because gate scene lists follow the brief.",
@@ -70,6 +84,7 @@ _STAGES = [
         "goal": "Read the supplied script, notes, and references. Treat the project folder as the whole input boundary.",
         "commands": [],
         "preconditions": ["A project folder holding the script and any reference files."],
+        "boundary": "The selected project folder is the whole input: pass it as --folder, never search adjacent projects, archived runs, or other folders for substitute inputs. Choose the performance mode from the brief (voiceover with B-roll, on-screen presenter, or an explicit mix); see `parallax guide voiceover_broll`.",
         "human_decision": {
             "question": "Preserve the script verbatim? Storyboard only or the full video? Any format, voice, or spending constraint?",
             "ask_only_if_unresolved": True,
@@ -86,6 +101,7 @@ _STAGES = [
         ],
         "preconditions": ["intake complete"],
         "outputs": ["<folder>/brief.yaml"],
+        "see": ["brief"],
         "review_boundary": "Do not rewrite an approved script. Propose concept_name as a proposal; never invent concept_id.",
         "spends_money": False,
         "next": "storyboard",
@@ -141,6 +157,7 @@ _STAGES = [
         "goal": "Materialize the approved brief into plan.yaml. No provider calls.",
         "commands": [{"command": "plan", "use": "Materialize plan.yaml.", "pass": ["--folder", "--brief"], "writes": ["<folder>/parallax/scratch/plan.yaml"]}],
         "preconditions": ["human approved the storyboard"],
+        "see": ["produce_loop", "asset_locking", "models"],
         "spends_money": False,
         "next": "spend_approval",
     },
@@ -175,7 +192,8 @@ _STAGES = [
         ],
         "preconditions": ["human approved the storyboard", "no open reference gates", "spend approval recorded for the estimate"],
         "human_decision": {"question": "Authorize paid generation and set a budget cap (recorded in the spend_approval stage).", "ask_only_if_unresolved": False},
-        "review_boundary": "Dry run first with PARALLAX_TEST_MODE=1 (stub assets, no network). Lock approved assets before re-running; unlocked scenes regenerate and cost money.",
+        "see": ["produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll"],
+        "review_boundary": "Dry run first with PARALLAX_TEST_MODE=1 (stub assets, no network), on a throwaway copy of the plan: a dry run locks stub paths into the plan it ran against. Lock approved assets before re-running; unlocked scenes regenerate and cost money.",
         "spends_money": True,
         "next": None,
     },
@@ -198,8 +216,7 @@ def _flags(command: Any) -> list[dict]:
     return flags
 
 
-def build_guide(group: Any) -> dict:
-    """Return the workflow map, with each command's flags read from the live CLI."""
+def _build_stages(group: Any) -> list[dict]:
     stages = []
     for stage in _STAGES:
         commands = []
@@ -211,11 +228,34 @@ def build_guide(group: Any) -> dict:
                 node = node.commands[part]
             commands.append({**entry, "command": f"parallax {entry['command']}", "flags": _flags(node)})
         stages.append({**stage, "commands": commands})
+    return stages
+
+
+def topic_names() -> list[str]:
+    return [*(s["id"] for s in _STAGES), *TOPICS]
+
+
+def build_guide(group: Any, topic: str | None = None) -> dict:
+    """Return the workflow map, or one topic of it, with each command's flags read from the live CLI."""
+    stages = _build_stages(group)
+    header = {"guide_version": 1, "cli_version": __version__}
+    if topic is not None:
+        if topic in TOPICS:
+            return {**header, "topic": topic, **TOPICS[topic]}
+        stage = next((s for s in stages if s["id"] == topic), None)
+        if stage is None:
+            raise ValueError(f"unknown guide topic {topic!r}; choose one of: {', '.join(topic_names())}")
+        # The brief stage carries the full brief contract (fields, examples, gate rules).
+        return {**header, "topic": topic, "stage": stage, **({"brief": _BRIEF} if topic == "brief" else {})}
     return {
-        "guide_version": 1,
-        "cli_version": __version__,
+        **header,
         "invocation": "`parallax` stands for however you run this checkout or install, e.g. `uv run parallax`.",
-        "discovery": ["parallax --help", "parallax <command> --help", "parallax schema brief", "parallax schema cli", "parallax guide"],
+        "discovery": ["parallax --help", "parallax <command> --help", "parallax schema brief", "parallax schema plan", "parallax schema cli", "parallax guide", "parallax guide <topic>"],
+        "topics": {
+            "usage": "`parallax guide <topic>` prints one slice as JSON. Read a stage topic when you reach that stage; read the others when the task needs them.",
+            "stages": [s["id"] for s in _STAGES],
+            "reference": list(TOPICS),
+        },
         "rules": [
             "Every decision that spends money or chooses a creative direction belongs to the human.",
             "Open reference gates block `parallax produce --brief`.",
