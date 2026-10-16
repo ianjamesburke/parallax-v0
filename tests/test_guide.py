@@ -7,7 +7,6 @@ from parallax import cli
 
 
 def test_guide_lists_only_commands_and_flags_that_exist():
-    import click
     import typer
     from parallax.guide import build_guide
 
@@ -21,7 +20,7 @@ def test_guide_lists_only_commands_and_flags_that_exist():
             node = group
             for part in command["command"].split()[1:]:
                 node = node.commands[part]
-            real = {"/".join(p.opts) for p in node.params if isinstance(p, click.Option)}
+            real = {"/".join(p.opts) for p in node.params if p.param_type_name == "option"}
             assert {f["name"] for f in command["flags"] if f["name"].startswith("-")} <= real
             required = {f["name"] for f in command["flags"] if f["required"]}
             if command["command"] != "parallax reference resolve":
