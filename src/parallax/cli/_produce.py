@@ -80,7 +80,7 @@ def _plan_cmd(
 
 def _storyboard_cmd(
     folder: str = typer.Option(..., "--folder", help="Project root for resolving assets."),
-    brief: str = typer.Option(..., "--brief", help="Path to the authored brief.yaml."),
+    brief: Optional[str] = typer.Option(None, "--brief", help="Path to the authored brief.yaml (default: <folder>/brief.yaml)."),
     timing: Optional[str] = typer.Option(None, "--timing", help="Aligned manifest YAML/JSON with index, start_s, end_s for every scene; replaces reading estimates."),
     package_dir: Optional[str] = typer.Option(None, "--package-dir", help="Package output directory (default: <folder>/storyboard-package)."),
     pdf: bool = typer.Option(True, "--pdf/--no-pdf", help="Render a printable PDF of the storyboard if a headless browser is available."),
@@ -91,16 +91,17 @@ def _storyboard_cmd(
     import json
     from pathlib import Path
     from ..storyboard_package import check_storyboard, write_package
+    brief_resolved = brief if brief is not None else str(Path(folder).expanduser() / "brief.yaml")
     if check:
         try:
-            typer.echo(json.dumps(check_storyboard(brief, folder, timing_path=timing), indent=2))
+            typer.echo(json.dumps(check_storyboard(brief_resolved, folder, timing_path=timing), indent=2))
         except (ValueError, OSError) as exc:
             typer.echo(f"Error: {exc}", err=True)
             return 2
         return 0
     destination = Path(package_dir) if package_dir else Path(folder) / "storyboard-package"
     try:
-        manifest = write_package(brief, folder, destination, timing_path=timing, pdf=pdf)
+        manifest = write_package(brief_resolved, folder, destination, timing_path=timing, pdf=pdf)
     except (ValueError, OSError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         return 2
@@ -133,25 +134,29 @@ def _ingest_cmd(
 
 
 def _inject_resolution(plan_path: str, resolution: str) -> None:
-    """Load plan YAML, set resolution:, write back."""
+    """Load plan YAML, set resolution:, write back with top-level keys ordered before scenes."""
     import yaml as _yaml
     from pathlib import Path as _Path
+    from ..planner import _ordered_plan
 
     p = _Path(plan_path)
     data = _yaml.safe_load(p.read_text()) or {}
     data["resolution"] = resolution
-    p.write_text(_yaml.dump(data, sort_keys=False, allow_unicode=True))
+    data = _ordered_plan(data)
+    p.write_text(_yaml.dump(data, sort_keys=False, allow_unicode=True, width=10000))
 
 
 def _inject_stills_only(plan_path: str) -> None:
-    """Load plan YAML, set stills_only: true, write back."""
+    """Load plan YAML, set stills_only: true, write back with top-level keys ordered before scenes."""
     import yaml as _yaml
     from pathlib import Path as _Path
+    from ..planner import _ordered_plan
 
     p = _Path(plan_path)
     data = _yaml.safe_load(p.read_text()) or {}
     data["stills_only"] = True
-    p.write_text(_yaml.dump(data, sort_keys=False, allow_unicode=True))
+    data = _ordered_plan(data)
+    p.write_text(_yaml.dump(data, sort_keys=False, allow_unicode=True, width=10000))
 
 
 def _refuse_open_gates(brief_path, folder: str) -> int | None:

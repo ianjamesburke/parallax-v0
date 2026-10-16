@@ -27,10 +27,29 @@ def is_mock_asset(path: "str | Path") -> bool:
     """Return True if the path looks like a shim-generated mock file.
 
     Mock files are named mock_*.png / mock_video_*.mp4 / mock_tts_*.wav —
-    all sharing the `mock_` prefix on the filename stem. Live runs use this
-    to detect and reject dry-run stubs that were locked into the plan.
+    or carry the `parallax_mock` metadata marker when renamed into
+    `parallax/assets/scene_XX_still.png` during a dry run. Live runs use this
+    to detect and reject dry-run stubs that were locked or left on disk.
     """
-    return Path(path).name.startswith("mock_")
+    p = Path(path)
+    if p.name.startswith("mock_"):
+        return True
+    if not p.is_file():
+        return False
+    suffix = p.suffix.lower()
+    if suffix == ".png":
+        try:
+            with Image.open(p) as im:
+                return im.info.get("parallax_mock") == "1"
+        except Exception:
+            return False
+    if suffix in (".mp4", ".mov"):
+        try:
+            if p.stat().st_size <= 2_000_000:
+                return b"parallax_mock" in p.read_bytes()
+        except Exception:
+            return False
+    return False
 
 
 def output_dir() -> Path:
@@ -110,11 +129,15 @@ def render_mock_image(
         cropped = img.crop((left, 0, left + crop_w, base))
     final = cropped.resize((target_w, target_h), Image.LANCZOS)  # type: ignore[attr-defined]
 
+    from PIL.PngImagePlugin import PngInfo
+    pnginfo = PngInfo()
+    pnginfo.add_text("parallax_mock", "1")
+
     if out_file is not None:
         path = out_file
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            final.save(path)
+            final.save(path, pnginfo=pnginfo)
         except OSError as e:
             raise RuntimeError(f"shim: could not write PNG {path}: {e}") from e
         return path
@@ -128,7 +151,7 @@ def render_mock_image(
     key = hashlib.sha1(f"{prompt}|{model}|{resolution}".encode()).hexdigest()[:10]
     path = out / f"mock_{key}.png"
     try:
-        final.save(path)
+        final.save(path, pnginfo=pnginfo)
     except OSError as e:
         raise RuntimeError(f"shim: could not write PNG {path}: {e}") from e
     return path
@@ -173,6 +196,7 @@ def render_mock_video(
         "-vf", f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}",
         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
         "-r", "30",
+        "-metadata", "comment=parallax_mock",
         str(path),
     ]
     result = subprocess.run(cmd, capture_output=True)

@@ -99,8 +99,11 @@ def _tts_real(
     directive = _tts_resolve_directive(style=style, style_hint=style_hint)
     spoken = directive + text if directive else text
     # Anchor the user content so the model says the script literally
-    # rather than treating it as conversational input.
-    user_message = f"Say this exactly, with no preamble or commentary: {spoken}"
+    # rather than treating it as conversational input or abridging long scripts.
+    user_message = (
+        "Say this verbatim word-for-word from start to finish without abridging, "
+        f"skipping, or summarizing any sentence, with no preamble or commentary: {spoken}"
+    )
 
     body = {
         "model": model,

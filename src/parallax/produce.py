@@ -215,12 +215,13 @@ def run_plan(
         plan["video_model"] = "mid"
 
     if aspect is not None:
+        old_aspect = plan.get("aspect", "9:16")
         plan["aspect"] = aspect
-        # CLI override means "render at this aspect" — drop any plan-pinned
-        # `resolution` so it gets re-derived from the new aspect. Otherwise
-        # a 16:9 override against a `resolution: 1080x1920` plan would mix
-        # the new aspect into a portrait frame.
-        plan.pop("resolution", None)
+        # CLI override to a different aspect means "render at this aspect" —
+        # drop any plan-pinned `resolution` so it gets re-derived from the new
+        # aspect. Keep `resolution` when aspect is unchanged.
+        if aspect != old_aspect:
+            plan.pop("resolution", None)
 
     scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
     if not scenes_raw:
@@ -325,13 +326,14 @@ def run_plan(
                     "version": state.version,
                 }
                 (Path(state.out_dir) / "cost.json").write_text(json.dumps(cost_data, indent=2) + "\n")
-                runlog.end_run(status="ok", final_video=state.stills_dir)
+                final_stills_dir = state.assets_dir or state.stills_dir
+                runlog.end_run(status="ok", final_video=final_stills_dir)
                 return ProductionResult(
                     status="ok",
                     run_id=run_id,
                     output_dir=Path(state.out_dir),
                     final_video=None,
-                    stills_dir=Path(state.stills_dir),
+                    stills_dir=Path(final_stills_dir),
                     cost_usd=run_cost,
                     error=None,
                 )

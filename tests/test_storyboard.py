@@ -285,3 +285,24 @@ def test_concept_name_and_id_identify_storyboard_without_changing_production(tmp
     assert brief.goal in html
     assert 'concept_name' not in brief.to_plan_skeleton()
     assert 'concept_id' not in brief.to_plan_skeleton()
+
+
+def test_negated_compound_keywords_do_not_trigger_compound_direction_advisory(tmp_path):
+    brief = Brief(goal='Campaign', script={'scenes': [{
+        'index': 0,
+        'vo_text': 'One two three.',
+        'prompt': 'Single portrait frame in morning bathroom mirror; no before/after comparison or split-screen layout.',
+    }]})
+    review = review_storyboard(brief, tmp_path, 'brief.yaml')
+    assert not any(a['kind'] == 'compound_direction' for a in review['scene_advisories'][0])
+
+
+def test_storyboard_default_brief_and_plan_resolution_order(tmp_path):
+    source = tmp_path / 'brief.yaml'
+    source.write_text(yaml.safe_dump(_brief(scene_type='still').to_dict()))
+    assert main(['storyboard', '--folder', str(tmp_path), '--check']) == 0
+    assert main(['plan', '--folder', str(tmp_path), '--resolution', '720x1280']) == 0
+    plan_text = (tmp_path / 'parallax/scratch/plan.yaml').read_text()
+    assert plan_text.index('resolution: 720x1280') < plan_text.index('scenes:')
+
+

@@ -128,6 +128,7 @@ def test_stills_only_run_returns_ok_with_stills_dir(monkeypatch, tmp_path):
     assert result.run_id is not None
     assert result.output_dir is not None
     assert result.stills_dir is not None
+    assert (result.stills_dir / "scene_00_still.png").is_file()
     assert result.final_video is None
     assert result.cost_usd == 0.0
     assert result.error is None

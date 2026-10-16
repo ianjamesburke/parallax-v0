@@ -128,10 +128,11 @@ def _print_usage(summary: dict) -> None:
     if not by_alias:
         print("(no records)")
         return
-    print(f"{'alias':<14}{'tier':<10}{'calls':>7}{'cost_usd':>12}{'duration_ms':>14}")
+    alias_w = max(14, max((len(a) for a in by_alias), default=0) + 2)
+    print(f"{'alias':<{alias_w}}{'tier':<10}{'calls':>7}{'cost_usd':>12}{'duration_ms':>14}")
     for alias, slot in sorted(by_alias.items()):
         print(
-            f"{alias:<14}{slot['tier']:<10}{slot['calls']:>7}"
+            f"{alias:<{alias_w}}{slot['tier']:<10}{slot['calls']:>7}"
             f"{slot['cost_usd']:>12.4f}{slot['duration_ms']:>14}"
         )
 

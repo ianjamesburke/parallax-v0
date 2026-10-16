@@ -410,3 +410,30 @@ def test_tts_mini_estimate_matches_billed_short_and_long_scripts():
     spec = resolve("tts-mini", kind="tts")
     assert spec.estimate_tts_usd(72) == pytest.approx(0.000459, rel=0.10)
     assert spec.estimate_tts_usd(180) == pytest.approx(0.000674, rel=0.10)
+
+
+def test_no_trim_pauses_warning_when_stills_only_without_audio_path():
+    plan = _make_plan(
+        scenes=[{"index": 0}],
+        stills_only=True,
+        trim_pauses=True,
+    )
+    result = compute_preflight(plan)
+    assert result.voiceover_locked is True
+    assert not any("trim_pauses" in w for w in result.warnings)
+
+
+def test_still_with_reference_images_includes_vision_estimate():
+    from parallax.models import resolve
+    plan = _make_plan(
+        scenes=[
+            {"index": 0},
+            {"index": 1, "reference_images": ["ref.png"]},
+        ],
+        stills_only=True,
+    )
+    result = compute_preflight(plan)
+    base = resolve("mid", kind="image").cost_usd
+    assert result.scenes[0].cost_usd == pytest.approx(base)
+    assert result.scenes[1].cost_usd == pytest.approx(base + 0.01)
+

@@ -19,9 +19,9 @@ from .brief import Brief
 EDITORIAL = "editorial-reference"
 PRODUCT = "product-reference"
 
-_PRODUCT_TERMS = re.compile(r"\b(?:app|product|logo|ui|brand)\b", re.IGNORECASE)
+_PRODUCT_TERMS = re.compile(r"\b(?:app|product|logo|wordmark|ui|brand)\b", re.IGNORECASE)
 _PRODUCT_EXCLUSION = re.compile(
-    r"\b(?:no|without|avoid|generic|abstract)\s+(?:legible\s+)?(?:branded?\s+)?(?:app|product|logo|ui|brand)\b",
+    r"\b(?:no|without|avoid|generic|abstract)\s+(?:legible\s+)?(?:branded?\s+)?(?:app|product|logo|wordmark|ui|brand)\b",
     re.IGNORECASE,
 )
 
@@ -29,8 +29,8 @@ _CHOICES = {
     "supplied": ("Use a reference the human supplies.",
                  "Human provides the image file, saved under the project folder.",
                  ["<asset>"]),
-    "official": ("Discover official material (brand site or verified app-store listing), save it, and mark it pending review.",
-                 "Human authorizes browsing for official material.",
+    "official": ("Discover official customer brand/product material via Google/web search or verified app-store listing (logos, wordmarks, app icons, UI screenshots, product photos), save under references/official/, and mark pending review.",
+                 "Human authorizes web/App Store research to pull official brand images and guidelines.",
                  ["<asset>", "<source-url>"]),
     "generated_anchor": ("Authorize one paid style/character anchor, generate it, then attach the file as a pending generated reference.",
                          "Human explicitly authorizes the paid generation and its budget. Never choose this silently.",
@@ -136,9 +136,9 @@ DETECTION = {
                       "Only pass --scenes that appear in the gate you are resolving.",
     },
     PRODUCT: {
-        "reads": ["script.scenes[].prompt", "script.scenes[].on_screen_text", "script.scenes[].image_refs",
+        "reads": ["script.scenes[].vo_text", "script.scenes[].prompt", "script.scenes[].on_screen_text", "script.scenes[].image_refs",
                   "script.scenes[].shot_type", "assets.provided[].kind", "reference_decisions[]"],
-        "rule": "A scene is listed when its prompt or on_screen_text contains the word app, product, logo, ui, or brand "
+        "rule": "A scene is listed when its vo_text, prompt, or on_screen_text contains the word app, product, logo, wordmark, ui, or brand "
                 "(not preceded by no/without/avoid/generic/abstract), unless its image_refs include an assets.provided entry of kind product_ref, "
                 "it is a shot_type: broll scene and any product_ref is provided, or a no_reference decision covers it. Brand names alone do not trigger it.",
         "order_note": "Only a product_ref in image_refs or a no_reference decision removes a scene from this gate; a style_ref does not.",
@@ -218,12 +218,13 @@ def open_gates(brief: Brief, folder: str | Path, brief_path: str | Path) -> list
     product = [s.index for s in scenes
                if not product_paths.intersection(s.image_refs) and s.index not in waived
                and not (s.shot_type == "broll" and global_product)
-               and _PRODUCT_TERMS.search(f"{s.prompt} {s.on_screen_text}")
-               and not _PRODUCT_EXCLUSION.search(f"{s.prompt} {s.on_screen_text}")]
+               and _PRODUCT_TERMS.search(f"{s.vo_text} {s.prompt} {s.on_screen_text}")
+               and not _PRODUCT_EXCLUSION.search(f"{s.vo_text} {s.prompt} {s.on_screen_text}")]
     if product:
         gates.append(_gate(brief, folder, brief_path, PRODUCT, "product_scene_missing_official_reference", product,
                            f"Product/brand-dependent scene(s) {_indexes(product)} have no assigned reference. "
-                           "Where does the official logo, product, or UI material come from?"))
+                           "Branded concepts typically need customer branding (official logo, wordmark, app icon, UI screenshots, or product photos). "
+                           "Where does the official logo, product, or UI material come from? If not already supplied in the folder, do Google/web/App Store research (--choice official) to pull official brand assets into references/official/ rather than defaulting to no_reference."))
     return gates
 
 

@@ -46,16 +46,16 @@ p{margin:6px 0;white-space:pre-wrap}
 .ref-list{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start}
 .ref-card{width:112px;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:6px;font-size:11px}
 .ref-card .asset{margin:0;max-width:none;min-width:0}
-.ref-card .asset img{width:100%;height:76px;object-fit:contain;background:#090d0c;border-radius:5px;display:block}
+.ref-card .asset img{width:100%;height:auto;border-radius:5px;display:block}
 .ref-card .asset figcaption{font-size:10px;line-height:1.25;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ref-card .meta{font-size:10px;line-height:1.25;margin:2px 0 0}
 .scene-list{display:flex;flex-direction:column;gap:14px}
-.scene{display:grid;grid-template-columns:200px 1fr;gap:24px;align-items:start;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;break-inside:avoid;scroll-margin-top:16px}
+.scene{display:grid;grid-template-columns:180px 1fr;gap:24px;align-items:start;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;break-inside:avoid;scroll-margin-top:16px}
 .scene-media{display:flex;flex-direction:column;gap:8px;min-width:0}
 .scene-media:has(> :nth-child(2)){flex-direction:row}
 .scene-media:has(> :nth-child(2)) .asset{flex:1}
 .scene-media .asset{margin:0;width:100%;max-width:none;min-width:0}
-.scene-media .asset img,.scene-media .asset video{width:100%;max-height:320px;object-fit:contain;background:#090d0c;border-radius:8px;border:1px solid var(--line);display:block}
+.scene-media .asset img,.scene-media .asset video{width:100%;height:auto;border-radius:8px;border:1px solid var(--line);display:block}
 .scene-media .asset figcaption{font-size:11px;color:var(--muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .scene-body{min-width:0;display:flex;flex-direction:column;gap:10px}
 .scene-head{display:flex;justify-content:space-between;gap:12px;align-items:center;border-bottom:1px solid var(--line);padding-bottom:8px}
@@ -76,7 +76,7 @@ blockquote.vo{font:500 18px/1.42 Georgia,serif;margin:2px 0;padding-left:12px;bo
 .empty{padding:24px 12px;background:#0f1715;border:1px dashed var(--line);border-radius:8px;color:var(--muted);font-size:12px;text-align:center}
 footer{color:var(--muted);font-size:12px;margin-top:32px;padding-top:16px;border-top:1px solid var(--line)}
 @media(max-width:680px){main{padding:20px 14px}.scene{grid-template-columns:1fr}.scene-media{max-width:220px}}
-@media print{@page{size:letter;margin:12mm 14mm}:root{color-scheme:light;--ink:#182c30;--ink-soft:#2c4246;--muted:#52696d;--paper:white;--card:white;--card-alt:#f3f6f5;--line:#d2d9d3}main{padding:0;max-width:none}.page-head{padding-bottom:14px;margin-bottom:14px;break-after:avoid;page-break-after:avoid}.scene,.gate,.refs-panel,.empty{background:white;border-radius:8px}.scene{break-inside:avoid;page-break-inside:avoid;margin-bottom:14px}.badge,.motion_graphic .badge,.animation .badge{background:#e3ecf1;color:#182c30}.gate{break-inside:avoid;page-break-inside:avoid}.refs-panel{break-inside:avoid;page-break-inside:avoid}a{color:#225e65;text-decoration:none}}
+@media print{@page{size:letter;margin:12mm 14mm}:root{color-scheme:light;--ink:#182c30;--ink-soft:#2c4246;--muted:#52696d;--paper:white;--card:white;--card-alt:#f3f6f5;--line:#d2d9d3}main{padding:0;max-width:none}.page-head{padding-bottom:14px;margin-bottom:14px;break-after:avoid;page-break-after:avoid}.scene,.gate,.refs-panel,.empty{background:white;border-radius:8px}.scene{break-inside:avoid;page-break-inside:avoid;margin-bottom:14px}.scene-media:has(.asset img) .asset:has(video){display:none}.badge,.motion_graphic .badge,.animation .badge{background:#e3ecf1;color:#182c30}.gate{break-inside:avoid;page-break-inside:avoid}.refs-panel{break-inside:avoid;page-break-inside:avoid}a{color:#225e65;text-decoration:none}}
 """
 
 
@@ -185,7 +185,11 @@ def _scene_layout_and_composition_advisories(scene) -> list[dict]:
     if scene.resolved_scene_type == "motion_graphic":
         return advisories
     direction = f"{scene.prompt} {scene.motion_prompt or ''}"
-    compound = re.search(r"\b(?:diptych|split[ -]?screen|before[ /-]after|montage|collage)\b", direction, re.IGNORECASE)
+    compound_matches = list(re.finditer(r"\b(?:diptych|split[ -]?screen|before[ /-]after|montage|collage)\b", direction, re.IGNORECASE))
+    compound = any(
+        not re.search(r"\b(?:no|without|avoid|not|never)\b[^.;\n]*$", direction[max(0, m.start() - 60):m.start()], re.IGNORECASE)
+        for m in compound_matches
+    )
     temporal_pair = re.search(r"\b(?:same .{0,80}\bthen\b|turns? .{0,80}\band\b .{0,80}\bwakes?)", direction, re.IGNORECASE)
     if compound or temporal_pair:
         advisories.append({

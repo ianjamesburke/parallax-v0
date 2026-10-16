@@ -108,7 +108,8 @@ def compute_preflight(
         if still_locked:
             still_cost = 0.0
         else:
-            still_cost = resolve(still_alias, kind="image").cost_usd
+            has_refs = bool(s.get("reference_images") or s.get("image_refs"))
+            still_cost = resolve(still_alias, kind="image").cost_usd + (0.01 if has_refs else 0.0)
 
         still_overwrite = (
             not still_locked
@@ -164,7 +165,8 @@ def compute_preflight(
                      idx, clip_alias, duration, clip_locked, clip_overwrite, clip_cost)
 
     # --- Voiceover ---
-    vo_locked = bool(plan.get("audio_path")) or stills_only
+    audio_path_locked = bool(plan.get("audio_path"))
+    vo_locked = audio_path_locked or stills_only
     vo_cost = 0.0
     vo_warnings: list[str] = []
     if not vo_locked:
@@ -177,7 +179,7 @@ def compute_preflight(
 
     # --- Locked-audio warnings ---
     locked_audio_warnings: list[str] = []
-    if vo_locked:
+    if audio_path_locked:
         voice_speed = float(plan.get("voice_speed", 1.0))
         if voice_speed != 1.0:
             locked_audio_warnings.append("voice_speed ignored — audio is locked")

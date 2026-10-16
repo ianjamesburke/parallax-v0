@@ -20,8 +20,8 @@ def image_generate(
     model: str = typer.Option("mid", "--model", help="Model alias (draft/mid/premium or a named alias). Default: mid."),
     aspect: Optional[str] = typer.Option(None, "--aspect", help="Aspect ratio, e.g. '9:16', '16:9', '1:1'. Default: model default."),
     size: Optional[str] = typer.Option(None, "--size", help="Explicit WxH, e.g. '1080x1920'. Overrides --aspect for sizing."),
-    refs: Optional[List[str]] = typer.Option(None, "--ref", metavar="PATH", help="Reference image path (can repeat). Model must support references."),
-    out: Optional[str] = typer.Option(None, "--out", help="Output path. If it ends with a recognized image extension, written to that exact file. Otherwise treated as output directory."),
+    refs: Optional[List[str]] = typer.Option(None, "--ref", "--reference", metavar="PATH", help="Reference image path (can repeat). Model must support references."),
+    out: Optional[str] = typer.Option(None, "--out", "-o", help="Output path. If it ends with a recognized image extension, written to that exact file. Otherwise treated as output directory."),
 ) -> int:
     """Generate one image. Spends money; prints the estimated cost first."""
     return _run_generate(SimpleNamespace(
@@ -77,7 +77,7 @@ def _run_generate(args) -> int:
     if len(refs) >= 2 and args.model != "premium":
         print(
             f"Advisory: multiple reference images work best with --model premium (Gemini 3 Pro).\n"
-            f"Current: {args.model}. Add --hq or --model premium to upgrade.",
+            f"Current: {args.model}. Pass --model premium to upgrade.",
             flush=True,
         )
     try:

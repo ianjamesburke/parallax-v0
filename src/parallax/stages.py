@@ -422,6 +422,9 @@ def _generate_one_still(s: dict[str, Any], settings: Settings, state: PipelineSt
     if not state.assets_dir:
         raise RuntimeError("stage_stills: state.assets_dir is unset; scan_project_folder must run first (an empty path would write into the current directory)")
     canonical = Path(state.assets_dir) / f"scene_{idx:02d}_still.png"
+    if (is_test_mode() or settings.mode == ProductionMode.TEST) and canonical.exists() and not is_mock_asset(canonical):
+        canonical = Path(state.out_dir or state.stills_dir) / f"mock_scene_{idx:02d}_still.png"
+        canonical.parent.mkdir(parents=True, exist_ok=True)
     Path(normalized).rename(canonical)
     if str(normalized) != str(raw_still_path):
         Path(raw_still_path).unlink(missing_ok=True)
@@ -440,7 +443,8 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
     from .settings import VALID_ASPECTS
 
     scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
-    _log(settings, f"generating {len(scenes_raw)} stills — image_model={settings.image_model} aspect={settings.aspect}")
+    still_count = sum(1 for s in scenes_raw if s.get("scene_type") != "motion_graphic")
+    _log(settings, f"generating {still_count} stills — image_model={settings.image_model} aspect={settings.aspect}")
     _warn_unknown_scene_fields(scenes_raw)
     Path(state.stills_dir).mkdir(exist_ok=True)
 
@@ -541,6 +545,9 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
             scene_rt.reference_images = s["reference_images"]
         scenes.append(scene_rt)
 
+    stills_tmp = Path(state.stills_dir)
+    if stills_tmp.is_dir() and not any(stills_tmp.iterdir()):
+        stills_tmp.rmdir()
     state.scenes = scenes
     return plan
 
@@ -601,6 +608,9 @@ def _animate_one_scene(
         size=scene_animate_res,
     )
     canonical = Path(state.assets_dir) / f"scene_{s.index:02d}_animated.mp4"
+    if (is_test_mode() or settings.mode == ProductionMode.TEST) and canonical.exists() and not is_mock_asset(canonical):
+        canonical = Path(state.out_dir or state.video_dir) / f"mock_scene_{s.index:02d}_animated.mp4"
+        canonical.parent.mkdir(parents=True, exist_ok=True)
     Path(raw_clip).rename(canonical)
     _shutil.rmtree(scene_tmp, ignore_errors=True)
     return str(canonical)
@@ -661,6 +671,14 @@ def stage_animate(plan: dict[str, Any], settings: Settings, state: PipelineState
         locked = sum(1 for s in scenes if s.clip_path)
         if locked:
             _log(settings, f"reusing {locked} animated clip(s)")
+
+    if state.aligned:
+        clip_by_idx = {s.index: s.clip_path for s in scenes if s.clip_path}
+        for entry in state.aligned:
+            idx = entry.get("index")
+            if idx in clip_by_idx:
+                entry["clip_path"] = clip_by_idx[idx]
+        state.aligned_json = json.dumps(state.aligned)
     return plan
 
 
@@ -1059,6 +1077,8 @@ def stage_align(plan: dict[str, Any], settings: Settings, state: PipelineState) 
             "words": vo_result["words"],
             "total_duration_s": words_payload["total_duration_s"],
         }, indent=2))
+    from .assembly import _scene_frame_budgets
+    _scene_frame_budgets(aligned)
     return plan
 
 
@@ -1516,11 +1536,11 @@ def _wrap_stage(fn):
 STAGES = [_wrap_stage(s) for s in (
     stage_scan,
     stage_stills,
-    stage_animate,
     stage_voiceover,
     stage_voice_postprocess,
     stage_speed_adjust,
     stage_align,
+    stage_animate,
     stage_manifest,
     stage_assemble,
     stage_captions,

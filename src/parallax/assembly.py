@@ -239,9 +239,18 @@ def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> li
         end_idx = _find_scene_end(words, cursor, plan_words, window_cap=window_cap, freq_map=freq_map)
         if end_idx is None:
             if cursor + content_count > len(words):
-                log.warning("Scene %s: no match and only %d words remain; extending to end",
-                            scene.get("index", "?"), len(words) - cursor)
-                content_count = len(words) - cursor
+                remaining = len(words) - cursor
+                if remaining == 0 and content_count > 0:
+                    log.warning(
+                        "Scene %s: TTS audio ended early (0 words remain in transcript for %d planned words) — "
+                        "the TTS model likely abridged or truncated the script. Switch to `voice_model: tts-gemini` "
+                        "(e.g. `voice: Kore` or `Aoede`) or regenerate voiceover.",
+                        scene.get("index", "?"), content_count,
+                    )
+                else:
+                    log.warning("Scene %s: no match and only %d words remain; extending to end",
+                                scene.get("index", "?"), remaining)
+                content_count = remaining
             if content_count == 0:
                 continue
             end_idx = cursor + content_count - 1
@@ -570,9 +579,15 @@ def _scene_frame_budgets(scenes: list[dict], fps: int = _ASSEMBLY_FPS) -> list[i
 
     for scene, frames in zip(scenes, budgets):
         if frames < 1:
+            vo_words = len((scene.get("vo_text") or "").split())
+            tts_hint = (
+                " (if TTS audio ended early and left trailing scenes with 0.00s, "
+                "switch to `voice_model: tts-gemini` with `voice: Kore` or `Aoede` and regenerate voiceover)"
+                if vo_words >= 2 else ""
+            )
             raise ValueError(
                 f"scene {scene.get('index', '?')}: duration rounds to zero frames "
-                f"at {fps} fps; merge or lengthen this scene"
+                f"at {fps} fps; merge or lengthen this scene{tts_hint}"
             )
     return budgets
 

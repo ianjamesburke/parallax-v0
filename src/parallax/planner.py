@@ -35,10 +35,14 @@ from .brief import Brief
 # order makes diffs across iterations readable.
 _TOP_LEVEL_ORDER = (
     "aspect",
+    "resolution",
+    "animate_resolution",
     "voice",
     "voice_speed",
     "trim_pauses",
     "voice_model",
+    "style",
+    "style_hint",
     "image_model",
     "video_model",
     "caption_style",

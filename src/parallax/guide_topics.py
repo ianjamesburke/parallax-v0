@@ -85,7 +85,7 @@ TOPICS: dict[str, dict] = {
         },
         "tiers": "`draft` / `mid` / `premium` exist per kind; `--hq` on produce selects the premium tier. Named aliases (e.g. grok-image, veo-lite, tts-gemini) come from the catalog.",
         "choose_by": ["the approved references (the model's max reference count and supported inputs)", "output aspect and resolution", "shot duration", "the agreed budget"],
-        "tts": "`tts-gemini` passes inline [emotional] tags (e.g. `[dramatically] Hello.`) to the model, so use it for pacing variation. Other TTS models strip the tags before synthesis.",
+        "tts": "`tts-gemini` uses the dedicated `/audio/speech` endpoint (voices: Kore, Fenrir, Aoede, Sulafat, etc.), reads long multi-scene scripts verbatim without chat-model abridgement, and passes inline [emotional] tags (e.g. `[dramatically] Hello.`) to the model. `tts-mini` (OpenAI chat_audio, voices: nova, alloy, shimmer, etc.) strips tags and is best for short scripts; prefer `voice_model: tts-gemini` with a matching Gemini voice (`Kore`, `Aoede`, etc.) for multi-scene scripts (10+ scenes).",
         "style_fields": "Plan `style` and `style_hint` steer voice synthesis only, not still generation. Put the art style in each executable still prompt.",
         "next": "cost",
     },
