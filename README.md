@@ -126,7 +126,7 @@ No provider calls, no `.parallax` directory, no job or approval state. Assets mu
 
     parallax reference resolve --folder F --brief B --gate editorial-reference --choice supplied --asset refs/style.png
 
-`parallax produce --brief` refuses to start while any gate is open. Advisories for compound generated-image directions (a still is one composition unless `scene_type: motion_graphic` selects a local composite) and unsafe 9:16 copy appear in the manifest, QA notes, and HTML. Simulated-operator proof: `tests/test_drive_parallax.py` with `fixtures/drive-parallax/`.
+`generated_anchor` records the human's paid-generation authorization only; generate the anchor with `parallax image generate`, then attach it with `--asset`. The gate stays open until the file is attached. `parallax produce --brief` refuses to start while any gate is open. Advisories for compound generated-image directions (a still is one composition unless `scene_type: motion_graphic` selects a local composite) and unsafe 9:16 copy appear in the manifest, QA notes, and HTML. Simulated-operator proof: `tests/test_drive_parallax.py` with `fixtures/drive-parallax/`.
 
 ## Vision
 

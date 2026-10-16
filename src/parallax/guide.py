@@ -8,6 +8,43 @@ from __future__ import annotations
 import click
 
 from . import __version__
+from .reference_gates import DETECTION
+
+_BRIEF = {
+    "example": {
+        "goal": "30-second ad for a sleep tracker",
+        "headline": "Wake up sharp",
+        "narration_locked": False,
+        "assets": {"provided": [{"path": "references/style.png", "kind": "style_ref", "description": "look and palette"}]},
+        "script": {"scenes": [
+            {"index": 0, "shot_type": "broll", "scene_type": "still", "vo_text": "You wake up tired.",
+             "prompt": "A person slumped at a kitchen table, morning light", "image_refs": ["references/style.png"]},
+            {"index": 1, "shot_type": "screen", "scene_type": "still", "vo_text": "Your tracker shows why.",
+             "prompt": "The product app on a phone showing a sleep chart", "on_screen_text": "Sleep score\n62 / 100"},
+        ]},
+    },
+    "required": ["goal", "script.scenes[].index", "script.scenes[].vo_text", "script.scenes[].prompt"],
+    "scene_fields": {
+        "shot_type": {
+            "values": ["broll", "character", "screen"],
+            "default": "broll",
+            "meaning": "How production wires global references. character: a provided character_ref is used as the scene reference. broll: a provided product_ref is added to the scene references. screen: no global wiring.",
+        },
+        "scene_type": {
+            "values": ["still", "animation", "motion_graphic"],
+            "default": "still, or animation when animate: true",
+            "meaning": "What is produced. still: one generated image. animation: a still then animated (needs motion_prompt). motion_graphic: a locally rendered clip_path, never AI generated.",
+        },
+        "combinations": "shot_type and scene_type are independent; any pair is valid. scene_type: animation implies animate: true and a motion_prompt.",
+        "on_screen_text": "Review copy, not narration. Keep each line at most 18 characters for 9:16; put a newline between lines.",
+        "narration_locked": "Top-level brief field. true marks the narration as final so pacing advisories are reported as acknowledged.",
+    },
+    "reference_gates": {
+        "detection": DETECTION,
+        "order": "Resolve the product gate before the editorial gate; any image_refs on a scene removes it from the editorial gate. Restructure scenes (splits, merges) before resolving, because gate scene lists follow the brief.",
+        "review_status": "Provided assets start as review_status: pending. Only a human acceptance sets approved, by editing brief.yaml; the CLI never approves.",
+    },
+}
 
 _STAGES = [
     {
@@ -63,7 +100,7 @@ _STAGES = [
             "question": "For each gate: ask the gate's `question`, offering only its `choices` (supplied reference, official-reference discovery, authorized generated anchor, intentional no-reference). Each choice states the human decision it needs.",
             "ask_only_if_unresolved": False,
         },
-        "review_boundary": "Never pick a choice for the human. Never run paid reference generation (`first_run`) without explicit authorization and budget. Generated approximations are not official assets.",
+        "review_boundary": "Never pick a choice for the human. `generated_anchor` records an authorization only; run its `then` generation step (paid) only after the human authorized it, then attach the file. The gate stays open, and produce stays blocked, until the file is attached. Generated approximations are not official assets.",
         "spends_money": False,
         "next": "storyboard_review",
     },
@@ -141,5 +178,6 @@ def build_guide(group: click.Group) -> dict:
             "Open reference gates block `parallax produce --brief`.",
             "Prefer --json outputs and read their fields instead of scraping text.",
         ],
+        "brief": _BRIEF,
         "stages": stages,
     }

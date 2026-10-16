@@ -275,8 +275,7 @@ def test_produce_brief_refuses_while_reference_gate_is_open(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     brief_path = tmp_path / "brief.yaml"
-    _write_brief(brief_path, _brief_payload())
-    _materialize_logo(tmp_path)
+    _write_brief(brief_path, _brief_payload(assets={"provided": []}))
     monkeypatch.setattr(produce_mod, "run_plan", lambda **kw: pytest.fail("no generation while a gate is open"))
 
     rc = cli.main(["produce", "--folder", str(tmp_path), "--brief", str(brief_path)])

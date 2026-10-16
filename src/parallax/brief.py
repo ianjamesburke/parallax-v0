@@ -103,6 +103,7 @@ class ReferenceDecision(BaseModel):
     choice: Literal["supplied", "official", "generated_anchor", "no_reference"]
     scenes: list[int]
     note: str  # no_reference: reason; generated_anchor: who authorized the spend; else provenance
+    asset: str | None = None  # generated_anchor only: None means authorized but not yet generated
 
 
 class GeneratedAsset(BaseModel):
@@ -199,6 +200,8 @@ class Brief(BaseModel):
     # When true, the planner auto-sets `reference: true` on every character scene
     # so the engine uses `character_image` as the reference for still generation.
     character_reference: bool = False
+    # True when the narration text is final: pacing advisories are reported as acknowledged, not as work to do.
+    narration_locked: bool = False
     pronunciations: dict[str, str] = Field(default_factory=dict)
     success_criteria: list[str] = Field(default_factory=list)
     assets: Assets = Field(default_factory=Assets)

@@ -109,20 +109,32 @@ def _script_md(brief: Brief) -> str:
     return "\n".join(lines)
 
 
+def _status(gates: list[dict]) -> str:
+    if not gates:
+        return "ready_for_review"
+    return "awaiting_anchor_generation" if all(g["state"] == "authorized_pending_generation" for g in gates) else "needs_reference_decision"
+
+
 def _qa_notes(manifest: dict) -> str:
     lines = ["# QA notes", "", "These are proposals, not approval. A human reviews the storyboard before generation.", ""]
     lines += ["## Open reference gates", ""]
     for gate in manifest["gates"]:
-        lines += [f"- **{gate['id']}**: {gate['question']}"]
+        lines += [f"- **{gate['id']}** [{gate['state']}]: {gate['question']}"]
+        lines += [f"  - Scene {int(i):02d}: anchor {note}, not yet generated." for i, note in gate.get("authorized_scenes", {}).items()]
         lines += [f"  - `{c['id']}`: {c['summary']} ({c['human_decision']})" for c in gate["choices"]]
     if not manifest["gates"]:
         lines += ["None."]
     lines += ["", "## Scene advisories", ""]
-    lines += [f"- Scene {a['scene']:02d} [{a['kind']}]: {a['message']}" for a in manifest["advisories"]] or ["None."]
+    for a in manifest["advisories"]:
+        lines += [f"- Scene {a['scene']:02d} [{a['kind']}]: {a['message']}"]
+        lines += [f"  - {r['id']}: {r['how']}" for r in a.get("remedies", [])]
+    lines += [] if manifest["advisories"] else ["None."]
     lines += ["", "## Visual variety", ""]
     lines += [f"- {w['message']}" for w in manifest["variety"]] or ["None."]
     lines += ["", "## Opening pacing", ""]
-    lines += [f"- {w['message']}" for w in manifest["pacing_warnings"]] or ["None."]
+    for w in manifest["pacing_warnings"]:
+        lines += [f"- {w['message']}{' (acknowledged: narration is locked)' if w['acknowledged'] else ''}", f"  - remedy: {w['remedy']}"]
+    lines += [] if manifest["pacing_warnings"] else ["None."]
     lines += ["", "## Missing assets", ""]
     lines += [f"- {path}" for path in manifest["missing_assets"]] or ["None."]
     return "\n".join(lines) + "\n"
@@ -149,6 +161,7 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
     (package / "storyboard.html").write_text(render_storyboard(brief, assets, review, link_base=package), encoding="utf-8")
     (package / "references.yaml").write_text(_dump({
         "asset_root": "assets",
+        "review_status_note": "review_status is set to approved by editing brief.yaml after the human accepts the asset. The CLI never approves.",
         "provided": [{**a.model_dump(exclude_none=True), "present": a.path not in missing} for a in brief.assets.provided],
         "decisions": [d.model_dump() for d in brief.reference_decisions],
         "open_gates": [g["id"] for g in review["gates"]],
@@ -170,7 +183,7 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
         "goal": brief.goal,
         "aspect": brief.aspect,
         "scene_count": len(brief.script.scenes),
-        "status": "needs_reference_decision" if review["gates"] else "ready_for_review",
+        "status": _status(review["gates"]),
         "approved": False,
         "requires_parallax": False,
         "provider_calls": 0,
@@ -184,7 +197,7 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
         "variety": review["variety"],
         "pacing_warnings": review["pacing"]["warnings"],
         "next_steps": (
-            [{"step": "answer_gates", "detail": "Ask the human each gate question, run the chosen choice command, then re-run `parallax storyboard`."}]
+            [{"step": "answer_gates", "detail": "Ask the human each gate question, run the chosen choice command, then re-run `parallax storyboard`. A gate in state authorized_pending_generation needs its anchor generated and attached."}]
             if review["gates"] else
             [{"step": "human_review", "detail": "The human reviews storyboard.html and approves or requests changes. Approval is not recorded by the CLI."},
              {"step": "plan", "command": f"parallax plan --folder {root} --brief {brief_path}"}]

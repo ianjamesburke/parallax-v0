@@ -16,10 +16,10 @@ def _resolve_cmd(
     gate: str = typer.Option(..., "--gate", help="Gate id from `parallax storyboard --json` (editorial-reference | product-reference)."),
     choice: str = typer.Option(..., "--choice", help="supplied | official | generated_anchor | no_reference. Allowed choices are listed on the gate."),
     scenes: Optional[str] = typer.Option(None, "--scenes", help="Comma-separated scene indexes to resolve (default: every scene in the gate)."),
-    asset: Optional[str] = typer.Option(None, "--asset", help="Reference file, relative to --folder. Required unless --choice no_reference."),
+    asset: Optional[str] = typer.Option(None, "--asset", help="Reference file, relative to --folder. Required for supplied and official. For generated_anchor, attach the generated file after authorizing; not allowed with no_reference."),
     kind: Optional[str] = typer.Option(None, "--kind", help="style_ref | product_ref | character_ref (default: style_ref for editorial gates, product_ref for product gates)."),
     source_url: Optional[str] = typer.Option(None, "--source-url", help="Page the material came from. Required for --choice official."),
-    authorized_by: Optional[str] = typer.Option(None, "--authorized-by", help="Who authorized the paid generation. Required for --choice generated_anchor."),
+    authorized_by: Optional[str] = typer.Option(None, "--authorized-by", help="Who authorized the paid generation. Required to record a generated_anchor authorization (no --asset yet)."),
     reason: Optional[str] = typer.Option(None, "--reason", help="Why no reference is needed. Required for --choice no_reference."),
 ) -> int:
     """Attach a reference to the gate's scenes (or record a no-reference decision). No provider calls."""

@@ -38,6 +38,7 @@ def _produce_cmd(
     debug: int = typer.Option(0, "--debug", help="Burn debug overlay on every scene: 1=scene index, 2=+prompt, 3=+script and motion. Default: 0 (off)."),
     resolution: Optional[str] = typer.Option(None, "--resolution", help="Override output resolution, e.g. 480x854 or 1080x1920."),
 ) -> int:
+    """Generate stills, narration, and video from a plan or brief. Spends money; refuses while reference gates are open."""
     if plan is None and brief is None:
         typer.echo("Error: one of --plan or --brief is required", err=True)
         return 2
@@ -67,6 +68,7 @@ def _plan_cmd(
     caption_style: str = typer.Option("anton", "--caption-style", help="Caption preset name written into the plan (default: anton)."),
     resolution: Optional[str] = typer.Option(None, "--resolution", help="Set output resolution in the generated plan, e.g. 480x854."),
 ) -> int:
+    """Materialize brief.yaml into plan.yaml. No provider calls."""
     try:
         _validate_resolution(resolution)
     except ValueError as e:
@@ -92,12 +94,13 @@ def _storyboard_cmd(
     except (ValueError, OSError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         return 2
-    manifest = {"package_dir": str(destination.expanduser().resolve()), **manifest}
+    package = destination.expanduser().resolve()
+    manifest = {"package_dir": str(package), "html": str(package / "storyboard.html"), **manifest}
     if as_json:
         typer.echo(json.dumps(manifest, indent=2))
         return 0
     typer.echo(f"Storyboard package: {manifest['package_dir']}")
-    typer.echo(f"Open: {manifest['package_dir']}/storyboard.html")
+    typer.echo(f"Open: {manifest['html']}")
     if manifest["gates"]:
         typer.echo(f"{len(manifest['gates'])} reference gate(s) open; run with --json for choices and commands.")
     typer.echo("Review scene types and direction before generating assets. No provider calls made.")
@@ -111,6 +114,7 @@ def _ingest_cmd(
     estimate: bool = typer.Option(False, "--estimate", help="Dry-run: report duration + cost estimate, no transcription."),
     parallel: int = typer.Option(4, "--parallel", help="Max concurrent transcription workers (default: 4)."),
 ) -> int:
+    """Index existing footage into a searchable JSON with word timestamps."""
     return _run_ingest_command(path, out, visual, estimate, parallel)
 
 

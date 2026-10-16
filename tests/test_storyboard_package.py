@@ -46,6 +46,7 @@ def _project(tmp_path: Path, **extra) -> tuple[Path, Path]:
 
 
 def _storyboard(folder: Path, brief: Path, capsys, *extra) -> dict:
+    capsys.readouterr()  # drop output from earlier commands in the test
     assert cli.main(["storyboard", "--folder", str(folder), "--brief", str(brief), "--json", *extra]) == 0
     return json.loads(capsys.readouterr().out)
 
@@ -64,7 +65,8 @@ def test_package_contains_every_visible_file_and_needs_no_hidden_state(tmp_path,
     assert manifest["contact_sheet_scenes"] == [0]
     assert (package / "brief.yaml").read_bytes() == brief.read_bytes()
     assert manifest["requires_parallax"] is False and manifest["provider_calls"] == 0 and manifest["approved"] is False
-    assert json.loads((package / "handoff.json").read_text()) == {k: v for k, v in manifest.items() if k != "package_dir"}
+    assert json.loads((package / "handoff.json").read_text()) == {k: v for k, v in manifest.items() if k not in {"package_dir", "html"}}
+    assert manifest["html"] == str(package / "storyboard.html") and Path(manifest["html"]).is_file()
     script = (package / "script.md").read_text()
     assert "Wake up sharp" in script and "One two three." in script
     scenes = yaml.safe_load((package / "scenes.yaml").read_text())
@@ -132,7 +134,11 @@ def test_gates_carry_question_choices_and_exact_commands(tmp_path, capsys):
             assert argv[argv.index("--brief") + 1] == str(brief)
             assert choice["human_decision"] and choice["fill"]
     generated = next(c for c in editorial["choices"] if c["id"] == "generated_anchor")
-    assert generated["first_run"].startswith("parallax image generate") and "explicitly authorizes" in generated["human_decision"]
+    assert "--authorized-by" in generated["command"] and "--asset" not in generated["command"]
+    assert generated["then"][0].startswith("parallax image generate") and "--asset <asset>" in generated["then"][1]
+    assert "explicitly authorizes" in generated["human_decision"] and editorial["state"] == "open"
+    assert {"reads", "rule", "order_note"} <= set(editorial["detection"]) and "image_refs" in editorial["detection"]["rule"]
+    assert "product_ref" in product["detection"]["order_note"]
 
 
 def test_scene_gate_commands_resolve_through_the_cli(tmp_path, capsys):
@@ -220,3 +226,105 @@ def test_unsafe_vertical_text_is_flagged_in_manifest(tmp_path, capsys):
     brief.write_text(yaml.safe_dump(data))
     advisories = _storyboard(folder, brief, capsys)["advisories"]
     assert any(a["kind"] == "unsafe_vertical_text" and a["scene"] == 1 for a in advisories)
+
+
+def _resolve(folder, brief, *flags):
+    return cli.main(["reference", "resolve", "--folder", str(folder), "--brief", str(brief), *flags])
+
+
+def test_generated_anchor_records_authorization_then_attaches_the_file(tmp_path, capsys):
+    folder, brief = _project(tmp_path)
+    assert _resolve(folder, brief, "--gate", "editorial-reference", "--choice", "generated_anchor",
+                    "--authorized-by", "Ian, $0.05 cap") == 0
+    capsys.readouterr()
+    manifest = _storyboard(folder, brief, capsys)
+    gate = next(g for g in manifest["gates"] if g["id"] == "editorial-reference")
+    assert gate["state"] == "authorized_pending_generation" and gate["authorized_scenes"]["0"] == "authorized by Ian, $0.05 cap"
+    choice = next(c for c in gate["choices"] if c["id"] == "generated_anchor")
+    assert "--asset <asset>" in choice["command"] and "--authorized-by" not in choice["command"]
+    assert "not yet generated" in (Path(manifest["package_dir"]) / "qa-notes.md").read_text()
+    assert Brief.from_yaml(brief).script.scenes[0].image_refs == [], "authorization alone attaches nothing"
+    assert _resolve(folder, brief, "--gate", "editorial-reference", "--choice", "generated_anchor", "--authorized-by", "x") == 2
+    assert "already have an authorized" in capsys.readouterr().err
+    _resolve(folder, brief, "--gate", "product-reference", "--choice", "no_reference", "--reason", "placeholder")
+    assert _storyboard(folder, brief, capsys)["status"] == "awaiting_anchor_generation"
+
+    _png(folder / "refs/anchor.png")
+    assert _resolve(folder, brief, "--gate", "editorial-reference", "--choice", "generated_anchor", "--asset", "refs/anchor.png") == 0
+    resolved = Brief.from_yaml(brief)
+    decision = next(d for d in resolved.reference_decisions if d.choice == "generated_anchor")
+    assert decision.asset == "refs/anchor.png" and decision.note == "authorized by Ian, $0.05 cap"
+    assert len([d for d in resolved.reference_decisions if d.choice == "generated_anchor"]) == 1
+    assert resolved.assets.provided[0].origin == "generated" and resolved.script.scenes[0].image_refs == ["refs/anchor.png"]
+    assert _storyboard(folder, brief, capsys)["status"] == "ready_for_review"
+
+
+def test_pending_anchor_still_blocks_produce_and_attach_needs_prior_authorization(tmp_path, capsys, monkeypatch):
+    from parallax import produce as produce_mod
+    folder, brief = _project(tmp_path)
+    _resolve(folder, brief, "--gate", "editorial-reference", "--choice", "generated_anchor", "--authorized-by", "Ian")
+    monkeypatch.setattr(produce_mod, "run_plan", lambda **kw: pytest.fail("produce must not run while an anchor is ungenerated"))
+    assert cli.main(["produce", "--folder", str(folder), "--brief", str(brief)]) == 1
+    assert "editorial-reference" in capsys.readouterr().err
+    other, other_brief = _project(tmp_path / "other")
+    _png(other / "refs/a.png")
+    assert _resolve(other, other_brief, "--gate", "editorial-reference", "--choice", "generated_anchor", "--asset", "refs/a.png") == 2
+    assert "--authorized-by is required" in capsys.readouterr().err
+
+
+def _scenes_brief(tmp_path, scenes, **top):
+    brief = tmp_path / "brief.yaml"
+    brief.write_text(yaml.safe_dump({"goal": "g", **top, "script": {"scenes": [
+        {"vo_text": "word", "prompt": "plain desk", **s, "index": i} for i, s in enumerate(scenes)]}}))
+    return brief
+
+
+def _gate_scenes(folder, brief, capsys):
+    return {g["id"]: g["scenes"] for g in _storyboard(folder, brief, capsys)["gates"]}
+
+
+def test_detector_mirrors_production_wiring(tmp_path, capsys):
+    scenes = [{"shot_type": "character"}, {"shot_type": "broll"}, {"shot_type": "screen"}]
+    brief = _scenes_brief(tmp_path, scenes)
+    assert _gate_scenes(tmp_path, brief, capsys) == {"editorial-reference": [0, 1, 2]}
+    brief = _scenes_brief(tmp_path, scenes, assets={"provided": [{"path": "s.png", "kind": "style_ref"}]})
+    _png(tmp_path / "s.png")
+    assert _gate_scenes(tmp_path, brief, capsys) == {"editorial-reference": [0, 1, 2]}, "a global style_ref covers nothing"
+    brief = _scenes_brief(tmp_path, scenes, assets={"provided": [{"path": "c.png", "kind": "character_ref"}]})
+    _png(tmp_path / "c.png")
+    assert _gate_scenes(tmp_path, brief, capsys) == {"editorial-reference": [1, 2]}, "character_ref covers shot_type character"
+    brief = _scenes_brief(tmp_path, scenes, assets={"provided": [{"path": "p.png", "kind": "product_ref"}]})
+    _png(tmp_path / "p.png")
+    assert _gate_scenes(tmp_path, brief, capsys) == {"editorial-reference": [0, 2]}, "product_ref covers shot_type broll"
+
+
+def test_product_gate_reads_prompt_words_not_shot_type_or_brand_names(tmp_path, capsys):
+    brief = _scenes_brief(tmp_path, [{"shot_type": "screen", "prompt": "TallyLeaf dashboard"},
+                                      {"prompt": "the app home screen"}], assets={"provided": []})
+    assert _gate_scenes(tmp_path, brief, capsys)["product-reference"] == [1]
+
+
+def test_advisories_carry_numeric_threshold_and_machine_readable_remedies(tmp_path, capsys):
+    brief = _scenes_brief(tmp_path, [
+        {"prompt": "Before/after split screen", "on_screen_text": "Fuel your morning with CrunchO."},
+        {"on_screen_text": "Fuel your morning\nwith CrunchO."},
+    ])
+    advisories = _storyboard(tmp_path, brief, capsys)["advisories"]
+    unsafe = [a for a in advisories if a["kind"] == "unsafe_vertical_text"]
+    assert [a["scene"] for a in unsafe] == [0]
+    assert unsafe[0]["threshold"] == {"max_chars_per_line": 18, "longest_line_chars": 31}
+    assert {r["id"] for r in unsafe[0]["remedies"]} == {"wrap", "shorten"}
+    compound = next(a for a in advisories if a["kind"] == "compound_direction")
+    remedies = {r["id"]: r for r in compound["remedies"]}
+    assert set(remedies) == {"representative_frame", "split_scenes", "motion_graphic"}
+    assert "exactly" in remedies["split_scenes"]["how"] and remedies["split_scenes"]["narration"] == "distribute_verbatim"
+
+
+def test_pacing_warnings_have_remedies_and_locked_narration_acknowledges_them(tmp_path, capsys):
+    scenes = [{"vo_text": "one two three four five six seven eight", "image_refs": ["s.png"]}]
+    _png(tmp_path / "s.png")
+    open_ = _storyboard(tmp_path, _scenes_brief(tmp_path, scenes), capsys)["pacing_warnings"]
+    assert open_ and all(w["remedy"] and w["acknowledged"] is False for w in open_)
+    locked = _storyboard(tmp_path, _scenes_brief(tmp_path, scenes, narration_locked=True), capsys)["pacing_warnings"]
+    assert [w["code"] for w in locked] == [w["code"] for w in open_] and all(w["acknowledged"] for w in locked)
+    assert "acknowledged" in (tmp_path / "storyboard-package/qa-notes.md").read_text()

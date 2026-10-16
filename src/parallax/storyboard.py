@@ -116,6 +116,9 @@ def _variety_warnings(brief: Brief) -> list[dict]:
     return warnings
 
 
+SAFE_LINE_CHARS = 18  # longest on_screen_text line judged safe at 9:16 title size; a heuristic, not a measured layout
+
+
 def _scene_layout_and_composition_advisories(scene) -> list[dict]:
     """Catch likely overflow and multi-frame still directions before image work.
 
@@ -125,16 +128,42 @@ def _scene_layout_and_composition_advisories(scene) -> list[dict]:
     """
     advisories: list[dict] = []
     copy_lines = scene.on_screen_text.splitlines() if scene.on_screen_text else []
-    if any(len(line.strip()) > 18 for line in copy_lines):
-        advisories.append({"kind": "unsafe_vertical_text", "message": "On-screen copy has a line longer than the 9:16 safe-layout heuristic. Wrap, shorten, or test it in the actual graphic template before approving."})
+    longest = max((len(line.strip()) for line in copy_lines), default=0)
+    if longest > SAFE_LINE_CHARS:
+        advisories.append({
+            "kind": "unsafe_vertical_text",
+            "message": f"On-screen copy has a line of {longest} characters; the 9:16 safe-layout heuristic is {SAFE_LINE_CHARS} per line. Wrap, shorten, or test it in the actual graphic template before approving.",
+            "threshold": {"max_chars_per_line": SAFE_LINE_CHARS, "longest_line_chars": longest},
+            "remedies": [
+                {"id": "wrap", "how": "Put a newline in on_screen_text (YAML `|` block) so every line is at most the threshold. Each line is measured separately."},
+                {"id": "shorten", "how": "Shorten the copy. on_screen_text is review copy, not narration, so editing it does not change the script."},
+            ],
+        })
     if scene.resolved_scene_type == "motion_graphic":
         return advisories
     direction = f"{scene.prompt} {scene.motion_prompt or ''}"
     compound = re.search(r"\b(?:diptych|split[ -]?screen|before[ /-]after|montage|collage)\b", direction, re.IGNORECASE)
     temporal_pair = re.search(r"\b(?:same .{0,80}\bthen\b|turns? .{0,80}\band\b .{0,80}\bwakes?)", direction, re.IGNORECASE)
     if compound or temporal_pair:
-        advisories.append({"kind": "compound_direction", "message": "Compound visual direction. Choose one representative generated frame, split it into separate scenes, or specify a deliberate code-authored multi-panel graphic (scene_type: motion_graphic); do not ask a single image generation to depict multiple scenes or moments."})
+        advisories.append({
+            "kind": "compound_direction",
+            "message": "Compound visual direction. Choose one representative generated frame, split it into separate scenes, or specify a deliberate code-authored multi-panel graphic (scene_type: motion_graphic); do not ask a single image generation to depict multiple scenes or moments.",
+            "remedies": [
+                {"id": "representative_frame", "how": "Rewrite prompt as one composition, e.g. the single most telling moment. Narration is unchanged."},
+                {"id": "split_scenes", "how": "Replace the scene with several scenes, each with one composition. Distribute the original vo_text across them in order at word boundaries; "
+                                               "the concatenated vo_text must equal the original narration exactly. Sharing one narration span between scenes (empty vo_text) is not supported in a brief: BriefScene has no duration field and alignment assigns scene boundaries from vo_text words.",
+                 "narration": "distribute_verbatim"},
+                {"id": "motion_graphic", "how": "Set scene_type: motion_graphic and supply a locally rendered clip_path before production. No AI generation is used; the panel layout itself is not defined by Parallax."},
+            ],
+        })
     return advisories
+
+
+_PACING_REMEDIES = {
+    "opening_long_hold": "Split the scene at a word boundary into shots of at most 3s, distributing vo_text verbatim; or keep it and show a clear change of action inside the shot.",
+    "opening_few_cuts": "Add scene boundaries inside the first 6s by distributing vo_text across more scenes at word boundaries; or accept it when the opening is one deliberate continuous action.",
+    "opening_delayed_first_word": "After narration exists, remove verified leading quiet with `parallax audio trim-leading-quiet --first-word-by 0.1`.",
+}
 
 
 def _resolve_timeline(brief: Brief, timeline: list[dict] | None) -> tuple[list[dict], str]:
@@ -149,6 +178,12 @@ def _resolve_timeline(brief: Brief, timeline: list[dict] | None) -> tuple[list[d
             raise ValueError("storyboard timing must contain finite, positive, contiguous scene intervals starting at zero")
         previous_end = end
     return timeline, "supplied aligned timeline"
+
+
+def _pacing_with_remedies(pacing: dict, narration_locked: bool) -> dict:
+    """Attach a remedy to each warning; with locked narration they are acknowledged, not action items."""
+    warnings = [{**w, "remedy": _PACING_REMEDIES[w["code"]], "acknowledged": narration_locked} for w in pacing["warnings"]]
+    return {**pacing, "warnings": warnings}
 
 
 def review_storyboard(brief: Brief, folder: str | Path, brief_path: str | Path, timeline: list[dict] | None = None) -> dict:
@@ -176,7 +211,8 @@ def review_storyboard(brief: Brief, folder: str | Path, brief_path: str | Path, 
         "timeline": timeline,
         "timing_basis": timing_basis,
         "supplied_timing": supplied_timing,
-        "pacing": review_opening_pacing(timeline, timing_basis, first_word_start_s=first_word_start),
+        "pacing": _pacing_with_remedies(
+            review_opening_pacing(timeline, timing_basis, first_word_start_s=first_word_start), brief.narration_locked),
         "gates": gates,
         "variety": _variety_warnings(brief),
         "scene_advisories": scene_advisories,
