@@ -12,6 +12,13 @@ VISUAL_REVIEW_PROMPTS = [
 ]
 
 
+REMEDIES = {
+    "opening_long_hold": ("split_or_vary_action", "Split the scene at a word boundary into shots of at most 3s, distributing vo_text verbatim; or keep it and show a clear change of action inside the shot."),
+    "opening_few_cuts": ("add_cuts_or_accept", "Add scene boundaries inside the first 6s by distributing vo_text across more scenes at word boundaries; or accept it when the opening is one deliberate continuous action."),
+    "opening_delayed_first_word": ("trim_leading_quiet", "After narration exists, remove verified leading quiet with `parallax audio trim-leading-quiet --first-word-by 0.1`."),
+}
+
+
 def estimate_timeline(scenes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
     """Project explicit durations or 150 wpm reading estimates, never production timing."""
     timeline = []
@@ -62,5 +69,6 @@ def review_opening_pacing(scenes: list[dict[str, Any]], timing_basis: str, first
             "timing_basis": timing_basis,
             "message": f"Only {cuts} scene cut(s) before 6s. For a social opening, review roughly 3–4 visual changes (at least 3 cuts / 4 shots); action within a shot may satisfy the creative intent.",
         })
+    warnings = [{**w, "remedies": [dict(zip(("id", "how"), REMEDIES[w["code"]]))]} for w in warnings]
     return {"timing_basis": timing_basis, "cuts_before_6s": cuts,
             "warnings": warnings, "visual_review_prompts": list(VISUAL_REVIEW_PROMPTS)}

@@ -76,6 +76,8 @@ class ProvidedAsset(BaseModel):
     kind: Literal["style_ref", "product_ref", "character_ref"]
     description: str | None = None
     source_url: str | None = None
+    # None: global wiring (planner uses it for every matching scene). A list: used only for these scenes, via image_refs.
+    scene_scope: list[int] | None = None
     origin: Literal["supplied", "generated", "official"] = "supplied"
     review_status: Literal["pending", "approved"] = "pending"
 
@@ -200,7 +202,7 @@ class Brief(BaseModel):
     # When true, the planner auto-sets `reference: true` on every character scene
     # so the engine uses `character_image` as the reference for still generation.
     character_reference: bool = False
-    # True when the narration text is final: pacing advisories are reported as acknowledged, not as work to do.
+    # True when the narration text is final: pacing advisories are flagged locked_by_narration. They still stand.
     narration_locked: bool = False
     pronunciations: dict[str, str] = Field(default_factory=dict)
     success_criteria: list[str] = Field(default_factory=list)

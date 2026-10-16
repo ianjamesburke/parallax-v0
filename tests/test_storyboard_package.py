@@ -178,7 +178,8 @@ def test_resolution_edits_only_the_intended_keys(tmp_path, capsys):
     assert after["script"]["scenes"][0] == before["script"]["scenes"][0]
     assert after["script"]["scenes"][1] == {**before["script"]["scenes"][1], "image_refs": ["refs/logo.png"]}
     assert after["assets"]["provided"] == [{"path": "refs/logo.png", "kind": "product_ref", "origin": "official",
-                                            "review_status": "pending", "source_url": "https://example.com/press"}]
+                                            "review_status": "pending", "scene_scope": [1],
+                                            "source_url": "https://example.com/press"}]
 
 
 @pytest.mark.parametrize("flags, message", [
@@ -337,11 +338,11 @@ def test_pacing_advisories_have_remedies_and_locked_narration_acknowledges_them(
     _png(tmp_path / "s.png")
     manifest = _storyboard(tmp_path, _scenes_brief(tmp_path, scenes), capsys)
     open_ = _pacing(manifest)
-    assert open_ and all(w["remedies"][0]["how"] and w["acknowledged"] is False for w in open_)
+    assert open_ and all(w["remedies"][0]["how"] and w["locked_by_narration"] is False for w in open_)
     assert "pacing_warnings" not in manifest and "variety" not in manifest
     locked = _pacing(_storyboard(tmp_path, _scenes_brief(tmp_path, scenes, narration_locked=True), capsys))
-    assert [w["kind"] for w in locked] == [w["kind"] for w in open_] and all(w["acknowledged"] for w in locked)
-    assert "acknowledged" in (tmp_path / "storyboard-package/qa-notes.md").read_text()
+    assert [w["kind"] for w in locked] == [w["kind"] for w in open_] and all(w["locked_by_narration"] for w in locked)
+    assert "locked_by_narration" in (tmp_path / "storyboard-package/qa-notes.md").read_text()
 
 
 def test_package_files_carry_no_machine_paths_and_commands_use_placeholders(tmp_path, capsys):
@@ -434,3 +435,37 @@ def test_check_previews_gates_without_writing_a_package(tmp_path, capsys):
     assert {g["id"] for g in checked["gates"]} == {"editorial-reference", "product-reference"}
     assert not (folder / "storyboard-package").exists()
     assert cli.main(["storyboard", "--folder", str(folder), "--brief", str(tmp_path / "absent.yaml"), "--check"]) == 2
+
+
+def test_scene_scoped_product_answer_does_not_cover_other_scenes(tmp_path, capsys):
+    scenes = [{"shot_type": "broll", "prompt": "person at a desk"}, {"shot_type": "screen", "prompt": "the app on a phone"},
+              {"shot_type": "screen", "prompt": "the app dashboard"}, {"shot_type": "broll", "prompt": "walking outside"}]
+    brief = _scenes_brief(tmp_path, scenes)
+    _png(tmp_path / "refs/app.png")
+    capsys.readouterr()
+    assert _resolve(tmp_path, brief, "--gate", "product-reference", "--choice", "supplied", "--asset", "refs/app.png", "--scenes", "1,2") == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["scenes_newly_covered"] == [1, 2]
+    assert result["scenes_still_open"] == {"0": ["editorial-reference"], "3": ["editorial-reference"]}
+    assert result["open_gates"] == [{"id": "editorial-reference", "state": "open", "scenes": [0, 3]}]
+    resolved = Brief.from_yaml(brief)
+    assert resolved.assets.provided[0].scene_scope == [1, 2]
+    assert [s.image_refs for s in resolved.script.scenes] == [[], ["refs/app.png"], ["refs/app.png"], []]
+    assert _gate_scenes(tmp_path, brief, capsys) == {"editorial-reference": [0, 3]}
+    from parallax.planner import plan_from_brief
+    plan = yaml.safe_load(plan_from_brief(brief, tmp_path).plan_path.read_text())
+    assert "product_image" not in plan, "a scoped answer must not become global production wiring"
+
+
+def test_hand_authored_global_product_ref_still_covers_broll(tmp_path, capsys):
+    _png(tmp_path / "p.png")
+    brief = _scenes_brief(tmp_path, [{"shot_type": "broll"}], assets={"provided": [{"path": "p.png", "kind": "product_ref"}]})
+    assert _gate_scenes(tmp_path, brief, capsys) == {}
+
+
+def test_validate_pacing_warnings_carry_remedies(tmp_path, capsys):
+    brief = _scenes_brief(tmp_path, [{"vo_text": "one two three four five six seven eight", "image_refs": ["s.png"]}], narration_locked=True)
+    assert cli.main(["validate", "--folder", str(tmp_path), "--brief", str(brief)]) in (0, 1)
+    warnings = json.loads(capsys.readouterr().out)["warnings"]
+    pacing = [w for w in warnings if w["code"].startswith("opening_")]
+    assert pacing and all(w["remedies"][0]["how"] and w["locked_by_narration"] is True for w in pacing)

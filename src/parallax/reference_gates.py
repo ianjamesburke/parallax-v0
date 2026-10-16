@@ -62,7 +62,8 @@ def _authorized(brief: Brief, gate: str) -> dict[int, str]:
 
 
 def _kinds(brief: Brief) -> set[str]:
-    return {a.kind for a in brief.assets.provided}
+    """Kinds of globally wired assets; scene-scoped assets never cover other scenes."""
+    return {a.kind for a in brief.assets.provided if a.scene_scope is None}
 
 
 def _referenced(brief: Brief, scene) -> bool:
@@ -181,9 +182,10 @@ def open_gates(brief: Brief, folder: str | Path, brief_path: str | Path) -> list
                            f"({_indexes(editorial)}). {note} How should their look be anchored before paid still generation?"))
     waived = _waived(brief, PRODUCT)
     product_paths = {a.path for a in brief.assets.provided if a.kind == "product_ref"}
+    global_product = "product_ref" in _kinds(brief)
     product = [s.index for s in scenes
                if not product_paths.intersection(s.image_refs) and s.index not in waived
-               and not (s.shot_type == "broll" and product_paths)
+               and not (s.shot_type == "broll" and global_product)
                and _PRODUCT_TERMS.search(f"{s.prompt} {s.on_screen_text}")
                and not _PRODUCT_EXCLUSION.search(f"{s.prompt} {s.on_screen_text}")]
     if product:
@@ -246,13 +248,17 @@ def resolve_gate(
     if choice != "no_reference" and not authorization_only:
         origin = {"supplied": "supplied", "official": "official", "generated_anchor": "generated"}[choice]
         provided = doc.setdefault("assets", {}).setdefault("provided", [])
-        if not any(a.get("path") == asset for a in provided):
-            entry = {"path": asset, "kind": kind or _DEFAULT_KIND[gate_id], "origin": origin, "review_status": "pending"}
+        existing = next((a for a in provided if a.get("path") == asset), None)
+        if existing is None:
+            entry = {"path": asset, "kind": kind or _DEFAULT_KIND[gate_id], "origin": origin, "review_status": "pending",
+                     "scene_scope": sorted(targets)}
             if source_url:
                 entry["source_url"] = source_url
             provided.append(entry)
+        elif existing.get("scene_scope") is not None:
+            existing["scene_scope"] = sorted(set(existing["scene_scope"]) | set(targets))
         for scene in doc["script"]["scenes"]:
-            if scene["index"] in targets:
+            if scene["index"] in targets and asset not in scene.get("image_refs", []):
                 scene.setdefault("image_refs", []).append(asset)
     if choice == "generated_anchor" and asset and pending:
         for decision in doc["reference_decisions"]:
@@ -274,8 +280,19 @@ def resolve_gate(
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
-    remaining = [g["id"] for g in open_gates(Brief.from_yaml(brief_path), root, brief_path)]
-    return {"gate": gate_id, "choice": choice, "scenes": list(targets), "brief": str(brief_path), "open_gates": remaining}
+    remaining = open_gates(Brief.from_yaml(brief_path), root, brief_path)
+    still_open: dict[int, list[str]] = {}
+    for gate in remaining:
+        for index in gate["scenes"]:
+            still_open.setdefault(index, []).append(gate["id"])
+    covered = sorted(index for index in targets if gate_id not in still_open.get(index, []))
+    return {
+        "gate": gate_id, "choice": choice, "brief": str(brief_path),
+        "scenes_requested": list(targets),
+        "scenes_newly_covered": covered,
+        "scenes_still_open": {str(i): ids for i, ids in sorted(still_open.items())},
+        "open_gates": [{"id": g["id"], "state": g["state"], "scenes": g["scenes"]} for g in remaining],
+    }
 
 
 def _plain(node):

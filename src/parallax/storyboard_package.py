@@ -128,7 +128,7 @@ def _qa_notes(manifest: dict) -> str:
     lines += ["", "## Advisories (non-blocking; a human decides)", ""]
     for a in manifest["advisories"]:
         where = f"Scene {a['scene']:02d}" if a["scene"] is not None else "Storyboard"
-        lines += [f"- {where} [{a['kind']}]: {a['message']}{' (acknowledged: narration is locked)' if a.get('acknowledged') else ''}"]
+        lines += [f"- {where} [{a['kind']}]: {a['message']}{' (locked_by_narration: narration is final, so the fix is visual; the advisory still stands)' if a.get('locked_by_narration') else ''}"]
         lines += [f"  - {r['id']}: {r['how']}" for r in a.get("remedies", [])]
     lines += [] if manifest["advisories"] else ["None."]
     lines += ["", "## Missing assets", ""]
@@ -140,7 +140,7 @@ def _advisories(review: dict) -> list[dict]:
     """One vocabulary for everything non-blocking: scene advisories, pacing, and visual variety."""
     scene = [{"scene": index, **a} for index, items in review["scene_advisories"].items() for a in items]
     pacing = [{"scene": w.get("scene_index"), "kind": w["code"], "message": w["message"], "remedies": w["remedies"],
-               "acknowledged": w["acknowledged"]} for w in review["pacing"]["warnings"]]
+               "locked_by_narration": w["locked_by_narration"]} for w in review["pacing"]["warnings"]]
     variety = [{"scene": None, **w} for w in review["variety"]]
     return scene + pacing + variety
 

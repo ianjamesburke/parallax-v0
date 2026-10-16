@@ -159,13 +159,6 @@ def _scene_layout_and_composition_advisories(scene) -> list[dict]:
     return advisories
 
 
-_PACING_REMEDIES = {
-    "opening_long_hold": ("split_or_vary_action", "Split the scene at a word boundary into shots of at most 3s, distributing vo_text verbatim; or keep it and show a clear change of action inside the shot."),
-    "opening_few_cuts": ("add_cuts_or_accept", "Add scene boundaries inside the first 6s by distributing vo_text across more scenes at word boundaries; or accept it when the opening is one deliberate continuous action."),
-    "opening_delayed_first_word": ("trim_leading_quiet", "After narration exists, remove verified leading quiet with `parallax audio trim-leading-quiet --first-word-by 0.1`."),
-}
-
-
 def _resolve_timeline(brief: Brief, timeline: list[dict] | None) -> tuple[list[dict], str]:
     if timeline is None:
         return estimate_timeline([scene.model_dump() for scene in brief.script.scenes])
@@ -180,11 +173,9 @@ def _resolve_timeline(brief: Brief, timeline: list[dict] | None) -> tuple[list[d
     return timeline, "supplied aligned timeline"
 
 
-def _pacing_with_remedies(pacing: dict, narration_locked: bool) -> dict:
-    """Attach a remedy to each warning; with locked narration they are acknowledged, not action items."""
-    warnings = [{**w, "remedies": [dict(zip(("id", "how"), _PACING_REMEDIES[w["code"]]))], "acknowledged": narration_locked}
-                for w in pacing["warnings"]]
-    return {**pacing, "warnings": warnings}
+def _pacing_with_lock(pacing: dict, narration_locked: bool) -> dict:
+    """Mark each warning with whether the brief declares the narration final. The warning still stands."""
+    return {**pacing, "warnings": [{**w, "locked_by_narration": narration_locked} for w in pacing["warnings"]]}
 
 
 def review_storyboard(brief: Brief, folder: str | Path, brief_path: str | Path, timeline: list[dict] | None = None) -> dict:
@@ -215,7 +206,7 @@ def review_storyboard(brief: Brief, folder: str | Path, brief_path: str | Path, 
         "timeline": timeline,
         "timing_basis": timing_basis,
         "supplied_timing": supplied_timing,
-        "pacing": _pacing_with_remedies(
+        "pacing": _pacing_with_lock(
             review_opening_pacing(timeline, timing_basis, first_word_start_s=first_word_start), brief.narration_locked),
         "gates": gates,
         "variety": _variety_warnings(brief),

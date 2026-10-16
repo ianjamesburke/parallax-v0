@@ -62,6 +62,7 @@ def validate_brief(brief_path: str | Path, folder: str | Path) -> dict:
     from .pacing import estimate_timeline, review_opening_pacing
     timeline, basis = estimate_timeline([scene.model_dump() for scene in brief.script.scenes])
     pacing = review_opening_pacing(timeline, basis)
+    pacing = {**pacing, "warnings": [{**w, "locked_by_narration": brief.narration_locked} for w in pacing["warnings"]]}
     warnings.extend(pacing["warnings"])
     return {**_result(errors, warnings), "opening_pacing": pacing}
 

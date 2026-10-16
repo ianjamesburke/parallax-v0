@@ -37,11 +37,11 @@ _BRIEF = {
         },
         "combinations": "shot_type and scene_type are independent; any pair is valid. scene_type: animation implies animate: true and a motion_prompt.",
         "on_screen_text": "Review copy, not narration. Keep each line at most 18 characters for 9:16; put a newline between lines.",
-        "narration_locked": "Top-level brief field. true marks the narration as final so pacing advisories are reported as acknowledged.",
+        "narration_locked": "Top-level brief field. true marks the narration as final: pacing advisories get locked_by_narration: true. They are not resolved; fix them visually (split or vary action inside shots).",
     },
     "vocabulary": {
         "gate": "A blocking decision a human must answer. Listed in storyboard `gates`; blocks `produce`, not review.",
-        "advisory": "A non-blocking finding a human weighs. Everything non-blocking is in storyboard `advisories`: per-scene advisories, opening pacing, and visual variety. Each has `kind`, `scene` (null for the whole storyboard), `message`, and `remedies`; pacing items add `acknowledged`.",
+        "advisory": "A non-blocking finding a human weighs. Everything non-blocking is in storyboard `advisories`: per-scene advisories, opening pacing, and visual variety. Each has `kind`, `scene` (null for the whole storyboard), `message`, and `remedies`; pacing items add `locked_by_narration` (the brief declares narration final; the advisory still stands, the fix is visual).",
         "validate": "`parallax validate` calls its non-blocking findings `warnings`. Pacing items use the same identifier: validate `code` equals storyboard advisory `kind` (opening_long_hold, opening_few_cuts, opening_delayed_first_word).",
     },
     "script_mapping": {
@@ -56,6 +56,7 @@ _BRIEF = {
     "reference_gates": {
         "detection": DETECTION,
         "order": "Resolve the product gate before the editorial gate; any image_refs on a scene removes it from the editorial gate. Restructure scenes (splits, merges) before resolving, because gate scene lists follow the brief.",
+        "scoping": "`reference resolve` is scene-scoped: it adds the file to image_refs of the named scenes only and records the asset with scene_scope, so it never becomes global wiring. A hand-authored assets.provided entry with no scene_scope is global: a character_ref covers every shot_type: character scene and a product_ref every shot_type: broll scene.",
         "review_status": "Provided assets start as review_status: pending. Only a human acceptance sets approved, by editing brief.yaml; the CLI never approves.",
     },
 }

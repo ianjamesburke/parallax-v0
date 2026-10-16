@@ -85,7 +85,7 @@ def _first_character_ref(brief: Brief, folder: Path) -> str | None:
     relative asset path to an absolute on-disk location.
     """
     for asset in brief.assets.provided:
-        if asset.kind == "character_ref":
+        if asset.kind == "character_ref" and asset.scene_scope is None:
             return str(_resolve_provided_path(folder, asset.path))
     return None
 
@@ -95,7 +95,7 @@ def _first_product_ref(brief: Brief, folder: Path) -> str | None:
     asset, or None if the brief has none.
     """
     for asset in brief.assets.provided:
-        if asset.kind == "product_ref":
+        if asset.kind == "product_ref" and asset.scene_scope is None:
             return str(_resolve_provided_path(folder, asset.path))
     return None
 
