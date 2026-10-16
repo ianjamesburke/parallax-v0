@@ -37,7 +37,7 @@ def _produce_cmd(
     debug: int = typer.Option(0, "--debug", help="Burn debug overlay on every scene: 1=scene index, 2=+prompt, 3=+script and motion. Default: 0 (off)."),
     resolution: Optional[str] = typer.Option(None, "--resolution", help="Override output resolution, e.g. 480x854 or 1080x1920."),
 ) -> int:
-    """Generate stills, narration, and video from a plan or brief. Spends money; refuses while reference gates are open or no `parallax approve spend` budget covers the estimate."""
+    """Generate stills, narration, and video from a plan or brief. Spends money; prints the estimated cost first; refuses while reference gates are open."""
     if plan is None and brief is None:
         typer.echo("Error: one of --plan or --brief is required", err=True)
         return 2
