@@ -8,7 +8,7 @@ Agentic creative production CLI. A brief goes in, a finished short-form video co
 curl -LsSf https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/install.sh | sh
 ```
 
-Installs uv (Python toolchain manager) and ffmpeg if either is missing, then installs parallax. If you already have both, it just runs the last step.
+Installs uv (Python toolchain manager) and ffmpeg if either is missing, then installs parallax with every dependency pinned to the repo's `uv.lock` (`just install` does the same from a checkout). If you already have both, it just runs the last step.
 
 From a local checkout:
 
