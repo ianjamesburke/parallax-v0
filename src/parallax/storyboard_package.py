@@ -7,6 +7,7 @@ Layout (all plain files, no hidden state):
     references.yaml     reference inventory, gate decisions, open gates
     scenes.yaml         scene contract with timing
     storyboard.html     offline review document
+    storyboard.pdf      printable review document (when renderer is available)
     contact-sheet.jpg   supplied stills in scene order (only when stills exist)
     qa-notes.md         open gates and review advisories
     handoff.json        editor-facing manifest (also the CLI --json output)
@@ -15,8 +16,10 @@ Layout (all plain files, no hidden state):
 from __future__ import annotations
 
 import json
-import shutil
+import os
 from pathlib import Path
+import shutil
+import subprocess
 
 import yaml
 from PIL import Image, ImageOps
@@ -31,12 +34,59 @@ _FILES = {
     "references.yaml": "Reference inventory with provenance, gate decisions, and open gates.",
     "scenes.yaml": "Scene contract: type, narration, direction, references, locked assets, timing.",
     "storyboard.html": "Offline review document. Open in any browser.",
+    "storyboard.pdf": "Printable offline review document.",
     "contact-sheet.jpg": "Supplied stills in scene order.",
     "qa-notes.md": "Open reference gates and review advisories.",
     "handoff.json": "This manifest.",
 }
 _CELL, _COLUMNS = 320, 4
 FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER = "<project-folder>", "<brief.yaml>"
+
+
+def find_pdf_renderer() -> list[str] | None:
+    """Find a command template for headless PDF rendering.
+
+    Prefers Chrome / Chromium / Edge / Brave for faithful CSS print rendering.
+    Falls back to wkhtmltopdf or weasyprint.
+    """
+    candidates = [
+        shutil.which("google-chrome"),
+        shutil.which("google-chrome-stable"),
+        shutil.which("chromium"),
+        shutil.which("chromium-browser"),
+        shutil.which("microsoft-edge"),
+        shutil.which("brave"),
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    ]
+    for c in candidates:
+        if c and Path(c).is_file() and os.access(c, os.X_OK):
+            return [str(c), "--headless", "--disable-gpu", "--no-pdf-header-footer", "--print-to-pdf={output}", "{input}"]
+
+    if wk := shutil.which("wkhtmltopdf"):
+        return [wk, "--enable-local-file-access", "--quiet", "{input}", "{output}"]
+    if wp := shutil.which("weasyprint"):
+        return [wp, "--quiet", "{input}", "{output}"]
+    return None
+
+
+def render_pdf(html_path: str | Path, pdf_path: str | Path, *, renderer: list[str] | None = None) -> bool:
+    """Render an HTML file to PDF using an available headless renderer. Returns True on success."""
+    cmd_template = renderer or find_pdf_renderer()
+    if not cmd_template:
+        return False
+    html_target = Path(html_path).expanduser().resolve()
+    pdf_target = Path(pdf_path).expanduser().resolve()
+    if not html_target.is_file():
+        return False
+    cmd = [arg.replace("{input}", str(html_target)).replace("{output}", str(pdf_target)) for arg in cmd_template]
+    try:
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=45)
+        return res.returncode == 0 and pdf_target.is_file() and pdf_target.stat().st_size > 0
+    except (subprocess.SubprocessError, OSError):
+        return False
 
 
 def _load_timing(path: str | Path) -> list[dict]:
@@ -198,7 +248,7 @@ def _manifest(brief: Brief, review: dict, files: dict[str, str], contact: list[i
 
 
 def write_package(brief_path: str | Path, folder: str | Path, package_dir: str | Path,
-                  timing_path: str | Path | None = None) -> dict:
+                  timing_path: str | Path | None = None, *, pdf: bool = True) -> dict:
     """Write the storyboard package and return its handoff manifest. Makes no provider calls."""
     brief_path = Path(brief_path).expanduser().resolve()
     root = Path(folder).expanduser().resolve()
@@ -232,11 +282,18 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
         ],
     }), encoding="utf-8")
 
-    files = {name: role for name, role in _FILES.items() if name != "contact-sheet.jpg" or contact}
     # Files on disk carry placeholders instead of this machine's paths; the returned manifest has exact commands.
     portable = {**review, "gates": open_gates(brief, FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER)}
-    on_disk = _manifest(brief, portable, files, contact, missing, FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER)
     (package / "storyboard.html").write_text(render_storyboard(brief, assets, portable, link_base=package), encoding="utf-8")
+    pdf_created = False
+    if pdf:
+        pdf_created = render_pdf(package / "storyboard.html", package / "storyboard.pdf")
+
+    files = {
+        name: role for name, role in _FILES.items()
+        if (name != "contact-sheet.jpg" or contact) and (name != "storyboard.pdf" or pdf_created)
+    }
+    on_disk = _manifest(brief, portable, files, contact, missing, FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER)
     (package / "qa-notes.md").write_text(_qa_notes(on_disk), encoding="utf-8")
     (package / "handoff.json").write_text(json.dumps(on_disk, indent=2) + "\n", encoding="utf-8")
     return _manifest(brief, review, files, contact, missing, str(root), str(brief_path))

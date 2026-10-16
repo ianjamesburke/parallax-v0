@@ -58,6 +58,8 @@ def test_package_contains_every_visible_file_and_needs_no_hidden_state(tmp_path,
     assert package == folder.resolve() / "storyboard-package"
     expected = {"brief.yaml", "script.md", "references.yaml", "scenes.yaml", "storyboard.html",
                 "contact-sheet.jpg", "qa-notes.md", "handoff.json"}
+    if (package / "storyboard.pdf").is_file():
+        expected.add("storyboard.pdf")
     assert {f["path"] for f in manifest["files"]} == expected
     assert expected <= {p.name for p in package.iterdir()}
     assert not [p for p in package.rglob("*") if p.name.startswith(".")], "no hidden files or directories"
@@ -67,7 +69,7 @@ def test_package_contains_every_visible_file_and_needs_no_hidden_state(tmp_path,
     assert manifest["requires_parallax"] is False and manifest["provider_calls"] == 0 and manifest["approved"] is False
     on_disk = json.loads((package / "handoff.json").read_text())
     assert {k: v for k, v in on_disk.items() if k not in {"gates", "next_steps"}} == {
-        k: v for k, v in manifest.items() if k not in {"package_dir", "html", "gates", "next_steps"}}
+        k: v for k, v in manifest.items() if k not in {"package_dir", "html", "pdf", "gates", "next_steps"}}
     assert [g["id"] for g in on_disk["gates"]] == [g["id"] for g in manifest["gates"]]
     assert manifest["html"] == str(package / "storyboard.html") and Path(manifest["html"]).is_file()
     script = (package / "script.md").read_text()
@@ -747,3 +749,42 @@ def test_real_run_syncs_locked_still_and_clip_into_brief_and_refreshes_storyboar
     assert (pkg / "contact-sheet.jpg").is_file()
     assert (pkg / "assets/parallax/assets/scene_00_still.png").is_file()
     assert "Supplied still" in (pkg / "storyboard.html").read_text(encoding="utf-8")
+
+
+def test_render_pdf_handles_missing_renderer_and_missing_file(tmp_path):
+    from parallax.storyboard_package import render_pdf
+    html = tmp_path / "test.html"
+    pdf = tmp_path / "test.pdf"
+    assert render_pdf(html, pdf, renderer=None) is False
+    html.write_text("<h1>Hi</h1>", encoding="utf-8")
+    assert render_pdf(html, pdf, renderer=["nonexistent-binary-xyz", "{input}", "{output}"]) is False
+
+
+def test_write_package_with_no_pdf_skips_pdf_generation(tmp_path, capsys):
+    folder, brief = _project(tmp_path)
+    custom_pkg = tmp_path / "no-pdf-pkg"
+    manifest = cli.main(["storyboard", "--folder", str(folder), "--brief", str(brief),
+                         "--package-dir", str(custom_pkg), "--no-pdf", "--json"])
+    assert manifest == 0
+    data = json.loads(capsys.readouterr().out)
+    assert not (custom_pkg / "storyboard.pdf").exists()
+    assert "storyboard.pdf" not in {f["path"] for f in data["files"]}
+    assert "pdf" not in data
+
+
+def test_write_package_registers_pdf_when_created(tmp_path, monkeypatch):
+    import parallax.storyboard_package as sbp
+    folder, brief = _project(tmp_path)
+    custom_pkg = tmp_path / "pdf-pkg"
+
+    def mock_render(html, pdf, **kwargs):
+        Path(pdf).write_bytes(b"%PDF-1.4 mock")
+        return True
+
+    monkeypatch.setattr(sbp, "render_pdf", mock_render)
+    res = sbp.write_package(brief, folder, custom_pkg, pdf=True)
+    assert (custom_pkg / "storyboard.pdf").is_file()
+    assert "storyboard.pdf" in {f["path"] for f in res["files"]}
+    disk_manifest = json.loads((custom_pkg / "handoff.json").read_text(encoding="utf-8"))
+    assert "storyboard.pdf" in {f["path"] for f in disk_manifest["files"]}
+

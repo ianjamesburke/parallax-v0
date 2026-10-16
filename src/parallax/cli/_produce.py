@@ -83,6 +83,7 @@ def _storyboard_cmd(
     brief: str = typer.Option(..., "--brief", help="Path to the authored brief.yaml."),
     timing: Optional[str] = typer.Option(None, "--timing", help="Aligned manifest YAML/JSON with index, start_s, end_s for every scene; replaces reading estimates."),
     package_dir: Optional[str] = typer.Option(None, "--package-dir", help="Package output directory (default: <folder>/storyboard-package)."),
+    pdf: bool = typer.Option(True, "--pdf/--no-pdf", help="Render a printable PDF of the storyboard if a headless browser is available."),
     check: bool = typer.Option(False, "--check", help="Print the status, open gates, and advisories as JSON without writing a package."),
     as_json: bool = typer.Option(False, "--json", help="Print the handoff manifest as JSON: status, open reference gates with choices and resolving commands, advisories."),
 ) -> int:
@@ -99,17 +100,21 @@ def _storyboard_cmd(
         return 0
     destination = Path(package_dir) if package_dir else Path(folder) / "storyboard-package"
     try:
-        manifest = write_package(brief, folder, destination, timing_path=timing)
+        manifest = write_package(brief, folder, destination, timing_path=timing, pdf=pdf)
     except (ValueError, OSError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         return 2
     package = destination.expanduser().resolve()
     manifest = {"package_dir": str(package), "html": str(package / "storyboard.html"), **manifest}
+    if (package / "storyboard.pdf").is_file():
+        manifest["pdf"] = str(package / "storyboard.pdf")
     if as_json:
         typer.echo(json.dumps(manifest, indent=2))
         return 0
     typer.echo(f"Storyboard package: {manifest['package_dir']}")
     typer.echo(f"Open: {manifest['html']}")
+    if "pdf" in manifest:
+        typer.echo(f"PDF:  {manifest['pdf']}")
     if manifest["gates"]:
         typer.echo(f"{len(manifest['gates'])} reference gate(s) open; run with --json for choices and commands.")
     typer.echo("Review scene types and direction before generating assets. No provider calls made.")
