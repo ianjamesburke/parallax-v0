@@ -1,10 +1,11 @@
 ---
 id: "0003"
 title: "Retire the operator skill by moving its knowledge into the CLI"
-status: todo
+status: done
 priority: p2
 size: l
 created_at: "2026-10-16T03:01:58Z"
+completed_at: "2026-10-16T03:37:45Z"
 blocked_by: []
 gh_issue: []
 area:

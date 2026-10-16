@@ -1,10 +1,11 @@
 ---
 id: "0004"
 title: "Install locked dependency versions"
-status: todo
+status: done
 priority: p2
 size: s
 created_at: "2026-10-16T03:01:58Z"
+completed_at: "2026-10-16T03:37:45Z"
 blocked_by: []
 gh_issue: []
 area:
