@@ -17,6 +17,8 @@ parallax --version
 parallax update   # uv tool upgrade parallax --reinstall
 ```
 
+**Workflow map:** run `parallax guide` (JSON: stages, commands, flags, preconditions, review boundaries, human decisions). It is the source of truth; this skill adds only judgment on top of it.
+
 **Required env var:**
 ```bash
 export OPENROUTER_API_KEY=sk-or-...
@@ -60,7 +62,7 @@ If the user has provided only a concept or asks for a script from scratch, propo
 
 Show the native HTML storyboard before scene-batch generation; it contains the scene/reference map. Record only additional reference provenance or missing assets in project notes, avoiding a second manually maintained scene table. Shared art direction belongs in a short style note, and each executable image prompt must include the necessary style description: plan `style` and `style_hint` currently affect voice synthesis, not still generation.
 
-Treat a storyboard with no assigned visual references as a review blocker, not a silent default. For every editorial still or animation, either assign a compact approved character/style reference or call out the intentional no-reference choice in the storyboard. Graphics may omit image references only when a deliberate code-authored visual system is named. Product, logo, or UI scenes without official references must be visibly marked pending and may not become final branded visuals.
+Reference gates are structured CLI output, not skill prose. `parallax storyboard --json` lists each open gate with its question, allowed choices, and the exact `parallax reference resolve` command per choice. Ask the human the gate question, offer only those choices, run the chosen command. Never choose for the human or run paid reference generation without explicit authorization. `parallax produce --brief` refuses while a gate is open.
 
 Audit visual variety before paid generation. Motion graphics should earn their place as explanatory beats, transitions, or data moments; they are not a fallback for every line of narration. Flag a storyboard when motion graphics exceed roughly 40% of scenes or when three or more appear consecutively. Propose specific editorial, product, or action alternatives before spending.
 
@@ -70,7 +72,7 @@ Audit visual variety before paid generation. Motion graphics should earn their p
 
 For a staged production, keep the authored brief as the scene map. `scene_type` describes the proposed final treatment: `still`, `animation`, or `motion_graphic`; `shot_type` describes the content: `character`, `broll`, or `screen`. Preserve proposed treatments when creating stage-specific execution plans.
 
-1. **Storyboard and reference direction.** Preserve the supplied narration and beat order unless the user asks for a rewrite; separate the headline first. Gather official brand assets and, when authorized, develop the small reference set above. Author concise scene prompts and explicit scene types. Run `parallax storyboard --folder /absolute/project --brief /absolute/project/brief.yaml`, open the returned HTML, and ask for feedback on scene breakdown and treatments. This command is local and free. Empty preview areas are pending assets, not generated stills. Estimated seconds are for review only.
+1. **Storyboard and reference direction.** Preserve the supplied narration and beat order unless the user asks for a rewrite; separate the headline first. Gather official brand assets and, when authorized, develop the small reference set above. Author concise scene prompts and explicit scene types. Run `parallax storyboard --folder /absolute/project --brief /absolute/project/brief.yaml --json`, answer any open reference gates, open `storyboard-package/storyboard.html`, and ask for feedback on scene breakdown and treatments. This command is local and free. Empty preview areas are pending assets, not generated stills. Estimated seconds are for review only.
 2. **Stills.** After storyboard/reference approval and a spending cap, use the accepted reference set for a representative scene, then generate the approved batch. If reference development was deferred, review that set first. Use `stills_only: true` in a separate execution plan for image scenes. Keep unfinished graphics out of that generation batch and use the motion-graphics workflow below. Inspect and lock approved stills, update `still_path` in the brief, and refresh the HTML. Pause for still approval before paid animation.
 3. **Narrated draft and motion.** After still approval, make a separate draft plan with approved stills, `scene_type: still` and `animate: false` for image scenes, `stills_only: false`, and `captions: skip`. Keep the final proposed types in the authored brief. For unfinished graphics, use the approved poster as a still in the draft plan. Preserve raw narration and inspect spoken fidelity before trusting alignment or captions. Use measured narration timing to price and prepare a small animation pilot and timed graphics. Show the pilot before extending to the remaining selected shots; carry forward approved assets and the same budget ledger.
 4. **Final review.** Assemble accepted clips against approved narration, inspect captions and every scene transition, decode the export, and open the video. Report mechanical checks separately from human acceptance.

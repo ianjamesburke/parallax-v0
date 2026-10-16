@@ -102,6 +102,32 @@ parallax image analyze ./stills/frame.png "what is the dominant color palette?"
 
 Other commands: `parallax usage`, `parallax credits`, `parallax log <run|latest|list>`, `parallax verify suite <dir>`, `parallax audio {transcribe,detect-silences,trim,cap-pauses,speed}`, `parallax video {frame,color}`.
 
+## Storyboard package
+
+`parallax guide` prints the whole workflow as JSON (stages, commands, flags, preconditions, review boundaries, what needs a human decision). An agent needs only `--help` and that guide.
+
+    parallax storyboard --folder ./my-project --brief ./my-project/brief.yaml --json
+
+Writes `./my-project/storyboard-package/` (override with `--package-dir`), plain visible files an editor can open without Parallax:
+
+    brief.yaml          authored brief, verbatim
+    script.md           headline and per-scene narration
+    references.yaml     reference inventory, gate decisions, open gates
+    scenes.yaml         scene contract with timing
+    storyboard.html     offline review document
+    contact-sheet.jpg   supplied stills in scene order (only when stills exist)
+    qa-notes.md         open gates and review advisories
+    handoff.json        editor-facing manifest; also the --json output
+    assets/             referenced files at their brief-relative paths
+
+No provider calls, no `.parallax` directory, no job or approval state. Assets must live under `--folder`. The package records proposals, never approval.
+
+`handoff.json` `status` is `needs_reference_decision` while a reference gate is open. Each gate carries the question, the allowed choices (`supplied`, `official`, `generated_anchor`, `no_reference`) and the exact command for each. Answers are written into brief.yaml, with comments preserved:
+
+    parallax reference resolve --folder F --brief B --gate editorial-reference --choice supplied --asset refs/style.png
+
+`parallax produce --brief` refuses to start while any gate is open. Advisories for compound generated-image directions (a still is one composition unless `scene_type: motion_graphic` selects a local composite) and unsafe 9:16 copy appear in the manifest, QA notes, and HTML. Simulated-operator proof: `tests/test_drive_parallax.py` with `fixtures/drive-parallax/`.
+
 ## Vision
 
 A creative brief goes in; a finished short-form video comes out — without manually wrangling 5 separate APIs, 3 storage buckets, and a fragile bash glue script.
