@@ -1,6 +1,6 @@
 [project]
 name = "parallax"
-version = "0.5.47"
+version = "0.5.48"
 description = "Minimal agentic creative production CLI — image generation v0"
 requires-python = ">=3.11,<3.14"
 dependencies = [
