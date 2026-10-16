@@ -177,10 +177,12 @@ def test_guide_exposes_spend_approval():
 
 
 def test_approve_command_refuses_without_a_tty_and_writes_nothing(tmp_path, capsys):
-    rc = cli.main(["approve", "spend", "--folder", str(tmp_path), "--budget-usd", "5", "--authorized-by", "ian"])
+    rc = cli.main(["approve", "spend", "--folder", str(tmp_path), "--budget-usd", "987", "--authorized-by", "agentinvented"])
     err = capsys.readouterr().err
     assert rc == 2 and not (tmp_path / APPROVAL_FILE).exists()
     assert "interactive terminal" in err and "! parallax approve spend --folder" in err
+    assert "--budget-usd <budget> --authorized-by <your name>" in err
+    assert "987" not in err and "agentinvented" not in err
 
 
 def _run_in_pty(tmp_path, typed: str | None) -> tuple[int, str]:
@@ -223,3 +225,12 @@ def test_image_analyze_is_gated_even_in_test_mode(tmp_path, monkeypatch, real_mo
     assert cli.main(["image", "analyze", str(img), "--folder", str(tmp_path)]) == 1
     assert _refusal(capsys)["gate"] == "spend-approval" and real_mode_no_network == []
 
+
+
+def test_guide_lists_every_paid_command_with_folder():
+    import typer
+    from parallax.guide import build_guide
+    stage = next(s for s in build_guide(typer.main.get_group(cli.app))["stages"] if s["id"] == "spend_approval")
+    paid = {c["command"]: c for c in stage["commands"]}
+    for name in ("produce", "image generate", "image analyze", "video animate", "audio voiceover"):
+        assert "--folder" in paid[f"parallax {name}"]["pass"], name
