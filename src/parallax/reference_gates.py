@@ -247,13 +247,18 @@ def resolve_gate(
         raise ValueError(f"gate {gate_id!r} has no open scenes in {brief_path}. To change an earlier answer, pass --scenes "
                          f"with scene indexes it covers ({answered or 'none answered yet'}).")
     targets = open_scenes if scenes is None else scenes
-    stray = sorted(set(targets) - set(open_scenes) - set(answered))
+    eligible = (
+        {s.index for s in brief.script.scenes if s.resolved_scene_type != "motion_graphic"}
+        if gate_id == EDITORIAL
+        else set(open_scenes) | set(answered)
+    )
+    stray = sorted(set(targets) - eligible - set(open_scenes) - set(answered))
     if stray:
         raise ValueError(f"scenes {stray} are not part of gate {gate_id}; open scenes: {open_scenes}, answered scenes: {answered}")
 
     authorization_only = choice == "generated_anchor" and not asset
     pending = [d for d in brief.reference_decisions if d.gate == gate_id and d.choice == "generated_anchor"
-               and d.asset is None and set(d.scenes) == set(targets)]
+               and d.asset is None and set(d.scenes) >= set(targets)]
     if choice == "no_reference":
         if not reason:
             raise ValueError("--reason is required for --choice no_reference: state why these scenes need no reference")
@@ -283,26 +288,30 @@ def resolve_gate(
     with brief_path.open(encoding="utf-8") as fp:
         doc = yaml.load(fp)
     completing = choice == "generated_anchor" and bool(asset) and bool(pending)
-    replaced = [] if completing else _clear_answers(doc, gate_id, set(targets))
+    effective_kind = kind or _DEFAULT_KIND[gate_id]
+    replaced = [] if completing else _clear_answers(doc, gate_id, set(targets), effective_kind if choice != "no_reference" else None)
+    review_status = "pending"
     if choice != "no_reference" and not authorization_only:
         origin = {"supplied": "supplied", "official": "official", "generated_anchor": "generated"}[choice]
         provided = doc.setdefault("assets", {}).setdefault("provided", [])
         existing = next((a for a in provided if a.get("path") == asset), None)
         if existing is None:
-            entry = {"path": asset, "kind": kind or _DEFAULT_KIND[gate_id], "origin": origin, "review_status": "pending",
+            entry = {"path": asset, "kind": effective_kind, "origin": origin, "review_status": "pending",
                      "scene_scope": sorted(targets)}
             if source_url:
                 entry["source_url"] = source_url
             provided.append(entry)
-        elif existing.get("scene_scope") is not None:
-            existing["scene_scope"] = sorted(set(existing["scene_scope"]) | set(targets))
+        else:
+            review_status = existing.get("review_status", "pending")
+            if existing.get("scene_scope") is not None:
+                existing["scene_scope"] = sorted(set(existing["scene_scope"]) | set(targets))
         for scene in doc["script"]["scenes"]:
             if scene["index"] in targets and asset not in scene.get("image_refs", []):
                 scene.setdefault("image_refs", []).append(asset)
     if choice == "generated_anchor" and asset and pending:
         for decision in doc["reference_decisions"]:
             if (decision["gate"] == gate_id and decision["choice"] == "generated_anchor"
-                    and "asset" not in decision and set(decision["scenes"]) == set(targets)):
+                    and "asset" not in decision and set(decision["scenes"]) >= set(targets)):
                 decision["asset"] = asset
     else:
         record = {"gate": gate_id, "choice": choice, "scenes": list(targets), "note": note}
@@ -336,22 +345,27 @@ def resolve_gate(
         "open_gates": [{"id": g["id"], "state": g["state"], "scenes": g["scenes"]} for g in remaining],
         "pending_human_approval": (
             [{"asset": attached, "review_status": "pending",
-              "note": "A human accepts it by setting review_status: approved in brief.yaml. The CLI never approves."}] if attached else []),
+              "note": "A human accepts it by setting review_status: approved in brief.yaml. The CLI never approves."}]
+            if attached and review_status != "approved" else []),
     }
 
 
-def _clear_answers(doc, gate_id: str, targets: set[int]) -> list[dict]:
+def _clear_answers(doc, gate_id: str, targets: set[int], new_kind: str | None = None) -> list[dict]:
     """Remove the named scenes from earlier decisions of this gate so a new answer replaces them.
 
-    Also detaches the earlier decision's asset from those scenes, and drops a scene-scoped asset that no scene uses any more.
+    When layering a different kind of reference on editorial-reference (e.g. adding a character_ref
+    to scenes that already have a style_ref), preserve earlier decisions of a different kind.
     """
     replaced = []
     decisions = doc.get("reference_decisions") or []
+    provided_kinds = {a.get("path"): a.get("kind") for a in (doc.get("assets") or {}).get("provided") or []}
     for decision in list(decisions):
         hit = [i for i in decision["scenes"] if i in targets]
         if decision["gate"] != gate_id or not hit:
             continue
         asset = decision.get("asset")
+        if new_kind is not None and asset and provided_kinds.get(asset) and provided_kinds.get(asset) != new_kind:
+            continue
         replaced.append({"choice": decision["choice"], "scenes": hit, **({"asset": asset} if asset else {})})
         decision["scenes"] = [i for i in decision["scenes"] if i not in targets]
         if asset:

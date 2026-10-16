@@ -225,6 +225,7 @@ def _load_brief(brief_path: Path) -> Brief:
 def _manifest(brief: Brief, review: dict, files: dict[str, str], contact: list[int], missing: list[str],
               folder: str, brief_path: str) -> dict:
     timeline = review["timeline"]
+    block = _produce_block(review, missing)
     return {
         "package_version": 1,
         "concept": brief.concept_name or brief.goal,
@@ -232,6 +233,7 @@ def _manifest(brief: Brief, review: dict, files: dict[str, str], contact: list[i
         "aspect": brief.aspect,
         "scene_count": len(brief.script.scenes),
         "status": "needs_reference_decision" if _blocking(review["gates"]) else "ready_for_review",
+        "ready_for_plan": not _blocking(review["gates"]) and not block["produce_blocked"],
         "approved": False,
         "requires_parallax": False,
         "provider_calls": 0,
@@ -241,7 +243,7 @@ def _manifest(brief: Brief, review: dict, files: dict[str, str], contact: list[i
         "missing_assets": missing,
         "timing": {"basis": review["timing_basis"], "total_s": round(float(timeline[-1]["end_s"]), 3) if timeline else 0.0},
         "gates": review["gates"],
-        **_produce_block(review, missing),
+        **block,
         "advisories": _advisories(review),
         "next_steps": _next_steps(review["gates"], folder, brief_path),
     }

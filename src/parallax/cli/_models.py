@@ -89,6 +89,8 @@ def _print_models_list(models_pkg, kind: str | None, as_json: bool) -> int:
                 marker = "  [hq]"
             for line in _model_card(s, marker):
                 print(line)
+    if kind in (None, "image"):
+        print("\nNote: conditioning an image call on reference images adds ~$0.01/image for input tokens.")
     print("\nFull description: parallax models show <alias>")
     return 0
 

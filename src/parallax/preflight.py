@@ -18,6 +18,7 @@ from typing import Any
 
 from .log import get_logger
 from .models import DEFAULT_CLIP_DURATION_S, TTS_MODELS, resolve
+from .shim import is_mock_asset
 
 log = get_logger("preflight")
 
@@ -111,10 +112,12 @@ def compute_preflight(
             has_refs = bool(s.get("reference_images") or s.get("image_refs"))
             still_cost = resolve(still_alias, kind="image").cost_usd + (0.01 if has_refs else 0.0)
 
+        still_file = (assets_dir / f"scene_{idx:02d}_still.png") if assets_dir is not None else None
         still_overwrite = (
             not still_locked
-            and assets_dir is not None
-            and (assets_dir / f"scene_{idx:02d}_still.png").exists()
+            and still_file is not None
+            and still_file.exists()
+            and not is_mock_asset(still_file)
         )
 
         scenes.append(PreflightScene(
@@ -144,10 +147,12 @@ def compute_preflight(
                 clip_cost = clip_spec.cost_usd * duration
                 clip_native_res = clip_spec.native_resolution
 
+            clip_file = (assets_dir / f"scene_{idx:02d}_animated.mp4") if assets_dir is not None else None
             clip_overwrite = (
                 not clip_locked
-                and assets_dir is not None
-                and (assets_dir / f"scene_{idx:02d}_animated.mp4").exists()
+                and clip_file is not None
+                and clip_file.exists()
+                and not is_mock_asset(clip_file)
             )
 
             scenes.append(PreflightScene(
