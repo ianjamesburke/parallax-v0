@@ -7,8 +7,14 @@ e2e-agent *args:
     LC_ALL=C bash scripts/start-e2e-agent.sh {{args}}
 
 # Install CLI from current directory (works from any worktree)
+# Pins every dependency to uv.lock (as constraints), so users run the versions the tests ran.
 install:
-    uv tool install --python python3.11 --reinstall .
+    #!/usr/bin/env bash
+    set -euo pipefail
+    constraints="$(mktemp)"
+    trap 'rm -f "$constraints"' EXIT
+    uv export --frozen --no-hashes --no-emit-project --no-dev -o "$constraints"
+    uv tool install --python python3.11 --reinstall --constraints "$constraints" .
 
 # Install PR as isolated CLI: parallax-pr<N> (run from feature worktree)
 pr-install pr:
