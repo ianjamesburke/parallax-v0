@@ -365,6 +365,8 @@ def _generate_one_still(s: dict[str, Any], settings: Settings, state: PipelineSt
         raise last_err if last_err else RuntimeError("stage_stills: no still produced")
 
     normalized = normalize_aspect(raw_still_path, settings.resolution)
+    if not state.assets_dir:
+        raise RuntimeError("stage_stills: state.assets_dir is unset; scan_project_folder must run first (an empty path would write into the current directory)")
     canonical = Path(state.assets_dir) / f"scene_{idx:02d}_still.png"
     Path(normalized).rename(canonical)
     if str(normalized) != str(raw_still_path):
@@ -525,6 +527,8 @@ def _animate_one_scene(
     # Per-scene temp dir isolates hash-named downloads so concurrent scenes
     # with identical prompts don't race on the same filename.
     import shutil as _shutil
+    if not state.assets_dir:
+        raise RuntimeError("stage_animate: state.assets_dir is unset; scan_project_folder must run first (an empty path would write into the current directory)")
     scene_tmp = Path(state.assets_dir) / f"_anim_{s.index:02d}"
     scene_tmp.mkdir(exist_ok=True)
     raw_clip = _openrouter.generate_video(
