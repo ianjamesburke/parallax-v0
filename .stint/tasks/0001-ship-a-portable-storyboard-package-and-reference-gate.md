@@ -1,10 +1,11 @@
 ---
 id: "0001"
 title: "Ship a portable storyboard package and reference gate"
-status: todo
+status: done
 priority: p1
 size: l
 created_at: "2026-10-16T00:15:54Z"
+completed_at: "2026-10-16T02:42:51Z"
 blocked_by: []
 gh_issue: []
 area:

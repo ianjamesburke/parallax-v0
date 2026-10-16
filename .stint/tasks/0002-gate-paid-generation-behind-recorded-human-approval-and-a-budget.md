@@ -1,10 +1,11 @@
 ---
 id: "0002"
 title: "Gate paid generation behind recorded human approval and a budget"
-status: todo
+status: done
 priority: p1
 size: m
 created_at: "2026-10-16T02:09:33Z"
+completed_at: "2026-10-16T02:42:51Z"
 blocked_by: []
 gh_issue: []
 area:
