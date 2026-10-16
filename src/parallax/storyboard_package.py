@@ -111,10 +111,9 @@ def _script_md(brief: Brief) -> str:
     return "\n".join(lines)
 
 
-def _status(gates: list[dict]) -> str:
-    if not gates:
-        return "ready_for_review"
-    return "awaiting_anchor_generation" if all(g["state"] == "authorized_pending_generation" for g in gates) else "needs_reference_decision"
+def _blocking(gates: list[dict]) -> list[dict]:
+    """Gates that need a human answer before review. An authorized, ungenerated anchor does not: review precedes generation."""
+    return [g for g in gates if g["state"] == "open"]
 
 
 def _qa_notes(manifest: dict) -> str:
@@ -142,6 +141,15 @@ def _qa_notes(manifest: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _next_steps(gates: list[dict], folder: str, brief_path: str) -> list[dict]:
+    if _blocking(gates):
+        return [{"step": "answer_gates", "detail": "Ask the human each open gate question, run the chosen choice command, then re-run `parallax storyboard`."}]
+    steps = [{"step": "human_review", "detail": "The human reviews storyboard.html and approves or requests changes. Approval is not recorded by the CLI."}]
+    if gates:
+        steps.append({"step": "attach_authorized_anchor", "detail": "A generated anchor is authorized but not generated. Before any `parallax produce`, generate it and attach it with the gate's choice command; produce refuses until then."})
+    return steps + [{"step": "plan", "command": f"parallax plan --folder {_arg(folder)} --brief {_arg(brief_path)}"}]
+
+
 def _manifest(brief: Brief, review: dict, files: dict[str, str], contact: list[int], missing: list[str],
               folder: str, brief_path: str) -> dict:
     timeline = review["timeline"]
@@ -151,7 +159,7 @@ def _manifest(brief: Brief, review: dict, files: dict[str, str], contact: list[i
         "goal": brief.goal,
         "aspect": brief.aspect,
         "scene_count": len(brief.script.scenes),
-        "status": _status(review["gates"]),
+        "status": "needs_reference_decision" if _blocking(review["gates"]) else "ready_for_review",
         "approved": False,
         "requires_parallax": False,
         "provider_calls": 0,
@@ -164,12 +172,7 @@ def _manifest(brief: Brief, review: dict, files: dict[str, str], contact: list[i
         "advisories": [{"scene": index, **a} for index, items in review["scene_advisories"].items() for a in items],
         "variety": review["variety"],
         "pacing_warnings": review["pacing"]["warnings"],
-        "next_steps": (
-            [{"step": "answer_gates", "detail": "Ask the human each gate question, run the chosen choice command, then re-run `parallax storyboard`. A gate in state authorized_pending_generation needs its anchor generated and attached."}]
-            if review["gates"] else
-            [{"step": "human_review", "detail": "The human reviews storyboard.html and approves or requests changes. Approval is not recorded by the CLI."},
-             {"step": "plan", "command": f"parallax plan --folder {_arg(folder)} --brief {_arg(brief_path)}"}]
-        ),
+        "next_steps": _next_steps(review["gates"], folder, brief_path),
     }
 
 

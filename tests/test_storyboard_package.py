@@ -250,7 +250,12 @@ def test_generated_anchor_records_authorization_then_attaches_the_file(tmp_path,
     assert _resolve(folder, brief, "--gate", "editorial-reference", "--choice", "generated_anchor", "--authorized-by", "x") == 2
     assert "already have an authorized" in capsys.readouterr().err
     _resolve(folder, brief, "--gate", "product-reference", "--choice", "no_reference", "--reason", "placeholder")
-    assert _storyboard(folder, brief, capsys)["status"] == "awaiting_anchor_generation"
+    pending = _storyboard(folder, brief, capsys)
+    assert pending["status"] == "ready_for_review", "review precedes generation; only produce stays blocked"
+    assert [g["state"] for g in pending["gates"]] == ["authorized_pending_generation"]
+    assert [s["step"] for s in pending["next_steps"]] == ["human_review", "attach_authorized_anchor", "plan"]
+    assert "not yet generated" in (Path(pending["package_dir"]) / "qa-notes.md").read_text()
+    assert cli.main(["produce", "--folder", str(folder), "--brief", str(brief)]) == 1
 
     _png(folder / "refs/anchor.png")
     assert _resolve(folder, brief, "--gate", "editorial-reference", "--choice", "generated_anchor", "--asset", "refs/anchor.png") == 0
