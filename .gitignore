@@ -19,7 +19,6 @@ fixtures/**/parallax/
 sandbox/
 
 # Local tool state
-.agents/*
-!.agents/skills/
+.agents/
 .playwright-cli/
 .plexi-beta/
