@@ -30,11 +30,10 @@ def test_guide_and_schema_work_on_unlocked_dependencies():
     assert guide.returncode == 0, guide.stderr
     commands = {c["command"]: c for s in json.loads(guide.stdout)["stages"] for c in s["commands"]}
     assert {"--folder", "--brief"} <= {f["name"] for f in commands["parallax storyboard"]["flags"] if f["required"]}
-    assert "--budget-usd" in {f["name"] for f in commands["parallax approve spend"]["flags"]}
 
     schema = _parallax("schema", "cli")
     assert schema.returncode == 0, schema.stderr
-    assert "approve" in json.loads(schema.stdout)["commands"]
+    assert "guide" in json.loads(schema.stdout)["commands"]
 
 
 def test_usage_error_exits_2_on_unlocked_dependencies():

@@ -51,7 +51,7 @@ Dispositions: **G** = `parallax guide <topic>`, **A** = advisory or error alread
 | Rules: lock before re-run, never edit snapshot | G | `asset_locking.rules`. |
 | `--out` not `--output` | D | Stale: `audio cap-sentence-silence` uses `--output`; flags are in each `--help` and `schema cli`. |
 | `draft` image model ignores aspect | D | Stale: `models show draft` lists all five aspects as honored; produce checks and normalizes aspect (`stills.py`). |
-| Spend, `-y` never grants approval | G | `guide spend_approval`, `guide cost.handoff`. |
+| Spend, no approval step; estimate printed first | G | `guide cost.approval`. |
 | macOS screenshot filename unicode | D | Host-shell tip, not Parallax behavior. |
 
 ## references/commands.md

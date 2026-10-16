@@ -224,16 +224,10 @@ def run_plan(
     _tmo_token = _tmo.set(settings.mode == ProductionMode.TEST)
 
     try:
-        # Cost gate first: nothing touches a provider until a recorded human budget covers the estimate.
+        # Print the estimate before anything touches a provider.
         from .preflight import compute_preflight, format_preflight
-        from .spend_guard import SpendRefused, require_approval
         _pf_result = compute_preflight(plan, folder=folder, output_resolution=settings.resolution)
         print(format_preflight(_pf_result), flush=True)
-        try:
-            require_approval(folder, _pf_result.estimated_total_usd, f"produce --plan {plan_path.name}")
-        except SpendRefused as e:
-            return ProductionResult(status="error", run_id=None, output_dir=None,
-                                    final_video=None, stills_dir=None, cost_usd=0.0, error=str(e))
 
         # Pre-flight: in real-mode, check OpenRouter credits before any work runs.
         # 402 mid-pipeline is brutal (partial spend on stills, then dies on i2v);

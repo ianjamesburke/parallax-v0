@@ -1,7 +1,7 @@
 """Pre-flight cost estimation for `parallax produce`.
 
-Computes a per-scene cost table before any generation runs. Approval is not decided
-here: see spend_guard.py.
+Computes a per-scene cost table before any generation runs. Nothing here blocks a run;
+the CLI prints the estimate and proceeds.
 
 Public API:
   compute_preflight(plan, balance_usd=None) -> PreflightResult
@@ -11,6 +11,7 @@ Public API:
 from __future__ import annotations
 
 import hashlib
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -233,6 +234,12 @@ def compute_preflight(
         has_overwrites=has_overwrites,
         warnings=locked_audio_warnings + vo_warnings,
     )
+
+
+def print_estimate(command: str, usd: float | None) -> None:
+    """Print one paid command's estimated cost to stderr before its provider call."""
+    price = "no catalog price, cost unknown" if usd is None else f"~${usd:.4f}"
+    print(f"Estimated cost: {price} ({command})", file=sys.stderr, flush=True)
 
 
 def _short_res(res: str) -> str:

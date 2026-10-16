@@ -21,12 +21,6 @@ from parallax import cli
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _approve(folder) -> None:
-    """Record a spend budget so paid commands under test pass the cost gate (their providers are stubbed)."""
-    from parallax.spend_guard import approve
-    approve(folder, 5, "test")
-
-
 def _help_exits_zero(*args: str) -> None:
     rc = cli.main(list(args) + ["--help"])
     assert rc == 0, f"Expected 0 for {args!r} --help, got {rc}"
@@ -419,8 +413,7 @@ class TestAudio:
             return {"raw_audio_path": str(src), "audio_path": str(src), "total_duration_s": 2.0}
 
         monkeypatch.setattr(vo_mod, "generate_voiceover_dict", fake_voiceover)
-        _approve(tmp_path)
-        rc = cli.main(["audio", "voiceover", "--text", "hello world", "--out", str(out), "--folder", str(tmp_path)])
+        rc = cli.main(["audio", "voiceover", "--text", "hello world", "--out", str(out)])
         assert rc == 0
         assert called[0]["trim_pauses"] is False
         assert out.read_bytes() == src.read_bytes()
@@ -428,7 +421,7 @@ class TestAudio:
 
         rc = cli.main([
             "audio", "voiceover", "--text", "hello world", "--out", str(out),
-            "--trim-pauses", "--folder", str(tmp_path),
+            "--trim-pauses",
         ])
         assert rc == 0
         assert called[1]["trim_pauses"] is True
@@ -444,14 +437,13 @@ class TestAudio:
         processed = tmp_path / "processed.mp3"
         processed.write_bytes(b"speed input")
         out = tmp_path / "out.mp3"
-        _approve(tmp_path)
         monkeypatch.setattr(vo_mod, "generate_voiceover_dict", lambda **kw: {
             "raw_audio_path": str(raw), "audio_path": str(processed), "total_duration_s": 2.0,
         })
         monkeypatch.setattr(audio_mod, "speedup", lambda _src, dst, _speed: dst.write_bytes(b"sped up"))
         monkeypatch.setattr(ffmpeg_mod, "run_ffmpeg", lambda *_args, **_kwargs: type("Probe", (), {"stdout": "1.667"})())
         rc = cli.main([
-            "audio", "voiceover", "--text", "hello", "--out", str(out), "--speed", "1.2", "--folder", str(tmp_path),
+            "audio", "voiceover", "--text", "hello", "--out", str(out), "--speed", "1.2",
         ])
         assert rc == 0
         assert out.read_bytes() == b"sped up"
@@ -576,9 +568,8 @@ class TestVideo:
         import parallax.openrouter as or_mod
         out = tmp_path / "out.mp4"
         monkeypatch.setattr(or_mod, "generate_video", lambda *a, **kw: out)
-        _approve(tmp_path)
         rc = cli.main(["video", "animate", "--prompt", "fly through space",
-                       "--out", str(tmp_path), "--folder", str(tmp_path)])
+                       "--out", str(tmp_path)])
         assert rc == 0
         assert str(out) in capsys.readouterr().out
 
@@ -602,10 +593,22 @@ class TestImage:
         import parallax.openrouter as or_mod
         out = tmp_path / "img.png"
         monkeypatch.setattr(or_mod, "generate_image", lambda *a, **kw: out)
-        _approve(tmp_path)
-        rc = cli.main(["image", "generate", "a lion at sunset", "--out", str(tmp_path), "--folder", str(tmp_path)])
+        rc = cli.main(["image", "generate", "a lion at sunset", "--out", str(tmp_path)])
         assert rc == 0
         assert str(out) in capsys.readouterr().out
+
+    def test_generate_prints_estimate_before_the_provider_call(self, monkeypatch, tmp_path, capsys):
+        import parallax.openrouter as or_mod
+        monkeypatch.delenv("PARALLAX_TEST_MODE", raising=False)
+        seen = []
+
+        def fake_generate(*a, **kw):
+            seen.append(capsys.readouterr().err)
+            return tmp_path / "img.png"
+
+        monkeypatch.setattr(or_mod, "generate_image", fake_generate)
+        assert cli.main(["image", "generate", "a lion", "--out", str(tmp_path)]) == 0
+        assert "Estimated cost: ~$" in seen[0] and "image generate" in seen[0]
 
     def test_analyze_help(self):
         _help_exits_zero("image", "analyze")
@@ -618,8 +621,7 @@ class TestImage:
         img = tmp_path / "img.png"
         img.write_bytes(b"\x89PNG")
         monkeypatch.setattr(or_mod, "analyze_image", lambda *a, **kw: "A lion is shown.")
-        _approve(tmp_path)
-        rc = cli.main(["image", "analyze", str(img), "--folder", str(tmp_path)])
+        rc = cli.main(["image", "analyze", str(img)])
         assert rc == 0
         assert "lion" in capsys.readouterr().out
 

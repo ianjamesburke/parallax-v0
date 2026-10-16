@@ -22,9 +22,8 @@ def image_generate(
     size: Optional[str] = typer.Option(None, "--size", help="Explicit WxH, e.g. '1080x1920'. Overrides --aspect for sizing."),
     refs: Optional[List[str]] = typer.Option(None, "--ref", metavar="PATH", help="Reference image path (can repeat). Model must support references."),
     out: Optional[str] = typer.Option(None, "--out", help="Output path. If it ends with a recognized image extension, written to that exact file. Otherwise treated as output directory."),
-    folder: Optional[str] = typer.Option(None, "--folder", help="Project root holding spend-approval.yaml (see `parallax approve spend`). Required for paid runs; not needed with PARALLAX_TEST_MODE."),
 ) -> int:
-    """Generate one image. Spends money; refused unless a human budget is recorded for --folder."""
+    """Generate one image. Spends money; prints the estimated cost first."""
     return _run_generate(SimpleNamespace(
         image_command="generate",
         prompt=prompt,
@@ -33,7 +32,6 @@ def image_generate(
         size=size,
         refs=refs,
         out=out,
-        folder=folder,
     ))
 
 
@@ -42,18 +40,18 @@ def image_analyze(
     path: str = typer.Argument(..., help="Image file to analyze."),
     question: Optional[str] = typer.Argument(default=None, help="Optional question or instruction. Default: describe the image."),
     model: str = typer.Option("google/gemini-2.5-flash-preview", "--model", help="Vision model ID or alias."),
-    folder: Optional[str] = typer.Option(None, "--folder", help="Project root holding spend-approval.yaml (see `parallax approve spend`). Required: analyze is a paid vision call even in PARALLAX_TEST_MODE."),
 ) -> int:
-    """Describe an image with a vision model. Spends money; refused unless a human budget is recorded for --folder."""
+    """Describe an image with a vision model. Spends money; prints the estimated cost first."""
     return _run_analyze(SimpleNamespace(
         image_command="analyze",
         path=path,
         question=question,
         model=model,
-        folder=folder,
     ))
 
 
+# Reservation ceiling (not a price) for one vision call: OpenRouter returns no price before the call.
+VISION_CALL_ESTIMATE_USD = 0.01
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 
@@ -61,7 +59,8 @@ def _run_generate(args) -> int:
     from pathlib import Path
     from ..models import resolve
     from ..openrouter import generate_image, InsufficientCreditsError
-    from ..spend_guard import VISION_CALL_ESTIMATE_USD, require_approval
+    from ..shim import is_test_mode
+    from ..preflight import print_estimate
 
     out_file: Path | None = None
     out_dir: Path | None = None
@@ -83,7 +82,8 @@ def _run_generate(args) -> int:
         )
     try:
         estimate = resolve(args.model, kind="image").cost_usd + (VISION_CALL_ESTIMATE_USD if refs else 0.0)
-        require_approval(args.folder, estimate, f"image generate --model {args.model}")
+        if not is_test_mode():
+            print_estimate(f"image generate --model {args.model}", estimate)
         path = generate_image(
             args.prompt,
             args.model,
@@ -109,10 +109,10 @@ def _run_generate(args) -> int:
 def _run_analyze(args) -> int:
     from pathlib import Path
     from ..openrouter import analyze_image
-    from ..spend_guard import VISION_CALL_ESTIMATE_USD, require_approval
+    from ..preflight import print_estimate
 
     try:
-        require_approval(args.folder, VISION_CALL_ESTIMATE_USD, f"image analyze --model {args.model}", stubbed_in_test_mode=False)
+        print_estimate(f"image analyze --model {args.model}", VISION_CALL_ESTIMATE_USD)
         result = analyze_image(Path(args.path), question=args.question, model=args.model)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
