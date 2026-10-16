@@ -649,3 +649,20 @@ def test_validate_reports_each_pacing_warning_once(tmp_path, capsys):
     result = json.loads(capsys.readouterr().out)
     assert any(w["code"] == "opening_long_hold" for w in result["warnings"])
     assert "warnings" not in result["opening_pacing"] and result["opening_pacing"]["cuts_before_6s"] == 0
+
+
+def test_answered_reference_reaches_the_plan_and_is_not_called_ignored(tmp_path, capsys):
+    from parallax.planner import plan_from_brief
+    brief = _scenes_brief(tmp_path, [{"prompt": "desk"}, {"prompt": "street"}],
+                          assets={"provided": [{"path": "unused.png", "kind": "style_ref"}]})
+    _png(tmp_path / "unused.png")
+    _png(tmp_path / "refs/crunch.png")
+    _resolve(tmp_path, brief, "--gate", "editorial-reference", "--choice", "supplied", "--asset", "refs/crunch.png", "--scenes", "1")
+    _resolve(tmp_path, brief, "--gate", "editorial-reference", "--choice", "no_reference", "--reason", "x", "--scenes", "0")
+    capsys.readouterr()
+    plan = yaml.safe_load(plan_from_brief(brief, tmp_path).plan_path.read_text())
+    out = capsys.readouterr().out
+    assert Brief.from_yaml(brief).assets.provided[1].kind == "style_ref"
+    assert plan["scenes"][1]["reference_images"] == ["refs/crunch.png"] and "reference_images" not in plan["scenes"][0]
+    assert "refs/crunch.png" not in out, "a file consumed through image_refs is not ignored"
+    assert "'unused.png' provided but not wired into plan" in out, "genuinely unused assets still warn"

@@ -241,8 +241,10 @@ def plan_from_brief(
         plan["product_image"] = product_image
 
     # Warn about any provided asset kind that isn't wired into the plan.
+    # A style_ref listed in a scene's image_refs reaches still generation as that scene's reference_images, so it is consumed.
+    used_by_scene = {ref for scene in brief.script.scenes for ref in scene.image_refs}
     for asset in brief.assets.provided:
-        if asset.kind not in _WIRED_ASSET_KINDS:
+        if asset.kind not in _WIRED_ASSET_KINDS and asset.path not in used_by_scene:
             print(
                 f"WARNING: {asset.kind} asset '{asset.path}' provided but not wired into plan"
                 f" — will be ignored",
