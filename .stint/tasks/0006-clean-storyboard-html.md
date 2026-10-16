@@ -1,11 +1,17 @@
 ---
-title: Clean storyboard HTML layout and remove opening shots section
-status: in_progress
+id: "0006"
+title: "Clean storyboard HTML layout and remove opening shots section"
+status: done
 priority: p1
 size: s
-created: 2026-10-16T15:14:00Z
-updated: 2026-10-16T15:14:00Z
-started: 2026-10-16T15:14:00Z
+created_at: "2026-10-16T15:14:00Z"
+completed_at: "2026-10-16T15:19:18Z"
+blocked_by: []
+gh_issue: []
+area:
+  - "storyboard"
+tags:
+  - "storyboard"
 ---
 
 # Clean storyboard HTML layout and remove opening shots section
