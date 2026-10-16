@@ -25,6 +25,7 @@ TOPICS: dict[str, dict] = {
             "--scene N": "Render only scene N, not the full pipeline.",
             "--hq": "Use premium-tier models.",
             "--resolution WxH": "Writes `resolution` into the plan being run (also on `plan`).",
+            "--stills-only": "Generate stills only (writes `stills_only: true` into the plan; also on `plan`); skips voiceover, animation, and assembly.",
             "--debug 1|2|3": "Burn a debug overlay on every scene (1 index, 2 +prompt, 3 +script and motion).",
         },
         "plan_settings": "Model, caption, headline, and transition settings live in plan.yaml, not brief.yaml. `parallax schema plan` lists every field with its default; unknown or renamed fields are rejected at load.",
@@ -34,7 +35,7 @@ TOPICS: dict[str, dict] = {
         },
         "dry_run": "PARALLAX_TEST_MODE=1 runs every stage on stub assets and writes nothing back into plan.yaml (no still_path, clip_path, audio locks), so it is safe on the real plan and the real cost estimate still counts those scenes as unlocked. Stub files land under <folder>/parallax/ and are overwritten, not reused, by a real run.",
         "resolution": "Output resolution comes from plan `resolution` (or `--resolution`). When unset it is the largest resolution among the scenes' existing clip_path files, else the aspect default (9:16 is 720x1280, 16:9 1920x1080, 1:1 1080x1080). Locking or adding a clip can therefore change it between runs: set `resolution` explicitly to pin it. Animation requests use a cheaper `animate_resolution` (9:16 default 480x854) that assembly scales up.",
-        "stills_only": "Plan field `stills_only: true` runs only the stills stage: no audio, animation, or assembly. Use it in a separate execution plan to generate and approve stills first.",
+        "stills_only": "Plan field `stills_only: true` (or `--stills-only` on `plan` and `produce`) runs only the stills stage: no audio, animation, or assembly. Use it to generate and approve stills first, including before `motion_graphic` clips are rendered.",
         "review_checkpoints": [
             "Storyboard: `parallax storyboard --json`, answer open gates, show storyboard-package/storyboard.html, collect feedback on scene breakdown and treatments.",
             "Stills: after storyboard approval, generate stills (stills_only plan), inspect them against the scene/reference map, lock the approved ones.",
@@ -47,7 +48,7 @@ TOPICS: dict[str, dict] = {
     },
     "asset_locking": {
         "summary": "Approved assets are locked in plan.yaml so a re-run regenerates only unlocked scenes. Unlocked scenes cost money.",
-        "automatic": "`produce` writes each generated still (`still_path`) and animated clip (`clip_path`) back into the working plan.yaml as it goes, so an interrupted or repeated run reuses them. It patches only that scene's field and keeps your other edits.",
+        "automatic": "`produce` writes each generated still (`still_path`) and animated clip (`clip_path`) back into the working plan.yaml (and `source_brief` brief.yaml when present, refreshing `storyboard-package/`) as it goes, so an interrupted or repeated run reuses them. It patches only that scene's field and keeps your other edits.",
         "scene_locks": {
             "still_path": "Reuse this image instead of generating one.",
             "clip_path": "Reuse this clip instead of animating. Required for scene_type: motion_graphic.",
@@ -110,7 +111,7 @@ TOPICS: dict[str, dict] = {
         "contract": {
             "brief_scene": "scene_type: motion_graphic plus clip_path (a rendered MP4 under the project folder). Optional still_path for the poster. `prompt` and `motion_prompt` describe the graphic for review.",
             "storyboard": "A scene with no existing clip file is storyboarded with advisory `motion_graphic_clip_missing`, and `produce` stays blocked (`blocked_by`) until the clip exists.",
-            "plan_and_produce": "`parallax plan` and `plan.yaml` loading reject a motion_graphic scene without clip_path; `produce` fails fast if the clip file is missing. It never falls through to paid image or video generation.",
+            "plan_and_produce": "`parallax plan` (without `--stills-only`) and full `plan.yaml` loading reject a motion_graphic scene without clip_path; `produce` fails fast if the clip file is missing. `--stills-only` allows planning and generating non-graphic stills before motion_graphic clips exist. It never falls through to paid image or video generation.",
             "reference_gate": "motion_graphic scenes are excluded from the editorial reference gate.",
             "animate": "scene_type implies `animate`; setting it inconsistently (a motion_graphic with animate: true) is a validation error.",
         },
@@ -135,6 +136,7 @@ TOPICS: dict[str, dict] = {
         ],
         "workflow": [
             "Before rendering, fix the narration, exact on-screen text, visual hierarchy, aspect, resolution, and frame rate.",
+            "When generating or authoring `scene_type: motion_graphic` layout posters (`still_path`) or animated clips (`clip_path`), use the Remotion skill (`remotion-best-practices` / `create-remotion-geist`) if available in the agent environment, adapting the visual style to the project's supplied references rather than a default template theme.",
             "Review a layout poster first. A silent timing sketch may use estimated duration; label it a preview.",
             "After narration approval, render with measured scene boundaries (`parallax storyboard --timing <folder>/parallax/output/vN/manifest.yaml`, which carries index, start_s, end_s per scene) and scene-relative cue times; keep estimated durations out of duration_s locks.",
             "Set clip_path in the brief, run `parallax storyboard` again, then plan and validate.",
@@ -148,7 +150,7 @@ TOPICS: dict[str, dict] = {
             "Use bounded text layout and inspect rendered frames; fix the template, not one overflowing card.",
             "Do not independently infer a second timing map: reuse the assembler's scene boundaries and word cues.",
         ],
-        "renderer": "Any local renderer that satisfies the output contract (e.g. Remotion). Renderer choice does not dictate aesthetic. If a repeated operation needs engine access, report the missing CLI operation instead of adding a project-specific helper.",
+        "renderer": "Use the Remotion skill (`remotion-best-practices` / `create-remotion-geist`) if available in the agent environment when generating or authoring `scene_type: motion_graphic` layout posters (`still_path`) or animated clips (`clip_path`), adapting the visual style to the project's supplied references rather than a default template theme. Any local renderer that satisfies the output contract works; renderer choice does not dictate aesthetic. If a repeated operation needs engine access, report the missing CLI operation instead of adding a project-specific helper.",
         "next": "voiceover_broll",
     },
     "voiceover_broll": {

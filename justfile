@@ -22,9 +22,12 @@ pr-install pr:
     set -euo pipefail
     install_dir="$HOME/.parallax-pr-{{pr}}"
     bin_path="$HOME/.local/bin/parallax-pr{{pr}}"
+    constraints="$(mktemp)"
+    trap 'rm -f "$constraints"' EXIT
     mkdir -p "$(dirname "$bin_path")"
+    uv export --frozen --no-hashes --no-emit-project --no-dev -o "$constraints"
     uv venv "$install_dir"
-    uv pip install --python "$install_dir/bin/python" .
+    uv pip install --python "$install_dir/bin/python" --constraints "$constraints" .
     printf '#!/usr/bin/env bash\nexec "%s/bin/parallax" "$@"\n' "$install_dir" > "$bin_path"
     chmod +x "$bin_path"
     echo "Installed parallax-pr{{pr}}"

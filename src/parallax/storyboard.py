@@ -166,7 +166,9 @@ def _missing_clip_advisory(scene) -> dict:
         "message": f"Motion graphic: {where}. Parallax does not author or generate this clip; production refuses to run until it exists.",
         "remedies": [{
             "id": "supply_clip",
-            "how": "Parallax does not author this clip. A human or another tool must render the clip locally and set clip_path in the brief. Parallax enforces no clip contract: it only checks the file exists. "
+            "how": "Parallax does not author this clip. A human or another tool must render the clip locally and set clip_path in the brief. "
+                   "Use the Remotion skill (`remotion-best-practices` / `create-remotion-geist`) if available in the agent environment, adapting the visual style to the project's supplied references rather than a default template theme. "
+                   "Parallax enforces no clip contract: it only checks the file exists. "
                    "Convention (`parallax guide motion_graphic`, not validated): silent MP4 at the project output dimensions and frame rate, with the measured scene duration.",
         }],
     }

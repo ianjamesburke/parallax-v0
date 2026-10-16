@@ -527,6 +527,7 @@ def test_missing_motion_graphic_clip_is_an_advisory_with_a_plain_remedy(tmp_path
     assert advisory["scene"] == 0 and "clips/collage.mp4" in advisory["message"]
     how = advisory["remedies"][0]["how"]
     assert "does not author" in how and "enforces no clip contract" in how and "not validated" in how
+    assert "remotion-best-practices" in how and "create-remotion-geist" in how
     (tmp_path / "clips").mkdir()
     (tmp_path / "clips/collage.mp4").write_bytes(b"x")
     assert not [a for a in _storyboard(tmp_path, brief, capsys)["advisories"] if a["kind"] == "motion_graphic_clip_missing"]
@@ -666,3 +667,83 @@ def test_answered_reference_reaches_the_plan_and_is_not_called_ignored(tmp_path,
     assert plan["scenes"][1]["reference_images"] == ["refs/crunch.png"] and "reference_images" not in plan["scenes"][0]
     assert "refs/crunch.png" not in out, "a file consumed through image_refs is not ignored"
     assert "'unused.png' provided but not wired into plan" in out, "genuinely unused assets still warn"
+
+
+def test_prior_scene_still_path_is_allowed_in_continuity_image_refs(tmp_path, capsys):
+    from parallax.reference_gates import undeclared_image_refs
+    _png(tmp_path / "parallax/assets/scene_00_still.png")
+    brief = _scenes_brief(tmp_path, [
+        {"prompt": "first shot", "still_path": "parallax/assets/scene_00_still.png"},
+        {"prompt": "same setting continuity shot", "image_refs": ["parallax/assets/scene_00_still.png"]},
+    ])
+    assert undeclared_image_refs(Brief.from_yaml(brief)) == []
+    assert cli.main(["validate", "--folder", str(tmp_path), "--brief", str(brief)]) == 0
+    assert json.loads(capsys.readouterr().out)["valid"] is True
+    manifest = _storyboard(tmp_path, brief, capsys)
+    assert manifest["missing_assets"] == []
+
+
+def test_real_run_syncs_locked_still_and_clip_into_brief_and_refreshes_storyboard_package(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from parallax import openrouter
+    from parallax.planner import plan_from_brief
+    from parallax.produce import run_plan
+    from parallax.settings import ProductionMode
+    from parallax.stages import _lock_field_in_plan
+
+    monkeypatch.delenv("PARALLAX_TEST_MODE", raising=False)
+    monkeypatch.setenv("PARALLAX_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("PARALLAX_USAGE_LOG", str(tmp_path / "usage.ndjson"))
+
+    brief_path = tmp_path / "brief.yaml"
+    brief_path.write_text(
+        "# Preserve this comment in brief.yaml\n"
+        "goal: Sync stills into storyboard\n"
+        "aspect: '9:16'\n"
+        "reference_decisions:\n"
+        "  - gate: editorial-reference\n"
+        "    choice: no_reference\n"
+        "    scenes: [0]\n"
+        "    note: intentional\n"
+        "script:\n"
+        "  scenes:\n"
+        "    - index: 0\n"
+        "      shot_type: broll\n"
+        "      scene_type: still\n"
+        "      vo_text: One two.\n"
+        "      prompt: Morning mug on a wooden desk\n",
+        encoding="utf-8",
+    )
+
+    plan_res = plan_from_brief(brief_path, tmp_path, stills_only=True)
+    assert plan_res.ok and plan_res.plan_path is not None
+
+    def fake_generate_image(*, out_dir, **kwargs):
+        out = Path(out_dir) / "raw_00.png"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (720, 1280), "#224466").save(out)
+        return str(out)
+
+    monkeypatch.setattr(openrouter, "check_credits", lambda **kw: SimpleNamespace(remaining=10.0, total=10.0, used=0.0))
+    monkeypatch.setattr(openrouter, "generate_image", fake_generate_image)
+
+    result = run_plan(tmp_path, plan_res.plan_path, mode=ProductionMode.REAL)
+    assert result.status == "ok", result.error
+
+    brief_text = brief_path.read_text(encoding="utf-8")
+    assert "# Preserve this comment in brief.yaml" in brief_text
+    reloaded = Brief.from_yaml(brief_path)
+    assert reloaded.script.scenes[0].still_path == "parallax/assets/scene_00_still.png"
+
+    # Also verify _lock_field_in_plan syncs clip_path back to brief.yaml
+    clip_file = tmp_path / "parallax/assets/scene_00_animated.mp4"
+    clip_file.write_bytes(b"clip-bytes")
+    plan_dict = yaml.safe_load(plan_res.plan_path.read_text(encoding="utf-8"))
+    _lock_field_in_plan(plan_res.plan_path, plan_dict, 0, "clip_path", str(clip_file), tmp_path)
+    assert Brief.from_yaml(brief_path).script.scenes[0].clip_path == "parallax/assets/scene_00_animated.mp4"
+
+    pkg = tmp_path / "storyboard-package"
+    assert (pkg / "storyboard.html").is_file()
+    assert (pkg / "contact-sheet.jpg").is_file()
+    assert (pkg / "assets/parallax/assets/scene_00_still.png").is_file()
+    assert "Supplied still" in (pkg / "storyboard.html").read_text(encoding="utf-8")

@@ -257,7 +257,7 @@ class Brief(BaseModel):
 
     # ----------------------------------------------------- Plan derivation
 
-    def to_plan_skeleton(self) -> dict:
+    def to_plan_skeleton(self, *, stills_only: bool = False) -> dict:
         """Project the brief into a partial plan.yaml dict.
 
         The planner (`parallax plan`) is responsible for filling in
@@ -265,16 +265,18 @@ class Brief(BaseModel):
         provider-specific fields. This method gives it a starting point
         with the brief's deterministic fields already populated.
         """
-        for scene in self.script.scenes:
-            if scene.scene_type == "motion_graphic" and not scene.clip_path:
-                raise ValueError(
-                    f"scene {scene.index}: motion_graphic needs a locally rendered clip_path before planning. "
-                    "Review the storyboard, render the graphic, then add its clip_path; AI generation is not supported for this scene type."
-                )
+        if not stills_only:
+            for scene in self.script.scenes:
+                if scene.scene_type == "motion_graphic" and not scene.clip_path:
+                    raise ValueError(
+                        f"scene {scene.index}: motion_graphic needs a locally rendered clip_path before planning. "
+                        "Review the storyboard, render the graphic, then add its clip_path; AI generation is not supported for this scene type."
+                    )
         return {
             "aspect": self.aspect,
             "voice": self.voice,
             "voice_speed": self.voice_speed,
+            **({"stills_only": True} if stills_only else {}),
             **({"headline": self.headline} if self.headline else {}),
             **({"pronunciations": self.pronunciations} if self.pronunciations else {}),
             "scenes": [

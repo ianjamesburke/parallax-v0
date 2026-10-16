@@ -22,11 +22,14 @@ names do NOT silently work.
 
 from __future__ import annotations
 
+import contextvars
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+_stills_only_ctx: contextvars.ContextVar[bool] = contextvars.ContextVar("_stills_only_ctx", default=False)
 
 
 _ALLOWED_ASPECTS = ("9:16", "16:9", "1:1", "4:3", "3:4")
@@ -167,7 +170,7 @@ class PlanScene(BaseModel):
     def _scene_type_animation(cls, data: Any) -> Any:
         from .scene_types import normalize_scene_type
         data = normalize_scene_type(data)
-        if isinstance(data, dict) and data.get("scene_type") == "motion_graphic" and not data.get("clip_path"):
+        if isinstance(data, dict) and data.get("scene_type") == "motion_graphic" and not data.get("clip_path") and not _stills_only_ctx.get():
             raise ValueError(f"scene {data.get('index', '?')}: motion_graphic requires a locally rendered clip_path; AI generation is not supported")
         return data
 
@@ -251,12 +254,32 @@ class Plan(BaseModel):
     # Scenes
     scenes: list[PlanScene]
 
+    @model_validator(mode="wrap")
+    @classmethod
+    def _validate_with_stills_only_context(cls, data: Any, handler: Any) -> "Plan":
+        stills_only = bool(data.get("stills_only")) if isinstance(data, dict) else False
+        token = _stills_only_ctx.set(stills_only)
+        try:
+            return handler(data)
+        finally:
+            _stills_only_ctx.reset(token)
+
     @model_validator(mode="before")
     @classmethod
     def _reject_renamed_top_level(cls, data: Any) -> Any:
         if isinstance(data, dict):
             _check_renamed(data, scope="plan")
         return data
+
+    @model_validator(mode="after")
+    def _require_motion_graphic_clip(self) -> "Plan":
+        if not self.stills_only:
+            for scene in self.scenes:
+                if scene.scene_type == "motion_graphic" and not scene.clip_path:
+                    raise ValueError(
+                        f"scene {scene.index}: motion_graphic requires a locally rendered clip_path; AI generation is not supported"
+                    )
+        return self
 
     @field_validator("trim_pauses")
     @classmethod

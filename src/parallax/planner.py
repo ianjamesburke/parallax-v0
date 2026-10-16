@@ -42,6 +42,7 @@ _TOP_LEVEL_ORDER = (
     "image_model",
     "video_model",
     "caption_style",
+    "stills_only",
     "source_brief",
     "character_image",
     "product_image",
@@ -175,6 +176,7 @@ def plan_from_brief(
     video_model: str = "draft",
     voice_model: str = "tts-mini",
     caption_style: str = "anton",
+    stills_only: bool = False,
 ) -> PlanResult:
     """Translate a brief.yaml into a fully-resolved plan.yaml.
 
@@ -221,7 +223,7 @@ def plan_from_brief(
         )
 
     # All assets present — build the plan.
-    plan = brief.to_plan_skeleton()
+    plan = brief.to_plan_skeleton(stills_only=stills_only)
     plan["image_model"] = image_model
     plan["video_model"] = video_model
     plan["voice_model"] = voice_model

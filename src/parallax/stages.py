@@ -136,17 +136,57 @@ def _is_clip_reusable(clip: str | None, mode: ProductionMode) -> bool:
     return Path(clip).exists()
 
 
+def _lock_field_in_brief(brief_path: Path, scene_idx: int, field_name: str, locked_path: str) -> None:
+    """Write a locked scene asset path (still_path or clip_path) back into brief.yaml, preserving comments."""
+    import os
+    import tempfile
+    from ruamel.yaml import YAML
+
+    ryaml = YAML()
+    ryaml.preserve_quotes = True
+    ryaml.indent(mapping=2, sequence=4, offset=2)
+    try:
+        with brief_path.open("r", encoding="utf-8") as fp:
+            doc = ryaml.load(fp)
+    except OSError:
+        return
+    if not isinstance(doc, dict):
+        return
+    scenes = (doc.get("script") or {}).get("scenes") or []
+    patched = False
+    for scene in scenes:
+        if isinstance(scene, dict) and scene.get("index") == scene_idx:
+            scene[field_name] = locked_path
+            patched = True
+            break
+    if not patched:
+        return
+    fd, tmp = tempfile.mkstemp(dir=brief_path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fp:
+            ryaml.dump(doc, fp)
+        os.replace(tmp, brief_path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 def _lock_field_in_plan(plan_path: Path, plan: dict, scene_idx: int, field_name: str, value: str, folder: Path) -> None:
     """Write an asset path back into the plan YAML so the scene is locked on future runs.
 
     Reads the current on-disk YAML, patches only the specific scene/field, and writes
     back with yaml.safe_dump — preserving any user edits made during or between runs.
+    When `source_brief` is set on the plan and `field_name` is `still_path` or `clip_path`,
+    also updates the matching scene in `brief.yaml` via ruamel.yaml.
     """
     import yaml
     try:
         locked_path = str(Path(value).relative_to(folder))
     except ValueError:
-        locked_path = value
+        try:
+            locked_path = str(Path(value).expanduser().resolve().relative_to(Path(folder).expanduser().resolve()))
+        except ValueError:
+            locked_path = value
     with _plan_lock:
         # Patch the in-memory dict so downstream stages in this run see the new value.
         for scene in plan.get("scenes", []):
@@ -183,6 +223,14 @@ def _lock_field_in_plan(plan_path: Path, plan: dict, scene_idx: int, field_name:
         except Exception as exc:
             runlog.event("plan.lock.error", level="ERROR", scene=scene_idx, field=field_name, error=str(exc))
             raise RuntimeError(f"plan lock failed: could not write {plan_path}: {exc}") from exc
+
+        source_brief = plan.get("source_brief") or disk_plan.get("source_brief")
+        if field_name in ("still_path", "clip_path") and source_brief:
+            brief_path = Path(source_brief).expanduser()
+            if not brief_path.is_absolute():
+                brief_path = Path(folder).expanduser() / brief_path
+            if brief_path.is_file():
+                _lock_field_in_brief(brief_path, scene_idx, field_name, locked_path)
 
 
 def _lock_plan_fields(plan_path: Path, plan: dict, folder: Path, **fields: str) -> None:
@@ -408,6 +456,10 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
                 f"ratio. Choices: {sorted(VALID_ASPECTS)}"
             )
         if s.get("scene_type") == "motion_graphic":
+            if getattr(settings, "stills_only", False):
+                poster = s.get("still_path")
+                still_paths[idx] = str(Path(poster) if Path(poster).is_absolute() else (settings.folder / poster)) if poster else ""
+                continue
             clip = Path(s.get("clip_path") or "").expanduser()
             clip = clip if clip.is_absolute() else settings.folder / clip
             if not _is_clip_reusable(str(clip), settings.mode):

@@ -193,3 +193,13 @@ def test_motion_graphic_placeholder_command_in_the_guide_renders_a_usable_clip(t
     (tmp_path / "graphics" / "g").mkdir(parents=True)
     subprocess.run(shlex.split(clip_cmd), cwd=tmp_path, check=True)
     assert (tmp_path / "graphics" / "g" / "final.mp4").stat().st_size > 0
+
+
+def test_motion_graphic_guide_instructs_using_remotion_skill(capsys):
+    topic = _topic(capsys, "motion_graphic")
+    renderer = topic["renderer"]
+    workflow = " ".join(topic["workflow"])
+    for text in (renderer, workflow):
+        assert "remotion-best-practices" in text
+        assert "create-remotion-geist" in text
+        assert "supplied references" in text
