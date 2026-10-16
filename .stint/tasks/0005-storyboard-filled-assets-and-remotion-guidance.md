@@ -1,10 +1,11 @@
 ---
 id: "0005"
 title: "Sync generated stills/clips into brief.yaml and storyboard-package; add Remotion skill guidance"
-status: in-progress
+status: done
 priority: p1
 size: m
 created_at: "2026-10-16T07:41:00Z"
+completed_at: "2026-10-16T08:02:43Z"
 blocked_by: []
 gh_issue: []
 area:
