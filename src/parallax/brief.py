@@ -76,6 +76,8 @@ class ProvidedAsset(BaseModel):
     kind: Literal["style_ref", "product_ref", "character_ref"]
     description: str | None = None
     source_url: str | None = None
+    # None: global wiring (planner uses it for every matching scene). A list: used only for these scenes, via image_refs.
+    scene_scope: list[int] | None = None
     origin: Literal["supplied", "generated", "official"] = "supplied"
     review_status: Literal["pending", "approved"] = "pending"
 
@@ -89,6 +91,21 @@ class ProvidedAsset(BaseModel):
             raise ValueError("source_url must be an http(s) URL with a hostname")
         return value
 
+
+
+class ReferenceDecision(BaseModel):
+    """Audit record of how a storyboard reference gate was resolved.
+
+    Written by `parallax reference resolve`. A `no_reference` decision is what
+    closes a gate for scenes that intentionally have no image reference.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    gate: Literal["editorial-reference", "product-reference"]
+    choice: Literal["supplied", "official", "generated_anchor", "no_reference"]
+    scenes: list[int]
+    note: str  # no_reference: reason; generated_anchor: who authorized the spend; else provenance
+    asset: str | None = None  # generated_anchor only: None means authorized but not yet generated
 
 
 class GeneratedAsset(BaseModel):
@@ -185,9 +202,12 @@ class Brief(BaseModel):
     # When true, the planner auto-sets `reference: true` on every character scene
     # so the engine uses `character_image` as the reference for still generation.
     character_reference: bool = False
+    # True when the narration text is final: pacing advisories are flagged locked_by_narration. They still stand.
+    narration_locked: bool = False
     pronunciations: dict[str, str] = Field(default_factory=dict)
     success_criteria: list[str] = Field(default_factory=list)
     assets: Assets = Field(default_factory=Assets)
+    reference_decisions: list[ReferenceDecision] = Field(default_factory=list)
     script: Script
 
     # ---------------------------------------------------------------- I/O

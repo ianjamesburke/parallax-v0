@@ -19,6 +19,7 @@ def _validate_cmd(
     brief: Optional[str] = typer.Option(None, "--brief", help="Path to a brief.yaml to validate."),
     plan: Optional[str] = typer.Option(None, "--plan", help="Path to a plan.yaml to validate."),
 ) -> int:
+    """Validate a brief or plan without spending; prints JSON."""
     if brief is None and plan is None:
         typer.echo("Error: one of --brief or --plan is required", err=True)
         return 2

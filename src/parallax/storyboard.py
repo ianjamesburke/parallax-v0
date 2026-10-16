@@ -6,13 +6,15 @@ from html import escape
 from io import BytesIO
 from pathlib import Path
 import math
+import os
+from urllib.parse import quote
 
-import yaml
 import re
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .brief import Brief, ProvidedAsset
+from .reference_gates import EDITORIAL, open_gates
 from .pacing import estimate_timeline, review_opening_pacing
 
 
@@ -37,13 +39,13 @@ footer{color:var(--muted);font-size:13px;margin-top:40px}@media(max-width:700px)
 """
 
 
-def _asset(folder: Path, raw_path: str, label: str, *, video: bool = False) -> str:
+def _asset(folder: Path, raw_path: str, label: str, *, video: bool = False, link_base: Path | None = None) -> str:
     path = Path(raw_path).expanduser()
     path = (path if path.is_absolute() else folder / path).resolve()
     caption = f"{escape(label)} · {escape(raw_path)}"
     if not path.is_file():
         return f'<figure class="asset missing"><strong>Missing asset</strong><figcaption>{caption}</figcaption></figure>'
-    uri = escape(path.as_uri(), quote=True)
+    uri = escape(quote(Path(os.path.relpath(path, link_base)).as_posix()) if link_base else path.as_uri(), quote=True)
     if video:
         media = f'<video controls preload="metadata" src="{uri}"></video>'
     else:
@@ -60,7 +62,7 @@ def _asset(folder: Path, raw_path: str, label: str, *, video: bool = False) -> s
     return f'<figure class="asset">{media}<figcaption><a href="{uri}">{caption}</a></figcaption></figure>'
 
 
-def _reference_groups(brief: Brief, folder: Path) -> str:
+def _reference_groups(brief: Brief, folder: Path, link_base: Path | None) -> str:
     """Group reference provenance without treating pending assets as approved."""
     groups: dict[str, list[ProvidedAsset]] = {
         "Source style and supplied references": [],
@@ -77,7 +79,7 @@ def _reference_groups(brief: Brief, folder: Path) -> str:
         cards = []
         for asset in assets:
             label = asset.description or asset.kind.replace("_", " ")
-            preview = _asset(folder, asset.path, label)
+            preview = _asset(folder, asset.path, label, link_base=link_base)
             provenance = f'<p class="meta">{asset.origin.title()} · Review: {asset.review_status}</p>'
             source = (
                 f'<p class="meta"><a href="{escape(asset.source_url, quote=True)}" rel="noopener noreferrer">Source</a></p>'
@@ -90,58 +92,14 @@ def _reference_groups(brief: Brief, folder: Path) -> str:
     return ''.join(sections) + '<p class="meta">References guide the look; they are not scene assets. Review labels record the authored status. Assign scene image_refs explicitly for image generation.</p>'
 
 
-def _reference_and_variety_review(brief: Brief) -> tuple[str, dict[int, str]]:
-    """Return pre-generation advisories for reference coverage and visual variety.
-
-    These are intentionally review gates, not validation errors: an abstract
-    graphic can legitimately have no image input, while an editorial still
-    without any style anchor deserves a human decision before it is billed.
-    """
+def _variety_warnings(brief: Brief) -> list[dict]:
+    """Visual-variety advisories: repetitive motion-graphic cards."""
     scenes = brief.script.scenes
-    style_anchors = [asset for asset in brief.assets.provided
-                     if asset.kind in {"style_ref", "character_ref"}]
-    scene_advisories: dict[int, str] = {}
-    warnings: list[str] = []
-
-    uncovered = [scene for scene in scenes
-                 if scene.resolved_scene_type != "motion_graphic" and not scene.image_refs]
-    if uncovered:
-        indexes = ", ".join(f"{scene.index:02d}" for scene in uncovered)
-        anchor_note = (
-            "A global style/character reference exists, but these scenes do not name a scene reference."
-            if style_anchors else
-            "No global style or character reference exists."
-        )
-        warnings.append(
-            f"{len(uncovered)} editorial still/animation scene(s) have no explicit image reference "
-            f"({indexes}). {anchor_note} Confirm the intentional no-reference choice or attach a compact style/character anchor before paid still generation."
-        )
-        for scene in uncovered:
-            scene_advisories[scene.index] = "No scene image reference — confirm or attach an approved style/character anchor before generation."
-
-    product_pattern = re.compile(r"\b(?:app|product|logo|ui|brand)\b", re.IGNORECASE)
-    product_exclusion = re.compile(
-        r"\b(?:no|without|avoid|generic|abstract)\s+(?:legible\s+)?(?:branded?\s+)?(?:app|product|logo|ui|brand)\b",
-        re.IGNORECASE,
-    )
-    product_missing = [scene for scene in scenes
-                       if not scene.image_refs
-                       and product_pattern.search(f"{scene.prompt} {scene.on_screen_text}")
-                       and not product_exclusion.search(f"{scene.prompt} {scene.on_screen_text}")]
-    if product_missing:
-        indexes = ", ".join(f"{scene.index:02d}" for scene in product_missing)
-        warnings.append(
-            f"Product/brand-dependent scene(s) {indexes} have no assigned reference. Keep placeholders explicit; attach official logo, product, or UI material before claiming a final branded treatment."
-        )
-        for scene in product_missing:
-            current = scene_advisories.get(scene.index, "")
-            scene_advisories[scene.index] = (current + " " if current else "") + "Brand/product reference missing."
-
+    warnings: list[dict] = []
     graphic_count = sum(scene.resolved_scene_type == "motion_graphic" for scene in scenes)
     if scenes and graphic_count / len(scenes) > 0.4:
-        warnings.append(
-            f"{graphic_count} of {len(scenes)} scenes are motion graphics ({graphic_count / len(scenes):.0%}). Review the beat map for editorial/action alternatives before generating a repetitive card sequence."
-        )
+        warnings.append({"kind": "motion_graphic_share", "message": (
+            f"{graphic_count} of {len(scenes)} scenes are motion graphics ({graphic_count / len(scenes):.0%}). Review the beat map for editorial/action alternatives before generating a repetitive card sequence.")})
     run: list[int] = []
     longest_run: list[int] = []
     for scene in scenes:
@@ -152,59 +110,94 @@ def _reference_and_variety_review(brief: Brief) -> tuple[str, dict[int, str]]:
         else:
             run = []
     if len(longest_run) >= 3:
-        warnings.append(
+        warnings.append({"kind": "motion_graphic_run", "message": (
             "Consecutive motion-graphic run: " + ", ".join(f"{index:02d}" for index in longest_run) +
-            ". Break it with an editorial, product, or action beat unless the sequence is deliberately one continuous explainer."
-        )
-
-    if not warnings:
-        return "", scene_advisories
-    items = ''.join(f"<li>{escape(warning)}</li>" for warning in warnings)
-    return (
-        '<section class="gate"><h2>Reference and visual-variety review</h2>'
-        '<p class="meta">Pre-generation advisories. Resolve or explicitly accept these before paid still work.</p>'
-        f'<ul>{items}</ul></section>',
-        scene_advisories,
-    )
+            ". Break it with an editorial, product, or action beat unless the sequence is deliberately one continuous explainer.")})
+    return warnings
 
 
-def _scene_layout_and_composition_advisory(scene) -> str:
+SAFE_LINE_CHARS = 18  # longest on_screen_text line judged safe at 9:16 title size; a heuristic, not a measured layout
+
+
+def _scene_layout_and_composition_advisories(scene) -> list[dict]:
     """Catch likely overflow and multi-frame still directions before image work.
 
-    This is deliberately conservative. It identifies directions which require a
-    reviewer to choose a single frame or an explicit local multi-panel design;
-    it never attempts to split narration automatically.
+    Conservative: it identifies directions a reviewer must resolve by choosing one
+    frame, splitting the scene, or selecting an explicit local multi-panel
+    treatment (scene_type: motion_graphic). It never splits narration itself.
     """
-    messages: list[str] = []
+    advisories: list[dict] = []
     copy_lines = scene.on_screen_text.splitlines() if scene.on_screen_text else []
-    if any(len(line.strip()) > 18 for line in copy_lines):
-        messages.append("On-screen copy has a line longer than the 9:16 safe-layout heuristic. Wrap, shorten, or test it in the actual graphic template before approving.")
+    longest = max((len(line.strip()) for line in copy_lines), default=0)
+    if longest > SAFE_LINE_CHARS:
+        advisories.append({
+            "kind": "unsafe_vertical_text",
+            "message": f"On-screen copy has a line of {longest} characters; the 9:16 safe-layout heuristic is {SAFE_LINE_CHARS} per line. Wrap, shorten, or test it in the actual graphic template before approving.",
+            "threshold": {"max_chars_per_line": SAFE_LINE_CHARS, "longest_line_chars": longest},
+            "remedies": [
+                {"id": "wrap", "how": "Put a newline in on_screen_text (YAML `|` block) so every line is at most the threshold. Each line is measured separately."},
+                {"id": "shorten", "how": "Shorten the copy. on_screen_text is review copy, not narration, so editing it does not change the script."},
+            ],
+        })
+    if scene.resolved_scene_type == "motion_graphic":
+        return advisories
     direction = f"{scene.prompt} {scene.motion_prompt or ''}"
     compound = re.search(r"\b(?:diptych|split[ -]?screen|before[ /-]after|montage|collage)\b", direction, re.IGNORECASE)
     temporal_pair = re.search(r"\b(?:same .{0,80}\bthen\b|turns? .{0,80}\band\b .{0,80}\bwakes?)", direction, re.IGNORECASE)
     if compound or temporal_pair:
-        messages.append("Compound visual direction. Choose one representative generated frame, split it into separate scenes, or specify a deliberate code-authored multi-panel graphic; do not ask a single image generation to depict multiple scenes or moments.")
-    return " ".join(messages)
+        advisories.append({
+            "kind": "compound_direction",
+            "message": "Compound visual direction. Choose one representative generated frame, split it into separate scenes, or specify a deliberate code-authored multi-panel graphic (scene_type: motion_graphic); do not ask a single image generation to depict multiple scenes or moments.",
+            "remedies": [
+                {"id": "representative_frame", "how": "Rewrite prompt as one composition, e.g. the single most telling moment. Narration is unchanged."},
+                {"id": "split_scenes", "how": "Replace the scene with several scenes, each with one composition. Distribute the original vo_text across them in order at word boundaries; "
+                                               "the concatenated vo_text must equal the original narration exactly. A beat with no narration cannot be its own brief scene: vo_text is a required string, an empty one is accepted by the schema but alignment gives it about 0.05s, and BriefScene has no duration field (plan.yaml can pin duration_s after planning, by hand).",
+                 "narration": "distribute_verbatim"},
+                {"id": "motion_graphic", "how": "Set scene_type: motion_graphic and supply a locally rendered clip_path before production. No AI generation is used; the panel layout itself is not defined by Parallax."},
+            ],
+        })
+    return advisories
 
 
-def render_storyboard(brief: Brief, folder: str | Path, timeline: list[dict] | None = None) -> str:
-    """Return self-contained layout and image previews; video links stay local."""
-    root = Path(folder).expanduser().resolve()
-    concept_name = brief.concept_name or root.name or "Storyboard"
-    concept_title = f"{concept_name} · {brief.concept_id}" if brief.concept_id else concept_name
-    supplied_timing = timeline is not None
+def _missing_clip_advisory(scene) -> dict:
+    where = f"clip_path {scene.clip_path!r} does not exist" if scene.clip_path else "no clip_path is set"
+    return {
+        "kind": "motion_graphic_clip_missing",
+        "message": f"Motion graphic: {where}. Parallax does not author or generate this clip; production refuses to run until it exists.",
+        "remedies": [{
+            "id": "supply_clip",
+            "how": "Parallax does not author this clip. A human or another tool must render the clip locally and set clip_path in the brief. Parallax enforces no clip contract: it only checks the file exists. "
+                   "Convention (skills/parallax-v0/references/motion-graphics.md, not validated): silent MP4 at the project output dimensions and frame rate, with the measured scene duration.",
+        }],
+    }
+
+
+def _resolve_timeline(brief: Brief, timeline: list[dict] | None) -> tuple[list[dict], str]:
     if timeline is None:
-        timeline, timing_basis = estimate_timeline([scene.model_dump() for scene in brief.script.scenes])
-    else:
-        timing_basis = "supplied aligned timeline"
-        if [s.get("index") for s in timeline] != [s.index for s in brief.script.scenes]:
-            raise ValueError("storyboard timing scene indices/order must match the brief")
-        previous_end = 0.0
-        for scene in timeline:
-            start, end = float(scene["start_s"]), float(scene["end_s"])
-            if not math.isfinite(start) or not math.isfinite(end) or end <= start or abs(start - previous_end) > 0.001:
-                raise ValueError("storyboard timing must contain finite, positive, contiguous scene intervals starting at zero")
-            previous_end = end
+        return estimate_timeline([scene.model_dump() for scene in brief.script.scenes])
+    if [s.get("index") for s in timeline] != [s.index for s in brief.script.scenes]:
+        raise ValueError("storyboard timing scene indices/order must match the brief")
+    previous_end = 0.0
+    for scene in timeline:
+        start, end = float(scene["start_s"]), float(scene["end_s"])
+        if not math.isfinite(start) or not math.isfinite(end) or end <= start or abs(start - previous_end) > 0.001:
+            raise ValueError("storyboard timing must contain finite, positive, contiguous scene intervals starting at zero")
+        previous_end = end
+    return timeline, "supplied aligned timeline"
+
+
+def _pacing_with_lock(pacing: dict, narration_locked: bool) -> dict:
+    """Mark each warning with whether the brief declares the narration final. The warning still stands."""
+    return {**pacing, "warnings": [{**w, "locked_by_narration": narration_locked} for w in pacing["warnings"]]}
+
+
+def review_storyboard(brief: Brief, folder: str | Path, brief_path: str | Path, timeline: list[dict] | None = None) -> dict:
+    """Structured pre-generation review: timing, pacing, reference gates, advisories.
+
+    The HTML, QA notes, and handoff manifest all render from this one result.
+    """
+    supplied_timing = timeline is not None
+    timeline, timing_basis = _resolve_timeline(brief, timeline)
     first_word_start = None
     if supplied_timing and timeline:
         opening_words = timeline[0].get("words")
@@ -212,8 +205,60 @@ def render_storyboard(brief: Brief, folder: str | Path, timeline: list[dict] | N
             value = opening_words[0].get("start")
             if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0:
                 first_word_start = float(value)
-    pacing = review_opening_pacing(timeline, timing_basis, first_word_start_s=first_word_start)
-    reference_variety_html, reference_variety_advisories = _reference_and_variety_review(brief)
+    gates = open_gates(brief, folder, brief_path)
+    scene_advisories: dict[int, list[dict]] = {scene.index: _scene_layout_and_composition_advisories(scene) for scene in brief.script.scenes}
+    for scene in brief.script.scenes:
+        if scene.resolved_scene_type == "motion_graphic" and not (scene.clip_path and (Path(folder) / scene.clip_path).is_file()):
+            scene_advisories[scene.index].append(_missing_clip_advisory(scene))
+    for gate in gates:
+        message = ("No scene image reference — resolve the reference gate before generation."
+                   if gate["id"] == EDITORIAL else "Brand/product reference missing.")
+        for index in gate["scenes"]:
+            if str(index) in gate.get("authorized_scenes", {}):
+                scene_advisories[index].insert(0, {"kind": "generated_anchor_pending", "message": "Anchor authorized but not yet generated; attach it before `parallax produce`."})
+            else:
+                scene_advisories[index].insert(0, {"kind": gate["kind"], "message": message})
+    return {
+        "timeline": timeline,
+        "timing_basis": timing_basis,
+        "supplied_timing": supplied_timing,
+        "pacing": _pacing_with_lock(
+            review_opening_pacing(timeline, timing_basis, first_word_start_s=first_word_start), brief.narration_locked),
+        "gates": gates,
+        "variety": _variety_warnings(brief),
+        "scene_advisories": scene_advisories,
+    }
+
+
+def _gates_html(review: dict) -> str:
+    """Render open gates and variety warnings as one review section."""
+    if not review["gates"] and not review["variety"]:
+        return ''
+    gates = ''.join(
+        f'<li><strong>{escape(g["question"])}</strong><ul>'
+        + ''.join(f'<li>{escape(c["id"])}: {escape(c["summary"])} <span class="meta">{escape(c["human_decision"])}</span><br><code>{escape(c["command"])}</code></li>' for c in g["choices"])
+        + '</ul></li>' for g in review["gates"])
+    variety = ''.join(f'<li>{escape(w["message"])}</li>' for w in review["variety"])
+    return (
+        '<section class="gate"><h2>Reference and visual-variety review</h2>'
+        '<p class="meta">Pre-generation gates. A human answers each open gate before paid still work.</p>'
+        f'<ul>{gates}{variety}</ul></section>'
+    )
+
+
+def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_base: str | Path | None = None) -> str:
+    """Return self-contained layout and image previews.
+
+    Local file links are absolute unless `link_base` (the HTML's directory) is
+    given, which makes them relative so a package stays portable.
+    """
+    root = Path(folder).expanduser().resolve()
+    base = Path(link_base).expanduser().resolve() if link_base else None
+    concept_name = brief.concept_name or root.name or "Storyboard"
+    concept_title = f"{concept_name} · {brief.concept_id}" if brief.concept_id else concept_name
+    timeline, timing_basis, supplied_timing = review["timeline"], review["timing_basis"], review["supplied_timing"]
+    pacing = review["pacing"]
+    reference_variety_html = _gates_html(review)
     warning_items = ''.join(f'<li>{escape(w["message"])}</li>' for w in pacing["warnings"])
     review_items = ''.join(f'<li>{escape(item)}</li>' for item in pacing["visual_review_prompts"])
     pacing_html = (
@@ -235,19 +280,18 @@ def render_storyboard(brief: Brief, folder: str | Path, timeline: list[dict] | N
         total += duration
         timing_label = f'{duration:.2f}s supplied timing' if supplied_timing else f'~{duration:.1f}s reading estimate'
         scene_advisory = '<p class="meta">Opening pacing: review this hold longer than 3s.</p>' if any(w.get("scene_index") == scene.index for w in pacing["warnings"]) else ''
-        layout_advisory = _scene_layout_and_composition_advisory(scene)
-        combined_advisory = " ".join(filter(None, (reference_variety_advisories.get(scene.index), layout_advisory)))
+        combined_advisory = " ".join(a["message"] for a in review["scene_advisories"][scene.index])
         if combined_advisory:
             scene_advisory += '<p class="missing">' + escape(combined_advisory) + '</p>'
         media = []
         if scene.still_path:
-            media.append(_asset(root, scene.still_path, "Supplied still"))
+            media.append(_asset(root, scene.still_path, "Supplied still", link_base=base))
         if scene.clip_path:
-            media.append(_asset(root, scene.clip_path, "Supplied clip", video=True))
+            media.append(_asset(root, scene.clip_path, "Supplied clip", video=True, link_base=base))
         if float(timing["start_s"]) < 12:
             preview = (
-                _asset(root, scene.still_path, "Supplied still") if scene.still_path else
-                _asset(root, scene.clip_path, "Supplied clip", video=True) if scene.clip_path else
+                _asset(root, scene.still_path, "Supplied still", link_base=base) if scene.still_path else
+                _asset(root, scene.clip_path, "Supplied clip", video=True, link_base=base) if scene.clip_path else
                 '<p class="empty">No scene preview supplied. Review the proposed visual in the scene card.</p>'
             )
             prefix = '' if supplied_timing else '~'
@@ -257,7 +301,7 @@ def render_storyboard(brief: Brief, folder: str | Path, timeline: list[dict] | N
                 + preview + '</article>'
             )
         assets = ''.join(media) or '<p class="empty">No scene asset supplied. This card describes the proposed visual; it is not a generated still.</p>'
-        refs = ''.join(_asset(root, path, "Scene reference") for path in scene.image_refs)
+        refs = ''.join(_asset(root, path, "Scene reference", link_base=base) for path in scene.image_refs)
         motion = f'<h3>Motion direction</h3><p>{escape(scene.motion_prompt)}</p>' if scene.motion_prompt else ''
         copy = f'<h3>On-screen copy</h3><p>{escape(scene.on_screen_text)}</p><p class="meta">Review copy only; must be implemented in the visual or overlay.</p>' if scene.on_screen_text else ''
         route = ''
@@ -269,7 +313,7 @@ def render_storyboard(brief: Brief, folder: str | Path, timeline: list[dict] | N
 <div class="columns"><div><h3>Voiceover</h3><blockquote>{escape(scene.vo_text)}</blockquote>
 <h3>Visual direction</h3><p>{escape(scene.prompt)}</p>{motion}{copy}{route}</div>
 <div><h3>Supplied scene assets</h3><div class="gallery">{assets}</div>{'<h3>Scene references</h3><div class="gallery">' + refs + '</div>' if refs else ''}</div></div></article>''')
-    provided = _reference_groups(brief, root)
+    provided = _reference_groups(brief, root, base)
     headline = (
         '<section class="gate"><h2>Opening headline</h2>'
         f'<blockquote>{escape(brief.headline)}</blockquote>'
@@ -310,19 +354,3 @@ def render_storyboard(brief: Brief, folder: str | Path, timeline: list[dict] | N
 {''.join(cards)}
 <footer>Offline review — no provider calls. Image previews are embedded; original files and video previews link to local assets.</footer>
 </main></body></html>'''
-
-
-def storyboard_from_brief(brief_path: str | Path, folder: str | Path, out_path: str | Path | None = None, timing_path: str | Path | None = None) -> Path:
-    brief = Brief.from_yaml(Path(brief_path).expanduser())
-    root = Path(folder).expanduser().resolve()
-    destination = Path(out_path).expanduser().resolve() if out_path else root / "parallax" / "scratch" / "storyboard.html"
-    timeline = None
-    if timing_path is not None:
-        payload = yaml.safe_load(Path(timing_path).expanduser().read_text(encoding="utf-8"))
-        timeline = payload.get("scenes") if isinstance(payload, dict) else payload
-        if not isinstance(timeline, list) or not all(isinstance(s, dict) and "start_s" in s and "end_s" in s for s in timeline):
-            raise ValueError("storyboard --timing requires an aligned manifest with scenes containing index, start_s, end_s")
-    html = render_storyboard(brief, root, timeline=timeline)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(html, encoding="utf-8")
-    return destination

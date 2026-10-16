@@ -38,6 +38,7 @@ def _produce_cmd(
     debug: int = typer.Option(0, "--debug", help="Burn debug overlay on every scene: 1=scene index, 2=+prompt, 3=+script and motion. Default: 0 (off)."),
     resolution: Optional[str] = typer.Option(None, "--resolution", help="Override output resolution, e.g. 480x854 or 1080x1920."),
 ) -> int:
+    """Generate stills, narration, and video from a plan or brief. Spends money; refuses while reference gates are open."""
     if plan is None and brief is None:
         typer.echo("Error: one of --plan or --brief is required", err=True)
         return 2
@@ -67,6 +68,7 @@ def _plan_cmd(
     caption_style: str = typer.Option("anton", "--caption-style", help="Caption preset name written into the plan (default: anton)."),
     resolution: Optional[str] = typer.Option(None, "--resolution", help="Set output resolution in the generated plan, e.g. 480x854."),
 ) -> int:
+    """Materialize brief.yaml into plan.yaml. No provider calls."""
     try:
         _validate_resolution(resolution)
     except ValueError as e:
@@ -79,16 +81,36 @@ def _storyboard_cmd(
     folder: str = typer.Option(..., "--folder", help="Project root for resolving assets."),
     brief: str = typer.Option(..., "--brief", help="Path to the authored brief.yaml."),
     timing: Optional[str] = typer.Option(None, "--timing", help="Aligned manifest YAML/JSON with index, start_s, end_s for every scene; replaces reading estimates."),
-    out: Optional[str] = typer.Option(None, "--out", help="HTML output (default: <folder>/parallax/scratch/storyboard.html)."),
+    package_dir: Optional[str] = typer.Option(None, "--package-dir", help="Package output directory (default: <folder>/storyboard-package)."),
+    check: bool = typer.Option(False, "--check", help="Print the status, open gates, and advisories as JSON without writing a package."),
+    as_json: bool = typer.Option(False, "--json", help="Print the handoff manifest as JSON: status, open reference gates with choices and resolving commands, advisories."),
 ) -> int:
-    """Render an offline HTML storyboard for review before generation."""
-    from ..storyboard import storyboard_from_brief
+    """Write a portable storyboard package and its reference gates. No provider calls."""
+    import json
+    from pathlib import Path
+    from ..storyboard_package import check_storyboard, write_package
+    if check:
+        try:
+            typer.echo(json.dumps(check_storyboard(brief, folder, timing_path=timing), indent=2))
+        except (ValueError, OSError) as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            return 2
+        return 0
+    destination = Path(package_dir) if package_dir else Path(folder) / "storyboard-package"
     try:
-        path = storyboard_from_brief(brief, folder, out, timing_path=timing)
+        manifest = write_package(brief, folder, destination, timing_path=timing)
     except (ValueError, OSError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         return 2
-    typer.echo(f"Storyboard: {path}")
+    package = destination.expanduser().resolve()
+    manifest = {"package_dir": str(package), "html": str(package / "storyboard.html"), **manifest}
+    if as_json:
+        typer.echo(json.dumps(manifest, indent=2))
+        return 0
+    typer.echo(f"Storyboard package: {manifest['package_dir']}")
+    typer.echo(f"Open: {manifest['html']}")
+    if manifest["gates"]:
+        typer.echo(f"{len(manifest['gates'])} reference gate(s) open; run with --json for choices and commands.")
     typer.echo("Review scene types and direction before generating assets. No provider calls made.")
     return 0
 
@@ -100,6 +122,7 @@ def _ingest_cmd(
     estimate: bool = typer.Option(False, "--estimate", help="Dry-run: report duration + cost estimate, no transcription."),
     parallel: int = typer.Option(4, "--parallel", help="Max concurrent transcription workers (default: 4)."),
 ) -> int:
+    """Index existing footage into a searchable JSON with word timestamps."""
     return _run_ingest_command(path, out, visual, estimate, parallel)
 
 
@@ -112,6 +135,56 @@ def _inject_resolution(plan_path: str, resolution: str) -> None:
     data = _yaml.safe_load(p.read_text()) or {}
     data["resolution"] = resolution
     p.write_text(_yaml.dump(data, sort_keys=False, allow_unicode=True))
+
+
+def _refuse_open_gates(brief_path, folder: str) -> int | None:
+    """Return exit code 1 when the brief has open reference gates; nothing may spend until a human answers them."""
+    from ..brief import Brief
+    from ..reference_gates import open_gates
+
+    try:
+        gates = open_gates(Brief.from_yaml(brief_path), folder, brief_path)
+    except Exception as e:
+        print(f"Error: failed to read brief {brief_path}: {e}", file=sys.stderr)
+        return 1
+    if gates:
+        lines = []
+        for gate in gates:
+            if gate["state"] == "authorized_pending_generation":
+                attach = next(c["command"] for c in gate["choices"] if c["id"] == "generated_anchor")
+                lines.append(f"  {gate['id']} (scenes {', '.join(f'{i:02d}' for i in gate['scenes'])}): anchor authorized ({'; '.join(sorted(set(gate['authorized_scenes'].values())))}) but not generated or attached. "
+                             f"Generate it, then run: {attach}")
+            else:
+                lines.append(f"  {gate['id']} (scenes {', '.join(f'{i:02d}' for i in gate['scenes'])}): a human must answer it")
+        print(
+            f"Error: {len(gates)} reference gate(s) block generation:\n" + "\n".join(lines) +
+            f"\nSee: parallax storyboard --folder {folder} --brief {brief_path} --json",
+            file=sys.stderr,
+        )
+        return 1
+    return None
+
+
+def _refuse_plan_open_gates(plan_path: str, folder: str) -> int | None:
+    """A plan materialized from a brief carries `source_brief`; that brief's gates still apply."""
+    from pathlib import Path
+    import yaml
+
+    try:
+        source = (yaml.safe_load(Path(plan_path).expanduser().read_text(encoding="utf-8")) or {}).get("source_brief")
+    except (OSError, yaml.YAMLError, AttributeError) as e:
+        print(f"Error: failed to read plan {plan_path}: {e}", file=sys.stderr)
+        return 1
+    if source is None:
+        return None
+    brief_path = Path(source).expanduser()
+    if not brief_path.is_absolute():
+        brief_path = Path(folder).expanduser() / brief_path
+    if not brief_path.is_file():
+        print(f"Error: plan {plan_path} was made from brief {brief_path}, which no longer exists; "
+              "restore it or re-plan from the current brief so its reference gates can be checked.", file=sys.stderr)
+        return 1
+    return _refuse_open_gates(str(brief_path), folder)
 
 
 def _run_produce(
@@ -135,6 +208,8 @@ def _run_produce(
         if not brief_path.is_file():
             print(f"Error: brief not found: {brief_path}", file=sys.stderr)
             return 1
+        if (code := _refuse_open_gates(brief_path, folder)) is not None:
+            return code
         try:
             result = plan_from_brief(brief_path, folder=folder)
         except Exception as e:
@@ -153,6 +228,8 @@ def _run_produce(
     else:
         assert plan is not None  # validated: brief/plan mutex, at least one is required
         plan_path = plan
+        if (code := _refuse_plan_open_gates(plan_path, folder)) is not None:
+            return code
 
     if resolution is not None:
         _inject_resolution(plan_path, resolution)
