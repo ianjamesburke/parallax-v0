@@ -25,6 +25,10 @@ APPROVAL_FILE = "spend-approval.yaml"
 _HEADER = "Spend approval. Written by `parallax approve spend`; only a human sets the budget.\n"
 
 
+# Reservation ceiling (not a price) for one vision call: OpenRouter returns no price before the call.
+VISION_CALL_ESTIMATE_USD = 0.01
+
+
 class SpendRefused(ValueError):
     """Paid work refused. The message is what/where/fix text followed by a one-line JSON payload."""
 
@@ -105,13 +109,14 @@ def _refuse(command: str, reason: str, fix: str, estimate: float, folder: str | 
                         f"A human must run: {approve_cmd}\n{json.dumps(payload)}")
 
 
-def require_approval(folder: str | Path | None, estimate_usd: float | None, command: str) -> None:
+def require_approval(folder: str | Path | None, estimate_usd: float | None, command: str, *, stubbed_in_test_mode: bool = True) -> None:
     """Refuse unless a recorded budget covers `estimate_usd` on top of earlier reservations; then reserve it.
 
     `folder` is where the approval lives. Free runs (test mode, or an estimate of $0) pass untouched.
+    `stubbed_in_test_mode=False` is for calls that stay real under PARALLAX_TEST_MODE (image analyze).
     `estimate_usd=None` means the catalog has no price for this call; that is refused, never guessed.
     """
-    if is_test_mode():
+    if stubbed_in_test_mode and is_test_mode():
         return
     if estimate_usd is None:
         raise SpendRefused(f"{command} has no catalog price, so its cost cannot be bounded by a budget. "

@@ -50,7 +50,8 @@ def _plan(tmp_path: Path) -> Path:
 
 
 def _approve(folder: Path, budget: str) -> None:
-    assert cli.main(["approve", "spend", "--folder", str(folder), "--budget-usd", budget, "--authorized-by", "tester"]) == 0
+    from parallax.spend_guard import approve
+    approve(folder, float(budget), "tester")
 
 
 def _refusal(capsys) -> dict:
@@ -173,3 +174,52 @@ def test_guide_exposes_spend_approval():
     stage = next(s for s in guide["stages"] if s["id"] == "spend_approval")
     assert stage["commands"][0]["command"] == "parallax approve spend" and "human_decision" in stage
     assert any("spend-approval.yaml" in rule for rule in guide["rules"])
+
+
+def test_approve_command_refuses_without_a_tty_and_writes_nothing(tmp_path, capsys):
+    rc = cli.main(["approve", "spend", "--folder", str(tmp_path), "--budget-usd", "5", "--authorized-by", "ian"])
+    err = capsys.readouterr().err
+    assert rc == 2 and not (tmp_path / APPROVAL_FILE).exists()
+    assert "interactive terminal" in err and "! parallax approve spend --folder" in err
+
+
+def _run_in_pty(tmp_path, typed: str | None) -> tuple[int, str]:
+    import os
+    import pty
+    import subprocess
+    import sys
+    master, slave = pty.openpty()
+    code = "import sys; from parallax import cli; sys.exit(cli.main(sys.argv[1:]))"
+    proc = subprocess.Popen([sys.executable, "-c", code, "approve", "spend", "--folder", str(tmp_path),
+                             "--budget-usd", "5", "--authorized-by", "ian"],
+                            stdin=slave, stdout=slave, stderr=slave, close_fds=True)
+    os.close(slave)
+    if typed is not None:
+        os.write(master, (typed + "\n").encode())
+    out = b""
+    while True:
+        try:
+            chunk = os.read(master, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        out += chunk
+    os.close(master)
+    return proc.wait(timeout=30), out.decode()
+
+
+def test_approve_command_in_a_tty_needs_the_typed_budget(tmp_path):
+    rc, out = _run_in_pty(tmp_path, "7")
+    assert rc == 2 and "does not match" in out and not (tmp_path / APPROVAL_FILE).exists()
+    rc, out = _run_in_pty(tmp_path, "5")
+    assert rc == 0 and yaml.safe_load((tmp_path / APPROVAL_FILE).read_text())["budget_usd"] == 5
+
+
+def test_image_analyze_is_gated_even_in_test_mode(tmp_path, monkeypatch, real_mode_no_network, capsys):
+    monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
+    img = tmp_path / "i.png"
+    img.write_bytes(b"x")
+    assert cli.main(["image", "analyze", str(img), "--folder", str(tmp_path)]) == 1
+    assert _refusal(capsys)["gate"] == "spend-approval" and real_mode_no_network == []
+

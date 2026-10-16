@@ -23,7 +23,8 @@ from parallax import cli
 
 def _approve(folder) -> None:
     """Record a spend budget so paid commands under test pass the cost gate (their providers are stubbed)."""
-    assert cli.main(["approve", "spend", "--folder", str(folder), "--budget-usd", "5", "--authorized-by", "test"]) == 0
+    from parallax.spend_guard import approve
+    approve(folder, 5, "test")
 
 
 def _help_exits_zero(*args: str) -> None:
@@ -617,7 +618,8 @@ class TestImage:
         img = tmp_path / "img.png"
         img.write_bytes(b"\x89PNG")
         monkeypatch.setattr(or_mod, "analyze_image", lambda *a, **kw: "A lion is shown.")
-        rc = cli.main(["image", "analyze", str(img)])
+        _approve(tmp_path)
+        rc = cli.main(["image", "analyze", str(img), "--folder", str(tmp_path)])
         assert rc == 0
         assert "lion" in capsys.readouterr().out
 
