@@ -106,7 +106,7 @@ def test_produce_alignment_emits_native_pacing_review(monkeypatch, voiced):
     assert state.aligned[0]['duration_s'] == 4.0
 
 
-def test_opening_contact_sheet_uses_scene_previews_and_excludes_later_shots(tmp_path):
+def test_storyboard_omits_opening_shots_section_and_renders_scene_cards_cleanly(tmp_path):
     from PIL import Image
     Image.new("RGB", (20, 30), "red").save(tmp_path / "approved.png")
     brief = Brief(goal="Campaign", script={"scenes": [
@@ -115,12 +115,11 @@ def test_opening_contact_sheet_uses_scene_previews_and_excludes_later_shots(tmp_
         {"index": 2, "vo_text": "Later", "prompt": "Later"},
     ]})
     html = render_storyboard(brief, tmp_path, _timeline([0, 2, 12, 15]))
-    sheet = html.split('<div class="opening-grid">', 1)[1].split('</section>', 1)[0]
-    assert sheet.count('class="opening-shot"') == 2
-    assert 'Scene 00' in sheet and 'Scene 01' in sheet and 'Scene 02' not in sheet
-    assert 'data:image/jpeg;base64,' in sheet
-    assert '2.00s start · 10.00s hold · Animation' in sheet
-    assert 'No scene preview supplied' in sheet
+    assert 'Opening shots — first 12 seconds' not in html
+    assert 'class="opening-grid"' not in html
+    assert 'Scene 00' in html and 'Scene 01' in html and 'Scene 02' in html
+    assert 'data:image/jpeg;base64,' in html
+    assert '10.00s supplied timing' in html
     assert '<nav' not in html
 
 
