@@ -79,16 +79,27 @@ def _storyboard_cmd(
     folder: str = typer.Option(..., "--folder", help="Project root for resolving assets."),
     brief: str = typer.Option(..., "--brief", help="Path to the authored brief.yaml."),
     timing: Optional[str] = typer.Option(None, "--timing", help="Aligned manifest YAML/JSON with index, start_s, end_s for every scene; replaces reading estimates."),
-    out: Optional[str] = typer.Option(None, "--out", help="HTML output (default: <folder>/parallax/scratch/storyboard.html)."),
+    package_dir: Optional[str] = typer.Option(None, "--package-dir", help="Package output directory (default: <folder>/storyboard-package)."),
+    as_json: bool = typer.Option(False, "--json", help="Print the handoff manifest as JSON: status, open reference gates with choices and resolving commands, advisories."),
 ) -> int:
-    """Render an offline HTML storyboard for review before generation."""
-    from ..storyboard import storyboard_from_brief
+    """Write a portable storyboard package and its reference gates. No provider calls."""
+    import json
+    from pathlib import Path
+    from ..storyboard_package import write_package
+    destination = Path(package_dir) if package_dir else Path(folder) / "storyboard-package"
     try:
-        path = storyboard_from_brief(brief, folder, out, timing_path=timing)
+        manifest = write_package(brief, folder, destination, timing_path=timing)
     except (ValueError, OSError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         return 2
-    typer.echo(f"Storyboard: {path}")
+    manifest = {"package_dir": str(destination.expanduser().resolve()), **manifest}
+    if as_json:
+        typer.echo(json.dumps(manifest, indent=2))
+        return 0
+    typer.echo(f"Storyboard package: {manifest['package_dir']}")
+    typer.echo(f"Open: {manifest['package_dir']}/storyboard.html")
+    if manifest["gates"]:
+        typer.echo(f"{len(manifest['gates'])} reference gate(s) open; run with --json for choices and commands.")
     typer.echo("Review scene types and direction before generating assets. No provider calls made.")
     return 0
 
@@ -134,6 +145,22 @@ def _run_produce(
         brief_path = Path(brief).expanduser()
         if not brief_path.is_file():
             print(f"Error: brief not found: {brief_path}", file=sys.stderr)
+            return 1
+        from ..brief import Brief
+        from ..reference_gates import open_gates
+
+        try:
+            gates = open_gates(Brief.from_yaml(brief_path), folder, brief_path)
+        except Exception as e:
+            print(f"Error: failed to read brief: {e}", file=sys.stderr)
+            return 1
+        if gates:
+            print(
+                f"Error: {len(gates)} reference gate(s) open ({', '.join(g['id'] for g in gates)}); "
+                "a human must answer them before any generation. "
+                f"Run: parallax storyboard --folder {folder} --brief {brief_path} --json",
+                file=sys.stderr,
+            )
             return 1
         try:
             result = plan_from_brief(brief_path, folder=folder)

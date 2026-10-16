@@ -12,7 +12,11 @@ from parallax.planner import plan_from_brief
 from parallax.preflight import compute_preflight
 from parallax.settings import ProductionMode
 from parallax.stages import PipelineState, stage_stills, stage_animate
-from parallax.storyboard import render_storyboard
+from parallax.storyboard import render_storyboard as _render, review_storyboard
+
+
+def render_storyboard(brief, folder, timeline=None):
+    return _render(brief, folder, review_storyboard(brief, folder, 'brief.yaml', timeline))
 
 
 def _scene(**kwargs):
@@ -106,15 +110,15 @@ def test_html_escapes_text_embeds_references_and_distinguishes_assets(tmp_path):
     assert reference.as_uri().replace('&', '&amp;') in html
 
 
-def test_storyboard_command_writes_default_and_custom_output_offline(tmp_path, capsys):
+def test_storyboard_command_writes_default_and_custom_package_offline(tmp_path, capsys):
     source = tmp_path / 'brief.yaml'
     source.write_text(yaml.safe_dump(_brief(scene_type='motion_graphic').to_dict()))
     args = ['storyboard', '--folder', str(tmp_path), '--brief', str(source)]
     assert main(args) == 0
-    assert (tmp_path / 'parallax/scratch/storyboard.html').is_file()
-    custom = tmp_path / 'review/custom.html'
-    assert main([*args, '--out', str(custom)]) == 0
-    assert custom.is_file()
+    assert (tmp_path / 'storyboard-package/storyboard.html').is_file()
+    custom = tmp_path / 'review/custom'
+    assert main([*args, '--package-dir', str(custom)]) == 0
+    assert (custom / 'storyboard.html').is_file()
     assert 'No provider calls made' in capsys.readouterr().out
     assert main(['storyboard', '--folder', str(tmp_path), '--brief', str(tmp_path / 'absent.yaml')]) == 2
 

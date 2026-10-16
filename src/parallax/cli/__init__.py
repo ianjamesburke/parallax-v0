@@ -6,7 +6,7 @@ from typing import Optional
 import typer
 
 from .. import __version__
-from . import _audio, _image, _log, _meta, _models, _produce, _schema, _validate, _video
+from . import _audio, _image, _log, _meta, _models, _produce, _reference, _schema, _validate, _video
 
 
 app = typer.Typer(
@@ -49,6 +49,7 @@ app.add_typer(_audio.audio_app, name="audio")
 app.add_typer(_video.video_app, name="video")
 app.add_typer(_image.image_app, name="image")
 app.add_typer(_models.models_app, name="models")
+app.add_typer(_reference.reference_app, name="reference")
 
 # Register top-level commands from modules
 _produce.register_produce(app)

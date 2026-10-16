@@ -50,6 +50,9 @@ def _brief_payload(**overrides) -> dict:
     return base
 
 
+_NO_REFERENCE = [{"gate": "editorial-reference", "choice": "no_reference", "scenes": [0], "note": "test"}]
+
+
 def _write_brief(path: Path, payload: dict) -> None:
     path.write_text(yaml.safe_dump(payload, sort_keys=False))
 
@@ -206,7 +209,7 @@ def test_produce_brief_short_circuits_on_missing_assets(
 ) -> None:
     """When the brief is incomplete, --brief must exit 1 without producing."""
     brief_path = tmp_path / "brief.yaml"
-    _write_brief(brief_path, _brief_payload())
+    _write_brief(brief_path, _brief_payload(reference_decisions=_NO_REFERENCE))
     # No asset on disk → planner returns ok=False.
 
     # Ensure run_plan never gets called.
@@ -239,7 +242,7 @@ def test_produce_brief_runs_pipeline_when_valid(
 ) -> None:
     """Happy path: --brief plans then produces from the materialized plan."""
     brief_path = tmp_path / "brief.yaml"
-    _write_brief(brief_path, _brief_payload())
+    _write_brief(brief_path, _brief_payload(reference_decisions=_NO_REFERENCE))
     _materialize_logo(tmp_path)
 
     captured: dict = {}
@@ -264,6 +267,24 @@ def test_produce_brief_runs_pipeline_when_valid(
     expected_plan = tmp_path / "parallax" / "scratch" / "plan.yaml"
     assert Path(captured["plan_path"]) == expected_plan
     assert expected_plan.is_file()
+
+
+def test_produce_brief_refuses_while_reference_gate_is_open(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    brief_path = tmp_path / "brief.yaml"
+    _write_brief(brief_path, _brief_payload())
+    _materialize_logo(tmp_path)
+    monkeypatch.setattr(produce_mod, "run_plan", lambda **kw: pytest.fail("no generation while a gate is open"))
+
+    rc = cli.main(["produce", "--folder", str(tmp_path), "--brief", str(brief_path)])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "editorial-reference" in err and "storyboard" in err and "--json" in err
+    assert not (tmp_path / "parallax").exists()
 
 
 def test_produce_rejects_brief_and_plan_together(

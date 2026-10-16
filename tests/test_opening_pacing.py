@@ -7,7 +7,7 @@ import yaml
 from parallax.brief import Brief
 from parallax.cli import main
 from parallax.pacing import estimate_timeline, review_opening_pacing
-from parallax.storyboard import render_storyboard
+from .test_storyboard import render_storyboard
 from parallax.stages import _report_opening_pacing
 from parallax.validate import validate_brief, validate_plan
 
@@ -84,7 +84,7 @@ def test_storyboard_supplied_timing_replaces_estimates_and_rejects_mismatch(tmp_
     timing_path = tmp_path / 'manifest.yaml'
     timing_path.write_text(yaml.safe_dump({'scenes': _timeline([0, 1.5, 3, 4.5, 6])}))
     assert main(['storyboard', '--folder', str(tmp_path), '--brief', str(brief_path), '--timing', str(timing_path)]) == 0
-    assert 'Supplied timeline: 6.00s' in (tmp_path / 'parallax/scratch/storyboard.html').read_text()
+    assert 'Supplied timeline: 6.00s' in (tmp_path / 'storyboard-package/storyboard.html').read_text()
 
 
 @pytest.mark.parametrize('voiced', [True, False])

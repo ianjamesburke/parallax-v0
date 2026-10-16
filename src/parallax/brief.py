@@ -91,6 +91,20 @@ class ProvidedAsset(BaseModel):
 
 
 
+class ReferenceDecision(BaseModel):
+    """Audit record of how a storyboard reference gate was resolved.
+
+    Written by `parallax reference resolve`. A `no_reference` decision is what
+    closes a gate for scenes that intentionally have no image reference.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    gate: Literal["editorial-reference", "product-reference"]
+    choice: Literal["supplied", "official", "generated_anchor", "no_reference"]
+    scenes: list[int]
+    note: str  # no_reference: reason; generated_anchor: who authorized the spend; else provenance
+
+
 class GeneratedAsset(BaseModel):
     """An asset the pipeline will produce. Optional inventory hint."""
     model_config = ConfigDict(extra="forbid")
@@ -188,6 +202,7 @@ class Brief(BaseModel):
     pronunciations: dict[str, str] = Field(default_factory=dict)
     success_criteria: list[str] = Field(default_factory=list)
     assets: Assets = Field(default_factory=Assets)
+    reference_decisions: list[ReferenceDecision] = Field(default_factory=list)
     script: Script
 
     # ---------------------------------------------------------------- I/O
