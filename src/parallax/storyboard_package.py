@@ -145,6 +145,17 @@ def _advisories(review: dict) -> list[dict]:
     return scene + pacing + variety
 
 
+def _produce_block(review: dict, missing: list[str]) -> dict:
+    """State plainly whether `parallax produce` would refuse right now, and why. Status only describes review readiness."""
+    blocked_by = [{"kind": "reference_gate", "id": g["id"], "state": g["state"], "scenes": g["scenes"]} for g in review["gates"]]
+    clips = [i for i, items in review["scene_advisories"].items() if any(a["kind"] == "motion_graphic_clip_missing" for a in items)]
+    if clips:
+        blocked_by.append({"kind": "motion_graphic_clip_missing", "scenes": clips})
+    if missing:
+        blocked_by.append({"kind": "missing_asset", "paths": missing})
+    return {"produce_blocked": bool(blocked_by), "blocked_by": blocked_by}
+
+
 def _next_steps(gates: list[dict], folder: str, brief_path: str) -> list[dict]:
     if _blocking(gates):
         return [{"step": "answer_gates", "detail": "Ask the human each open gate question, run the chosen choice command, then re-run `parallax storyboard`."}]
@@ -180,6 +191,7 @@ def _manifest(brief: Brief, review: dict, files: dict[str, str], contact: list[i
         "missing_assets": missing,
         "timing": {"basis": review["timing_basis"], "total_s": round(float(timeline[-1]["end_s"]), 3) if timeline else 0.0},
         "gates": review["gates"],
+        **_produce_block(review, missing),
         "advisories": _advisories(review),
         "next_steps": _next_steps(review["gates"], folder, brief_path),
     }

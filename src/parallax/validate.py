@@ -68,7 +68,7 @@ def validate_brief(brief_path: str | Path, folder: str | Path) -> dict:
     pacing = review_opening_pacing(timeline, basis)
     pacing = {**pacing, "warnings": [{**w, "locked_by_narration": brief.narration_locked} for w in pacing["warnings"]]}
     warnings.extend(pacing["warnings"])
-    return {**_result(errors, warnings), "opening_pacing": pacing}
+    return {**_result(errors, warnings), "opening_pacing": {k: v for k, v in pacing.items() if k != "warnings"}}
 
 
 def validate_plan(plan_path: str | Path, folder: str | Path) -> dict:
@@ -245,7 +245,7 @@ def validate_plan(plan_path: str | Path, folder: str | Path) -> dict:
     timeline, basis, first_word = _plan_pacing_timeline(plan, folder)
     pacing = review_opening_pacing(timeline, basis, first_word_start_s=first_word)
     warnings.extend(pacing["warnings"])
-    return {**_result(errors, warnings), "opening_pacing": pacing}
+    return {**_result(errors, warnings), "opening_pacing": {k: v for k, v in pacing.items() if k != "warnings"}}
 
 
 

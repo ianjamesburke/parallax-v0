@@ -190,7 +190,7 @@ def test_resolution_edits_only_the_intended_keys(tmp_path, capsys):
     (["--gate", "editorial-reference", "--choice", "generated_anchor", "--asset", "stills/a.png"], "--authorized-by is required"),
     (["--gate", "editorial-reference", "--choice", "no_reference"], "--reason is required"),
     (["--gate", "product-reference", "--choice", "generated_anchor", "--asset", "stills/a.png", "--authorized-by", "Ian"], "not allowed"),
-    (["--gate", "nonsense", "--choice", "no_reference", "--reason", "r"], "not open"),
+    (["--gate", "nonsense", "--choice", "no_reference", "--reason", "r"], "not a known gate"),
     (["--gate", "product-reference", "--choice", "no_reference", "--reason", "r", "--scenes", "0"], "not part of gate"),
 ])
 def test_resolution_refuses_incomplete_or_disallowed_answers(tmp_path, capsys, flags, message):
@@ -407,7 +407,7 @@ def test_produce_refusal_names_the_real_blocker_for_a_pending_anchor(tmp_path, c
 def test_open_gate_refusal_still_asks_for_a_human_answer(tmp_path, capsys):
     folder, brief = _project(tmp_path)
     assert cli.main(["produce", "--folder", str(folder), "--brief", str(brief)]) == 1
-    assert "editorial-reference: a human must answer it" in capsys.readouterr().err
+    assert "editorial-reference (scenes 00, 01): a human must answer it" in capsys.readouterr().err
 
 
 def test_pending_anchor_scenes_get_a_pending_note_not_a_contradictory_instruction(tmp_path, capsys):
@@ -557,3 +557,95 @@ def test_guide_states_that_a_direction_only_beat_cannot_be_its_own_scene():
     from parallax.guide import build_guide
     mapping = build_guide(typer.main.get_group(cli.app))["brief"]["script_mapping"]["direction_only_beats"]
     assert "cannot be its own scene" in mapping and "0.05s" in mapping
+
+
+def _two_scene_brief(tmp_path):
+    return _scenes_brief(tmp_path, [{"prompt": "desk"}, {"prompt": "street"}])
+
+
+def _answer(tmp_path, brief, scenes, choice, *flags, capsys):
+    capsys.readouterr()
+    assert _resolve(tmp_path, brief, "--gate", "editorial-reference", "--choice", choice, "--scenes", scenes, *flags) == 0
+    return json.loads(capsys.readouterr().out)
+
+
+def _decisions(brief):
+    return [(d.choice, d.scenes, d.asset) for d in Brief.from_yaml(brief).reference_decisions]
+
+
+def test_changing_an_answer_replaces_only_the_named_scenes(tmp_path, capsys):
+    brief = _two_scene_brief(tmp_path)
+    _answer(tmp_path, brief, "0,1", "no_reference", "--reason", "b-roll", capsys=capsys)
+    assert _gate_scenes(tmp_path, brief, capsys) == {}
+    result = _answer(tmp_path, brief, "1", "generated_anchor", "--authorized-by", "Ian", capsys=capsys)
+    assert result["replaced"] == [{"choice": "no_reference", "scenes": [1]}]
+    assert _decisions(brief) == [("no_reference", [0], None), ("generated_anchor", [1], None)]
+    manifest = _storyboard(tmp_path, brief, capsys)
+    assert [(g["id"], g["state"], g["scenes"]) for g in manifest["gates"]] == [("editorial-reference", "authorized_pending_generation", [1])]
+    refs = yaml.safe_load((Path(manifest["package_dir"]) / "references.yaml").read_text())
+    assert [(d["choice"], d["scenes"]) for d in refs["decisions"]] == [("no_reference", [0]), ("generated_anchor", [1])]
+    assert manifest["produce_blocked"] is True
+
+
+def test_changing_a_supplied_asset_detaches_the_old_one_without_leftovers(tmp_path, capsys):
+    brief = _two_scene_brief(tmp_path)
+    _png(tmp_path / "refs/a.png")
+    _png(tmp_path / "refs/b.png")
+    _answer(tmp_path, brief, "0,1", "supplied", "--asset", "refs/a.png", capsys=capsys)
+    result = _answer(tmp_path, brief, "1", "supplied", "--asset", "refs/b.png", capsys=capsys)
+    assert result["replaced"] == [{"choice": "supplied", "scenes": [1], "asset": "refs/a.png"}]
+    resolved = Brief.from_yaml(brief)
+    assert [s.image_refs for s in resolved.script.scenes] == [["refs/a.png"], ["refs/b.png"]]
+    assert {a.path: a.scene_scope for a in resolved.assets.provided} == {"refs/a.png": [0], "refs/b.png": [1]}
+    assert _decisions(brief) == [("supplied", [0], "refs/a.png"), ("supplied", [1], "refs/b.png")]
+    _answer(tmp_path, brief, "0", "no_reference", "--reason", "changed my mind", capsys=capsys)
+    resolved = Brief.from_yaml(brief)
+    assert [a.path for a in resolved.assets.provided] == ["refs/b.png"], "an asset no scene uses any more is dropped"
+    assert resolved.script.scenes[0].image_refs == []
+    assert _decisions(brief) == [("supplied", [1], "refs/b.png"), ("no_reference", [0], None)]
+
+
+def test_replacing_everything_removes_empty_decisions_and_stray_scenes_still_error(tmp_path, capsys):
+    brief = _two_scene_brief(tmp_path)
+    _answer(tmp_path, brief, "0,1", "no_reference", "--reason", "x", capsys=capsys)
+    _answer(tmp_path, brief, "0,1", "generated_anchor", "--authorized-by", "Ian", capsys=capsys)
+    assert _decisions(brief) == [("generated_anchor", [0, 1], None)]
+    capsys.readouterr()
+    assert _resolve(tmp_path, brief, "--gate", "product-reference", "--choice", "no_reference", "--reason", "x", "--scenes", "0") == 2
+    assert "not part of gate" in capsys.readouterr().err
+    assert _resolve(tmp_path, brief, "--gate", "product-reference", "--choice", "no_reference", "--reason", "x") == 2
+    err = capsys.readouterr().err
+    assert "no open scenes" in err and "--scenes" in err
+
+
+def test_resolve_output_reports_what_it_wrote_and_what_awaits_approval(tmp_path, capsys):
+    brief = _two_scene_brief(tmp_path)
+    _png(tmp_path / "refs/a.png")
+    result = _answer(tmp_path, brief, "0,1", "supplied", "--asset", "refs/a.png", capsys=capsys)
+    assert result["wrote"] == [str(brief)] and result["replaced"] == []
+    assert result["pending_human_approval"][0]["asset"] == "refs/a.png" and "never approves" in result["pending_human_approval"][0]["note"]
+    none = _answer(tmp_path, brief, "0", "no_reference", "--reason", "x", capsys=capsys)
+    assert none["pending_human_approval"] == []
+
+
+def test_manifest_states_whether_produce_is_blocked_and_by_what(tmp_path, capsys):
+    folder, brief = _project(tmp_path)
+    manifest = _storyboard(folder, brief, capsys)
+    assert manifest["produce_blocked"] is True
+    assert {b["id"] for b in manifest["blocked_by"] if b["kind"] == "reference_gate"} == {"editorial-reference", "product-reference"}
+    on_disk = json.loads((Path(manifest["package_dir"]) / "handoff.json").read_text())
+    assert on_disk["produce_blocked"] is True and on_disk["blocked_by"] == manifest["blocked_by"]
+    for gate in ("editorial-reference", "product-reference"):
+        _resolve(folder, brief, "--gate", gate, "--choice", "no_reference", "--reason", "x")
+    clear = _storyboard(folder, brief, capsys)
+    assert clear["produce_blocked"] is False and clear["blocked_by"] == [] and clear["status"] == "ready_for_review"
+    graphic = _storyboard(tmp_path, _graphic_brief(tmp_path, clip_path="clips/x.mp4"), capsys)
+    assert graphic["blocked_by"][0]["kind"] == "motion_graphic_clip_missing" and graphic["status"] == "ready_for_review"
+
+
+def test_validate_reports_each_pacing_warning_once(tmp_path, capsys):
+    brief = _scenes_brief(tmp_path, [{"vo_text": "one two three four five six seven eight"}])
+    cli.main(["validate", "--folder", str(tmp_path), "--brief", str(brief)])
+    result = json.loads(capsys.readouterr().out)
+    assert any(w["code"] == "opening_long_hold" for w in result["warnings"])
+    assert "warnings" not in result["opening_pacing"] and result["opening_pacing"]["cuts_before_6s"] == 0

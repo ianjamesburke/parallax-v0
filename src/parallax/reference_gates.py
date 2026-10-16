@@ -235,16 +235,20 @@ def resolve_gate(
     """Record a human's answer to one gate in brief.yaml and return what changed."""
     brief_path, root = Path(brief_path).expanduser(), Path(folder).expanduser().resolve()
     brief = Brief.from_yaml(brief_path)
-    gates = {g["id"]: g for g in open_gates(brief, root, brief_path)}
-    if gate_id not in gates:
-        raise ValueError(f"gate {gate_id!r} is not open in {brief_path}; open gates: {sorted(gates) or 'none'}")
-    gate = gates[gate_id]
+    if gate_id not in _ALLOWED:
+        raise ValueError(f"{gate_id!r} is not a known gate; known gates: {sorted(_ALLOWED)}")
+    gate = next((g for g in open_gates(brief, root, brief_path) if g["id"] == gate_id), None)
+    open_scenes = gate["scenes"] if gate else []
+    answered = sorted({i for d in brief.reference_decisions if d.gate == gate_id for i in d.scenes})
     if choice not in _ALLOWED[gate_id]:
         raise ValueError(f"choice {choice!r} is not allowed for gate {gate_id}; allowed: {_ALLOWED[gate_id]}")
-    targets = gate["scenes"] if scenes is None else scenes
-    stray = sorted(set(targets) - set(gate["scenes"]))
+    if scenes is None and not open_scenes:
+        raise ValueError(f"gate {gate_id!r} has no open scenes in {brief_path}. To change an earlier answer, pass --scenes "
+                         f"with scene indexes it covers ({answered or 'none answered yet'}).")
+    targets = open_scenes if scenes is None else scenes
+    stray = sorted(set(targets) - set(open_scenes) - set(answered))
     if stray:
-        raise ValueError(f"scenes {stray} are not part of gate {gate_id}; gate scenes: {gate['scenes']}")
+        raise ValueError(f"scenes {stray} are not part of gate {gate_id}; open scenes: {open_scenes}, answered scenes: {answered}")
 
     authorization_only = choice == "generated_anchor" and not asset
     pending = [d for d in brief.reference_decisions if d.gate == gate_id and d.choice == "generated_anchor"
@@ -277,6 +281,8 @@ def resolve_gate(
     yaml.indent(mapping=2, sequence=4, offset=2)
     with brief_path.open(encoding="utf-8") as fp:
         doc = yaml.load(fp)
+    completing = choice == "generated_anchor" and bool(asset) and bool(pending)
+    replaced = [] if completing else _clear_answers(doc, gate_id, set(targets))
     if choice != "no_reference" and not authorization_only:
         origin = {"supplied": "supplied", "official": "official", "generated_anchor": "generated"}[choice]
         provided = doc.setdefault("assets", {}).setdefault("provided", [])
@@ -318,13 +324,52 @@ def resolve_gate(
         for index in gate["scenes"]:
             still_open.setdefault(index, []).append(gate["id"])
     covered = sorted(index for index in targets if gate_id not in still_open.get(index, []))
+    attached = asset if choice != "no_reference" and asset else None
     return {
-        "gate": gate_id, "choice": choice, "brief": str(brief_path),
+        "gate": gate_id, "choice": choice,
+        "wrote": [str(brief_path)],
+        "replaced": replaced,
         "scenes_requested": list(targets),
         "scenes_newly_covered": covered,
         "scenes_still_open": {str(i): ids for i, ids in sorted(still_open.items())},
         "open_gates": [{"id": g["id"], "state": g["state"], "scenes": g["scenes"]} for g in remaining],
+        "pending_human_approval": (
+            [{"asset": attached, "review_status": "pending",
+              "note": "A human accepts it by setting review_status: approved in brief.yaml. The CLI never approves."}] if attached else []),
     }
+
+
+def _clear_answers(doc, gate_id: str, targets: set[int]) -> list[dict]:
+    """Remove the named scenes from earlier decisions of this gate so a new answer replaces them.
+
+    Also detaches the earlier decision's asset from those scenes, and drops a scene-scoped asset that no scene uses any more.
+    """
+    replaced = []
+    decisions = doc.get("reference_decisions") or []
+    for decision in list(decisions):
+        hit = [i for i in decision["scenes"] if i in targets]
+        if decision["gate"] != gate_id or not hit:
+            continue
+        asset = decision.get("asset")
+        replaced.append({"choice": decision["choice"], "scenes": hit, **({"asset": asset} if asset else {})})
+        decision["scenes"] = [i for i in decision["scenes"] if i not in targets]
+        if asset:
+            for scene in doc["script"]["scenes"]:
+                if scene["index"] in hit and asset in scene.get("image_refs", []):
+                    scene["image_refs"].remove(asset)
+                    if not scene["image_refs"]:
+                        del scene["image_refs"]
+            provided = doc["assets"]["provided"]
+            for entry in list(provided):
+                if entry["path"] == asset and entry.get("scene_scope") is not None:
+                    entry["scene_scope"] = [i for i in entry["scene_scope"] if i not in hit]
+                    if not entry["scene_scope"]:
+                        provided.remove(entry)
+        if not decision["scenes"]:
+            decisions.remove(decision)
+    if "reference_decisions" in doc and not doc["reference_decisions"]:
+        del doc["reference_decisions"]
+    return replaced
 
 
 def _plain(node):

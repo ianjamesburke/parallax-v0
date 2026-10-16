@@ -152,10 +152,10 @@ def _refuse_open_gates(brief_path, folder: str) -> int | None:
         for gate in gates:
             if gate["state"] == "authorized_pending_generation":
                 attach = next(c["command"] for c in gate["choices"] if c["id"] == "generated_anchor")
-                lines.append(f"  {gate['id']}: anchor authorized ({'; '.join(sorted(set(gate['authorized_scenes'].values())))}) but not generated or attached. "
+                lines.append(f"  {gate['id']} (scenes {', '.join(f'{i:02d}' for i in gate['scenes'])}): anchor authorized ({'; '.join(sorted(set(gate['authorized_scenes'].values())))}) but not generated or attached. "
                              f"Generate it, then run: {attach}")
             else:
-                lines.append(f"  {gate['id']}: a human must answer it")
+                lines.append(f"  {gate['id']} (scenes {', '.join(f'{i:02d}' for i in gate['scenes'])}): a human must answer it")
         print(
             f"Error: {len(gates)} reference gate(s) block generation:\n" + "\n".join(lines) +
             f"\nSee: parallax storyboard --folder {folder} --brief {brief_path} --json",
