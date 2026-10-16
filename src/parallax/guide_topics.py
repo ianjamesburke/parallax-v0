@@ -29,7 +29,12 @@ TOPICS: dict[str, dict] = {
             "--debug 1|2|3": "Burn a debug overlay on every scene (1 index, 2 +prompt, 3 +script and motion).",
         },
         "plan_settings": "Model, caption, headline, and transition settings live in plan.yaml, not brief.yaml. `parallax schema plan` lists every field with its default; unknown or renamed fields are rejected at load.",
-        "dry_run_warning": "A dry run writes its stub still_path/clip_path locks into the plan it ran against, and a later real run reuses those paths. Dry-run a throwaway copy (`parallax plan --out <copy>` then `produce --plan <copy>`), or delete the stub still_path/clip_path locks before the real run.",
+        "prerequisites": {
+            "ffmpeg": "`ffmpeg` and `ffprobe` must be on PATH for every produce run, including PARALLAX_TEST_MODE (produce fails fast otherwise). macOS: `brew install ffmpeg-full`; Debian/Ubuntu: `sudo apt install ffmpeg`. Captions and headlines need the drawtext filter; without it they fall back to a slower path.",
+            "api_key": "OPENROUTER_API_KEY for real (paid) runs; test mode needs none.",
+        },
+        "dry_run": "PARALLAX_TEST_MODE=1 runs every stage on stub assets and writes nothing back into plan.yaml (no still_path, clip_path, audio locks), so it is safe on the real plan and the real cost estimate still counts those scenes as unlocked. Stub files land under <folder>/parallax/ and are overwritten, not reused, by a real run.",
+        "resolution": "Output resolution comes from plan `resolution` (or `--resolution`). When unset it is the largest resolution among the scenes' existing clip_path files, else the aspect default (9:16 is 720x1280, 16:9 1920x1080, 1:1 1080x1080). Locking or adding a clip can therefore change it between runs: set `resolution` explicitly to pin it. Animation requests use a cheaper `animate_resolution` (9:16 default 480x854) that assembly scales up.",
         "stills_only": "Plan field `stills_only: true` runs only the stills stage: no audio, animation, or assembly. Use it in a separate execution plan to generate and approve stills first.",
         "review_checkpoints": [
             "Storyboard: `parallax storyboard --json`, answer open gates, show storyboard-package/storyboard.html, collect feedback on scene breakdown and treatments.",
@@ -98,7 +103,7 @@ TOPICS: dict[str, dict] = {
         },
         "budget_rule": "Count billed calls, including failed and retried ones, against the agreed cap. Estimates are not receipts.",
         "handoff": "An agent never runs `parallax approve spend` or invents the budget or authorizer: see `parallax guide spend_approval` for the exact human handoff. There is no `--yes` and no `-y`.",
-        "dry_run": "PARALLAX_TEST_MODE=1 stubs every provider call: no network, no spend, no approval. See `parallax guide produce_loop` for the lock caveat.",
+        "dry_run": "PARALLAX_TEST_MODE=1 stubs every provider call: no network, no spend, no approval, and nothing is written into plan.yaml.",
         "next": "spend_approval",
     },
     "motion_graphic": {
@@ -116,6 +121,12 @@ TOPICS: dict[str, dict] = {
             "prompt": "The approved illustrated timeline and day-14 milestone.",
             "motion_prompt": "The marker reaches day 14 on the spoken cue.",
             "still_path": "graphics/day-14/poster.png", "clip_path": "graphics/day-14/final.mp4",
+        },
+        "clip_convention": {
+            "clip": "Any MP4 under the project folder, set as the scene's `clip_path`. Assembly normalizes it to the output resolution at 30 fps and loops or trims it to the scene's duration, so render at the output dimensions, 30 fps, with the measured scene length to avoid looping.",
+            "poster": "Optional still (PNG) set as `still_path` for layout review; not used for assembly.",
+            "location": "Conventionally graphics/<name>/final.mp4 and graphics/<name>/poster.png, kept with the source composition.",
+            "placeholder": "To test the pipeline before the real graphic exists (no drawtext filter needed): `ffmpeg -f lavfi -i testsrc2=size=1080x1920:rate=30:duration=2 -c:v libx264 -pix_fmt yuv420p -an graphics/<name>/final.mp4` and `ffmpeg -f lavfi -i testsrc2=size=1080x1920 -frames:v 1 graphics/<name>/poster.png`. Replace it with the approved render before a real run.",
         },
         "output_contract": [
             "Poster image for layout review.",

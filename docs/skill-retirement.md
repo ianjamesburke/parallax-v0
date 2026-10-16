@@ -44,7 +44,7 @@ Dispositions: **G** = `parallax guide <topic>`, **A** = advisory or error alread
 | Asset locking (still, clip, reference, audio at top level) | G | `asset_locking`. Corrected: `produce` auto-locks stills and clips into the plan; audio locks stay manual unless `voice_postprocess` runs. |
 | `output/vN/plan.yaml` is a read-only snapshot; working plan is `parallax/plan.yaml` | G | Snapshot kept (`asset_locking.rules`). Working-plan path was stale: it is `parallax/scratch/plan.yaml` or `--plan`/`--out`. |
 | Models and utility commands | G/H | `guide models`, `guide cost`, `models list/show`, each command `--help`. |
-| Dry run with `PARALLAX_TEST_MODE=1` | G | `produce_loop.dry_run_warning` adds a verified hazard the skill omitted: dry-run locks look like real ones. |
+| Dry run with `PARALLAX_TEST_MODE=1` | G | `produce_loop.dry_run`, `prerequisites`, `resolution` (new, verified). |
 | Open generated media for the human | G | `produce_loop.after_each_artifact`. |
 | Inspect visual output against scene/reference map before progressing | G | Same field. |
 | Output layout tree | G | `produce_loop.paths.run_output` (corrected to include `assets/`, `scratch/`). |
@@ -102,4 +102,6 @@ Dispositions: **G** = `parallax guide <topic>`, **A** = advisory or error alread
 - Plan from brief lands in `parallax/scratch/plan.yaml`: `src/parallax/planner.py`.
 - `produce` locks `still_path`/`clip_path`: `src/parallax/stages.py` `_lock_field_in_plan`; audio only via `voice_postprocess`: `stages.py` `_lock_plan_fields`.
 - Default `video_model` is `draft`: `src/parallax/plan.py`.
-- Dry-run stubs are renamed to `scene_NN_still.png`, so the `mock_` check in `stages.py` (`is_mock_asset`) does not catch them in a real run. Not fixed here (out of scope); `guide produce_loop.dry_run_warning` tells the operator how to avoid it.
+- Dry runs write no locks into plan.yaml (`stages.py` `_lock_field_in_plan`, `_lock_plan_fields` return before the disk write in test mode). Earlier the renamed stubs (`scene_NN_still.png`) were reused by real runs and under-reported the cost estimate.
+- Resolution when unset: largest `clip_path` probed, else the aspect default (`settings.py` `_infer_project_resolution`).
+- `produce` needs ffmpeg and ffprobe on PATH: checked up front in `produce.py`.

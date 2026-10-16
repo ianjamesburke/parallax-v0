@@ -193,7 +193,7 @@ _STAGES = [
         "preconditions": ["human approved the storyboard", "no open reference gates", "spend approval recorded for the estimate"],
         "human_decision": {"question": "Authorize paid generation and set a budget cap (recorded in the spend_approval stage).", "ask_only_if_unresolved": False},
         "see": ["produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll"],
-        "review_boundary": "Dry run first with PARALLAX_TEST_MODE=1 (stub assets, no network), on a throwaway copy of the plan: a dry run locks stub paths into the plan it ran against. Lock approved assets before re-running; unlocked scenes regenerate and cost money.",
+        "review_boundary": "Dry run first with PARALLAX_TEST_MODE=1 (stub assets, no network),; it writes nothing into plan.yaml. Lock approved assets before re-running; unlocked scenes regenerate and cost money.",
         "spends_money": True,
         "next": None,
     },
@@ -256,6 +256,7 @@ def build_guide(group: Any, topic: str | None = None) -> dict:
             "stages": [s["id"] for s in _STAGES],
             "reference": list(TOPICS),
         },
+        "prerequisites": ["ffmpeg and ffprobe on PATH (produce, even in PARALLAX_TEST_MODE)", "OPENROUTER_API_KEY for paid runs"],
         "rules": [
             "Every decision that spends money or chooses a creative direction belongs to the human.",
             "Open reference gates block `parallax produce --brief`.",

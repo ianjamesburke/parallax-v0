@@ -188,7 +188,7 @@ def test_stage_stills_log_includes_concurrent_summary(tmp_path: Path, monkeypatc
 
 
 def test_stage_stills_locks_plan_for_generated_scenes(tmp_path: Path, monkeypatch, bound_run):
-    """plan.yaml must have still_path locked for every generated scene."""
+    """A dry run locks stills in memory for later stages but never writes them to plan.yaml."""
     monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
     n = 3
     settings = _make_settings(tmp_path)
@@ -198,9 +198,24 @@ def test_stage_stills_locks_plan_for_generated_scenes(tmp_path: Path, monkeypatc
 
     stage_stills(plan, settings, state)
 
+    assert all(s.get("still_path") for s in plan["scenes"])
     on_disk = yaml.safe_load(settings.plan_path.read_text())
-    for s in on_disk["scenes"]:
-        assert s.get("still_path"), f"scene {s['index']} not locked in plan.yaml"
+    assert not any(s.get("still_path") for s in on_disk["scenes"]), "dry-run stub leaked into plan.yaml"
+
+
+def test_lock_field_in_plan_writes_the_scene_to_disk_outside_test_mode(tmp_path: Path, monkeypatch):
+    from parallax.stages import _lock_field_in_plan
+
+    monkeypatch.delenv("PARALLAX_TEST_MODE", raising=False)
+    plan = _base_plan(2)
+    plan_path = tmp_path / "plan.yaml"
+    plan_path.write_text(yaml.dump(plan))
+
+    _lock_field_in_plan(plan_path, plan, 1, "still_path", str(tmp_path / "parallax/assets/scene_01_still.png"), tmp_path)
+
+    on_disk = yaml.safe_load(plan_path.read_text())
+    assert on_disk["scenes"][1]["still_path"] == "parallax/assets/scene_01_still.png"
+    assert "still_path" not in on_disk["scenes"][0]
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +252,7 @@ def test_stage_animate_generates_all_animate_scenes(tmp_path: Path, monkeypatch,
 
 
 def test_stage_animate_locks_clips_in_plan(tmp_path: Path, monkeypatch, bound_run):
-    """stage_animate must lock clip_path for all animated scenes in plan.yaml."""
+    """A dry run locks clips in memory for later stages but never writes them to plan.yaml."""
     monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
     n = 2
     settings = _make_settings(tmp_path)
@@ -260,6 +275,6 @@ def test_stage_animate_locks_clips_in_plan(tmp_path: Path, monkeypatch, bound_ru
 
     stage_animate(plan, settings, state)
 
+    assert all(s.get("clip_path") for s in plan["scenes"])
     on_disk = yaml.safe_load(settings.plan_path.read_text())
-    for s in on_disk["scenes"]:
-        assert s.get("clip_path"), f"scene {s['index']} clip_path not locked in plan.yaml"
+    assert not any(s.get("clip_path") for s in on_disk["scenes"]), "dry-run stub leaked into plan.yaml"

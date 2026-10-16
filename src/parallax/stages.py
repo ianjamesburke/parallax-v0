@@ -154,6 +154,10 @@ def _lock_field_in_plan(plan_path: Path, plan: dict, scene_idx: int, field_name:
                 scene[field_name] = locked_path
                 break
 
+        # A dry run's stubs must never become locks in the real plan: later real runs and cost estimates would treat them as approved assets.
+        if is_test_mode():
+            return
+
         # Read current on-disk state to avoid overwriting concurrent user edits.
         try:
             with plan_path.open("r", encoding="utf-8") as f:
@@ -193,6 +197,8 @@ def _lock_plan_fields(plan_path: Path, plan: dict, folder: Path, **fields: str) 
 
     with _plan_lock:
         plan.update(normalized)
+        if is_test_mode():  # see _lock_field_in_plan
+            return
         try:
             with plan_path.open("r", encoding="utf-8") as f:
                 disk_plan = yaml.safe_load(f) or {}
