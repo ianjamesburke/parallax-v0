@@ -379,6 +379,21 @@ def _resolve_still_refs(s: dict[str, Any], settings: Settings) -> list[str] | No
     return refs
 
 
+def _archive_existing_asset(canonical: Path, assets_dir: Path) -> Path | None:
+    """Move an existing real asset at `canonical` into `assets_dir/versions/<stem>_vN<suffix>` before overwriting."""
+    if not canonical.is_file() or is_mock_asset(canonical):
+        return None
+    versions_dir = assets_dir / "versions"
+    versions_dir.mkdir(parents=True, exist_ok=True)
+    stem, suffix = canonical.stem, canonical.suffix
+    v = 1
+    while (versions_dir / f"{stem}_v{v}{suffix}").exists():
+        v += 1
+    archived = versions_dir / f"{stem}_v{v}{suffix}"
+    shutil.move(str(canonical), str(archived))
+    return archived
+
+
 def _generate_one_still(s: dict[str, Any], settings: Settings, state: PipelineState, plan: dict[str, Any]) -> str:
     """Generate (with retry) one still for scene `s`. Thread-safe. Returns normalized still path."""
     from .openrouter import generate_image
@@ -421,10 +436,15 @@ def _generate_one_still(s: dict[str, Any], settings: Settings, state: PipelineSt
     normalized = normalize_aspect(raw_still_path, settings.resolution)
     if not state.assets_dir:
         raise RuntimeError("stage_stills: state.assets_dir is unset; scan_project_folder must run first (an empty path would write into the current directory)")
-    canonical = Path(state.assets_dir) / f"scene_{idx:02d}_still.png"
+    assets_dir = Path(state.assets_dir)
+    canonical = assets_dir / f"scene_{idx:02d}_still.png"
     if (is_test_mode() or settings.mode == ProductionMode.TEST) and canonical.exists() and not is_mock_asset(canonical):
         canonical = Path(state.out_dir or state.stills_dir) / f"mock_scene_{idx:02d}_still.png"
         canonical.parent.mkdir(parents=True, exist_ok=True)
+    elif settings.mode == ProductionMode.REAL:
+        archived = _archive_existing_asset(canonical, assets_dir)
+        if archived is not None:
+            _log(settings, f"  [{idx:02d}] archived previous still → versions/{archived.name}")
     Path(normalized).rename(canonical)
     if str(normalized) != str(raw_still_path):
         Path(raw_still_path).unlink(missing_ok=True)
@@ -607,10 +627,15 @@ def _animate_one_scene(
         aspect_ratio=s.aspect,
         size=scene_animate_res,
     )
-    canonical = Path(state.assets_dir) / f"scene_{s.index:02d}_animated.mp4"
+    assets_dir = Path(state.assets_dir)
+    canonical = assets_dir / f"scene_{s.index:02d}_animated.mp4"
     if (is_test_mode() or settings.mode == ProductionMode.TEST) and canonical.exists() and not is_mock_asset(canonical):
         canonical = Path(state.out_dir or state.video_dir) / f"mock_scene_{s.index:02d}_animated.mp4"
         canonical.parent.mkdir(parents=True, exist_ok=True)
+    elif settings.mode == ProductionMode.REAL:
+        archived = _archive_existing_asset(canonical, assets_dir)
+        if archived is not None:
+            _log(settings, f"  [{s.index:02d}] archived previous clip → versions/{archived.name}")
     Path(raw_clip).rename(canonical)
     _shutil.rmtree(scene_tmp, ignore_errors=True)
     return str(canonical)
@@ -1355,6 +1380,16 @@ def stage_finalize(plan: dict[str, Any], settings: Settings, state: PipelineStat
         assert state.current_video is not None
         Path(state.current_video).rename(final_out)
         state.current_video = final_out
+
+    # Remove intermediate render artifacts (ken_burns_draft.mp4, captioned.mp4, titled.mp4)
+    # from state.video_dir once the final video is finalized, preserving any avatar_track_keyed.mov.
+    video_tmp = Path(state.video_dir)
+    if video_tmp.is_dir():
+        for f in video_tmp.iterdir():
+            if f.is_file() and f.name != "avatar_track_keyed.mov":
+                f.unlink(missing_ok=True)
+        if not any(video_tmp.iterdir()):
+            video_tmp.rmdir()
 
     # Snapshot the on-disk plan into the output dir — _lock_field_in_plan
     # has already written every locked path back to plan_path during the run.

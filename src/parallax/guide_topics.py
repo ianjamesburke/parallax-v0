@@ -11,8 +11,8 @@ TOPICS: dict[str, dict] = {
         "paths": {
             "folder": "--folder is the project root. Pass an absolute path; paths inside plan.yaml are relative to it.",
             "plan_from_brief": "<folder>/parallax/scratch/plan.yaml (override with `plan --out`). When assets are missing, `plan` writes <folder>/parallax/scratch/questions.yaml instead and exits 1.",
-            "generated_assets": "<folder>/parallax/assets/scene_NN_still.png and scene_NN_animated.mp4 (reused by later runs).",
-            "run_output": "<folder>/parallax/output/vN/ (N increments each run): <project>-vN-<hash>.mp4, plan.yaml (snapshot of the plan that ran; do not edit), manifest.yaml, cost.json, run.log, stills/ or video/, audio/.",
+            "generated_assets": "<folder>/parallax/assets/scene_NN_still.png and scene_NN_animated.mp4 (reused by later runs; regenerated takes archive the prior version into <folder>/parallax/assets/versions/scene_NN_still_vK.png).",
+            "run_output": "<folder>/parallax/output/vN/ (N increments each run): <project>-vN-<hash>.mp4, plan.yaml (snapshot of the plan that ran; do not edit), manifest.yaml, cost.json, run.log, audio/.",
         },
         "flow": [
             {"step": "validate", "command": "parallax validate --folder F --brief B", "spends": False, "use": "Catches brief and plan errors before any spend; prints JSON with `errors` and `warnings`."},
@@ -56,7 +56,7 @@ TOPICS: dict[str, dict] = {
             "reference": "true: use plan.character_image as the still reference.",
             "reference_images": "Explicit per-scene references; merged with applicable global references.",
         },
-        "regenerate": "Set `regenerate: true` on a scene: the next `produce` deletes its still_path, clip_path, and end_frame_path locks and the flag itself, then regenerates. Top-level audio locks are not cleared.",
+        "regenerate": "Set `regenerate: true` on a scene (in `brief.yaml` or `plan.yaml`): the next `produce` clears its still_path, clip_path, and end_frame_path locks and the flag itself, moves the previous still/clip into `<folder>/parallax/assets/versions/scene_NN_still_vK.png` (so prior takes are cleanly preserved), and generates a fresh take at `<folder>/parallax/assets/scene_NN_still.png`. Top-level audio locks are not cleared.",
         "audio_locks": {
             "where": "Top level of plan.yaml, not inside a scene: `audio_path` and `words_path`. `produce` writes them itself only when `voice_postprocess` runs; otherwise set them by hand after approving narration.",
             "effect": "While set, narration is reused, not synthesized. `voice_speed`, `trim_pauses`, and `voice_postprocess` are ignored (the pre-flight table warns).",

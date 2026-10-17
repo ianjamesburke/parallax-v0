@@ -140,6 +140,7 @@ class BriefScene(BaseModel):
     still_path: str | None = None  # approved still from a prior version — skips generation
     clip_path: str | None = None  # reusable locally rendered or previously generated clip
     on_screen_text: str | None = None  # storyboard copy; not automatically burned into video
+    regenerate: bool = False  # when true, clears locks on produce and archives the previous version to parallax/assets/versions/
 
     @model_validator(mode="before")
     @classmethod
@@ -293,6 +294,7 @@ class Brief(BaseModel):
                     **({"reference": True} if self.character_reference and s.shot_type == "character" else {}),
                     **({"still_path": s.still_path} if s.still_path else {}),
                     **({"clip_path": s.clip_path} if s.clip_path else {}),
+                    **({"regenerate": True} if s.regenerate else {}),
                 }
                 for s in self.script.scenes
             ],

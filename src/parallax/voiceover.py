@@ -137,6 +137,9 @@ def generate_voiceover_dict(
         )
     words_trimmed = _restore_pronunciations(words_trimmed, pronunciations)
 
+    if Path(raw_path).resolve() != audio_path.resolve():
+        Path(raw_path).unlink(missing_ok=True)
+
     words_path = dest / "vo_words.json"
     words_path.write_text(json.dumps({
         "words": words_trimmed,
@@ -147,7 +150,7 @@ def generate_voiceover_dict(
     log.info("voiceover: done duration=%.2fs elapsed=%dms", duration, elapsed)
 
     return {
-        "raw_audio_path": str(raw_path),
+        "raw_audio_path": str(audio_path),
         "audio_path": str(audio_path),
         "words_path": str(words_path),
         "words": words_trimmed,

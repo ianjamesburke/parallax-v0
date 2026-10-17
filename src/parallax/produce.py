@@ -111,6 +111,28 @@ def _apply_regenerate_flags(plan: dict, plan_path: Path) -> None:
         yaml.safe_dump(disk_plan, f, default_flow_style=False, allow_unicode=True,
                        sort_keys=False, width=10000)
 
+    source_brief = plan.get("source_brief") or disk_plan.get("source_brief")
+    if source_brief:
+        brief_path = Path(source_brief).expanduser()
+        if not brief_path.is_absolute():
+            brief_path = plan_path.parent.parent.parent / brief_path
+        if brief_path.is_file():
+            try:
+                brief_data = yaml.safe_load(brief_path.read_text(encoding="utf-8")) or {}
+                brief_changed = False
+                for b_scene in (brief_data.get("script") or {}).get("scenes", []):
+                    if b_scene.get("regenerate"):
+                        for f in _SCENE_LOCK_FIELDS:
+                            b_scene.pop(f, None)
+                        b_scene.pop("regenerate", None)
+                        brief_changed = True
+                if brief_changed:
+                    with brief_path.open("w", encoding="utf-8") as bf:
+                        yaml.safe_dump(brief_data, bf, default_flow_style=False, allow_unicode=True,
+                                       sort_keys=False, width=10000)
+            except Exception:
+                pass
+
 
 def _init_vo_text_hashes(plan: dict, plan_path: Path) -> None:
     """Store vo_text hashes when audio_path is first locked.
