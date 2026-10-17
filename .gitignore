@@ -22,3 +22,5 @@ sandbox/
 .agents/
 .playwright-cli/
 .plexi-beta/
+.stint/
+.plexi/
