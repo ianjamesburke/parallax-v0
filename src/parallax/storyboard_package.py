@@ -121,7 +121,10 @@ def _copy_assets(brief: Brief, root: Path, assets: Path) -> list[str]:
             continue
         destination = assets / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+        try:
+            os.link(source, destination)
+        except OSError:
+            shutil.copy2(source, destination)
     return missing
 
 
@@ -290,6 +293,8 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
     pdf_created = False
     if pdf:
         pdf_created = render_pdf(package / "storyboard.html", package / "storyboard.pdf")
+        if pdf_created and package == (root / "storyboard-package").resolve():
+            shutil.copy2(package / "storyboard.pdf", root / "storyboard.pdf")
 
     files = {
         name: role for name, role in _FILES.items()

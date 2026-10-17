@@ -41,6 +41,7 @@ Plan YAML schema:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 import traceback
@@ -344,6 +345,16 @@ def run_plan(
                 plan = stage(plan, settings, state)
 
             _refresh_storyboard_package(plan, settings)
+            if settings.mode == ProductionMode.REAL and state.current_video and Path(state.current_video).is_file():
+                exports_dir = settings.folder / "exports"
+                exports_dir.mkdir(parents=True, exist_ok=True)
+                export_dst = exports_dir / Path(state.current_video).name
+                try:
+                    if export_dst.exists():
+                        export_dst.unlink()
+                    os.link(state.current_video, export_dst)
+                except OSError:
+                    shutil.copy2(state.current_video, export_dst)
             runlog.end_run(status="ok", final_video=str(state.current_video))
             return ProductionResult(
                 status="ok",

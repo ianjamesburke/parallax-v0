@@ -64,6 +64,7 @@ TOPICS: dict[str, dict] = {
             "preparing": "Copy approved audio and word-timing files to run-local paths first, keep scene narration matched to the recording, and keep the reviewed voice speed and post-processing settings.",
         },
         "paths": "Locked paths resolve from the project folder (--folder).",
+        "broll_reuse": "When creating a new concept variation or when the project folder supplies a reusable asset pool (e.g. `assets/reused/` or `reuse-index.json`), match reusable stills and clips by story state (problem vs. healthy/after, setting, character/product continuity), lock them on matching scenes in `brief.yaml` via `still_path` / `clip_path`, and generate only the newly needed coverage (e.g. new opening hook shots).",
         "rules": [
             "Never edit <folder>/parallax/output/vN/plan.yaml: it is a snapshot of the run. Edit the working plan.",
             "Lock approved assets before re-running.",

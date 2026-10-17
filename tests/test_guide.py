@@ -35,8 +35,8 @@ def test_guide_command_prints_parsable_json(capsys):
     assert cli.main(["guide"]) == 0
     guide = json.loads(capsys.readouterr().out)
     storyboard = next(c for s in guide["stages"] for c in s["commands"] if c["command"] == "parallax storyboard")
-    assert {"--folder", "--brief"} <= {f["name"] for f in storyboard["flags"] if f["required"]}
-    assert "--json" in {f["name"] for f in storyboard["flags"]}
+    assert {"--folder"} <= {f["name"] for f in storyboard["flags"] if f["required"]}
+    assert {"--brief", "--json"} <= {f["name"] for f in storyboard["flags"]}
 
 
 def test_guide_documents_brief_shape_and_gate_wiring():
