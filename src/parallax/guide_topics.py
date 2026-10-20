@@ -5,7 +5,50 @@ the sources). Authored as data so an agent reads fields, not prose walls.
 """
 from __future__ import annotations
 
+from .models import VIDEO_MODELS
+
+
+def _end_frame_models() -> list[str]:
+    """Read end-frame capability from the catalog; never duplicate aliases here."""
+    return sorted(spec.alias for spec in VIDEO_MODELS.values() if spec.end_frame)
+
 TOPICS: dict[str, dict] = {
+    "single_shot": {
+        "summary": "One camera move, using separate frozen start and end frames when the view, scale, or subject changes.",
+        "separate_stills": {
+            "when": "Make separate start and end stills for any viewpoint, scale, or subject change: overhead to pillow-level macro, pushing into an object, or a reveal.",
+            "commands": [
+                "parallax image generate \"<one frozen start moment>\" --aspect 9:16 --out START.png",
+                "parallax image generate \"<one frozen end moment>\" --aspect 9:16 --out END.png",
+            ],
+            "continuity": "Keep style and palette consistent. Use a character sheet as --ref only in stills where that character appears; drop a reference that carries the wrong material (for example papercraft when the shot needs a realistic human).",
+        },
+        "still_prompt_rule": "NEVER put a multi-step camera move in a still prompt: image models turn it into a comic/panel grid. Describe ONE frozen moment; put motion in the video prompt.",
+        "animate": {
+            "command": "parallax video animate --start START.png --end END.png --model <tier> --duration N --prompt \"<move>\" --out shot.mp4",
+            "end_frame_models": _end_frame_models(),
+            "default_note": "The default video model may not support end frames. With --end, Parallax fails before spending and names the supported models above.",
+        },
+        "video_prompt_layout": [
+            "Named move.", "Start state.", "Continuous motion.", "Settled end state.", "Tone, lighting, texture."
+        ],
+        "clip_scope": "One move per clip. Give a complex move more duration or split it into two clips.",
+        "audio": "Model-generated clip audio is stripped before assembly; do not depend on it.",
+        "wait": "animate can block for minutes with no output. Do not kill or retry a paid call; rerun the same command to resume/reuse saved work.",
+        "next": "asset_locking",
+    },
+    "character_first": {
+        "summary": "For a new character-driven ad, lock an approved character sheet before storyboarding or generating production shots.",
+        "steps": [
+            {"step": 1, "do": "Get the user's character and style description."},
+            {"step": 2, "do": "Generate one 2x4 or 4x2 grid with eight clearly numbered, different character options.", "template": "An 8-panel 2x4 character design grid for <CHARACTER DESCRIPTION>, eight distinct <STYLE> designs. Print a clear number 1–8 inside each panel; no extra panels."},
+            {"step": 3, "do": "User picks one number; do not choose for them."},
+            {"step": 4, "do": "Crop the selection, then use it as --ref for a sheet.", "crop": "parallax image crop-grid options.png --rows 2 --cols 4 --pick N --out selected.png", "sheet_template": "Character sheet for the selected character: front, 3/4, side, back, a few action poses, scale reference, and color palette. Preserve the selected design, materials, and style."},
+            {"step": 5, "do": "Lock the approved sheet as brief character_image, then storyboard (plan --stills-only / produce)."},
+        ],
+        "asset_locking": "Do not regenerate approved grid picks or character sheets. Keep and lock the approved assets; use the sheet as the character reference for applicable shots.",
+        "next": "produce_loop",
+    },
     "produce_loop": {
         "summary": "brief.yaml (human spec) -> `parallax plan` -> plan.yaml (engine spec) -> `parallax produce` -> <folder>/parallax/output/vN/.",
         "paths": {

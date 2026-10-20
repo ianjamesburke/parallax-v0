@@ -324,6 +324,14 @@ def generate_video(
     when `image_path` is set, the model uses frame_images and ignores
     input_references. Only pass input_references when there is no image_path.
     """
+    spec = resolve(alias, kind="video")
+    if end_image_path is not None:
+        if image_path is None:
+            raise ValueError("--end requires --start")
+        if not spec.end_frame:
+            from ..models import VIDEO_MODELS
+            supported = ", ".join(sorted(s.alias for s in VIDEO_MODELS.values() if s.end_frame))
+            raise ValueError(f"Video model {alias!r} does not support end frames. Choose one of: {supported}.")
     from ..settings import _ASPECT_TO_RESOLUTION as _ASPECT_RES
     test_resolution = size or _ASPECT_RES.get(aspect_ratio or "", "720x1280")
     return _dispatch(

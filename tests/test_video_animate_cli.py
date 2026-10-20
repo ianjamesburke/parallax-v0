@@ -57,12 +57,44 @@ def test_animate_start_and_end_frame(mock_image, tmp_path):
                    "--prompt", "slow zoom",
                    "--start", str(mock_image),
                    "--end", str(end_img),
+                   "--model", "draft",
                    "--out", str(tmp_path)])
     assert rc == 0
     kw = mock_gen.call_args.kwargs
     assert kw["image_path"] == mock_image
     assert kw["end_image_path"] == end_img
     assert kw["input_references"] is None
+
+
+def test_animate_end_frame_unsupported_model_names_supported_models(mock_image, tmp_path, capsys):
+    rc = _run(["video", "animate", "--prompt", "slow zoom", "--start", str(mock_image),
+               "--end", str(mock_image), "--model", "mid", "--out", str(tmp_path)])
+    assert rc == 2
+    assert "does not support end frames" in capsys.readouterr().err
+
+
+def test_animate_out_file_is_written_exactly(mock_image, tmp_path, capsys):
+    generated = tmp_path / "scratch" / "provider.mp4"
+    generated.parent.mkdir()
+    generated.write_bytes(b"MP4")
+    wanted = tmp_path / "nested" / "shot.mp4"
+    with patch("parallax.openrouter.generate_video", return_value=generated):
+        assert _run(["video", "animate", "--prompt", "x", "--start", str(mock_image),
+                     "--out", str(wanted)]) == 0
+    assert wanted.read_bytes() == b"MP4"
+    assert capsys.readouterr().out.strip() == str(wanted)
+
+
+def test_animate_end_frame_estimate_uses_catalog_multiplier(monkeypatch, mock_image, tmp_path, capsys):
+    end = tmp_path / "end.png"
+    end.write_bytes(b"PNG")
+    generated = tmp_path / "provider.mp4"
+    generated.write_bytes(b"MP4")
+    monkeypatch.setattr("parallax.shim.is_test_mode", lambda: False)
+    with patch("parallax.openrouter.generate_video", return_value=generated):
+        assert _run(["video", "animate", "--prompt", "x", "--model", "draft", "--duration", "5",
+                     "--start", str(mock_image), "--end", str(end), "--out", str(tmp_path)]) == 0
+    assert "~$0.4574" in capsys.readouterr().err
 
 
 def test_animate_ref_images(mock_image, tmp_path):

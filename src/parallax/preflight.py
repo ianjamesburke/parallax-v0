@@ -144,7 +144,9 @@ def compute_preflight(
                 clip_spec = resolve(clip_alias, kind="video")
                 # Estimate the billed length (the model's request_duration), not the scene length.
                 duration = float(clip_spec.request_duration(duration))
-                clip_cost = clip_spec.cost_usd * duration
+                clip_cost = clip_spec.estimate_video_usd(
+                    duration, end_frame=bool(s.get("end_frame_path"))
+                )
                 clip_native_res = clip_spec.native_resolution
 
             clip_file = (assets_dir / f"scene_{idx:02d}_animated.mp4") if assets_dir is not None else None

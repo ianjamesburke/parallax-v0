@@ -274,7 +274,18 @@ def _run_produce(
             debug_level=debug,
         )
     except Exception as e:
-        print(f"\nError: {type(e).__name__}: {e}\n", file=sys.stderr)
+        message = str(e) or "no message"
+        assets_dir = Path(folder).expanduser() / "parallax" / "assets"
+        saved = [p for p in assets_dir.rglob("*") if p.is_file()] if assets_dir.is_dir() else []
+        run_id = getattr(e, "parallax_run_id", None)
+        if saved:
+            print(
+                f"Paid assets are saved at {assets_dir}. Rerunning the same command resumes and reuses them; do not regenerate them.",
+                file=sys.stderr,
+            )
+        if run_id:
+            print(f"See: parallax log {run_id}", file=sys.stderr)
+        print(f"\nError: {type(e).__name__}: {message}\n", file=sys.stderr)
         return 1
     if result.status != "ok":
         print(f"\nError: {result.error}\n", file=sys.stderr)

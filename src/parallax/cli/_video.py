@@ -63,22 +63,40 @@ def video_animate(
     from ..preflight import print_estimate
     from ..shim import is_test_mode
 
-    out_dir = Path(out) if out else Path.cwd()
+    out_file: Path | None = None
+    out_path = Path(out) if out else None
+    if out_path is not None and not out_path.is_dir() and out_path.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm"}:
+        out_file = out_path
+        out_dir = out_file.parent
+        out_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        out_dir = out_path if out_path is not None else Path.cwd()
+        out_dir.mkdir(parents=True, exist_ok=True)
     start_path = Path(start) if start else None
     end_path = Path(end) if end else None
     refs = [Path(r) for r in ref] if ref else None
 
     spec = resolve(model, kind="video")
+    if end and not spec.end_frame:
+        from ..models import VIDEO_MODELS
+        supported = ", ".join(sorted(s.alias for s in VIDEO_MODELS.values() if s.end_frame))
+        print(f"Error: video model {model!r} does not support end frames. Choose one of: {supported}.", file=sys.stderr)
+        return 2
     if not is_test_mode():
-        print_estimate(f"video animate --model {model}", spec.cost_usd * float(spec.request_duration(duration)))
-    path = generate_video(
-        prompt,
-        model,
-        image_path=start_path,
-        end_image_path=end_path,
-        input_references=refs,
-        duration_s=duration,
-        out_dir=out_dir,
-    )
+        print_estimate(f"video animate --model {model}", spec.estimate_video_usd(duration, end_frame=end_path is not None))
+    try:
+        path = generate_video(
+            prompt, model, image_path=start_path, end_image_path=end_path,
+            input_references=refs, duration_s=duration, out_dir=out_dir,
+        )
+        if out_file is not None:
+            Path(path).replace(out_file)
+            path = out_file
+    except Exception as exc:
+        assets = [p for p in out_dir.glob("*") if p.is_file()]
+        if assets:
+            print(f"Paid assets are saved at {out_dir}. Rerunning the same command resumes and reuses them; do not regenerate them.", file=sys.stderr)
+        print(f"Error: video animation failed ({type(exc).__name__}: {str(exc) or 'no message'})", file=sys.stderr)
+        return 1
     print(path)
     return 0

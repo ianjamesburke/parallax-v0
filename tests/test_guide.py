@@ -39,6 +39,15 @@ def test_guide_command_prints_parsable_json(capsys):
     assert {"--brief", "--json"} <= {f["name"] for f in storyboard["flags"]}
 
 
+def test_help_and_click_usage_errors_point_agents_to_guide(capsys):
+    assert cli.main(["--help"]) == 0
+    assert "Agents: start with `parallax guide`" in capsys.readouterr().out
+    assert cli.main(["not-a-command"]) == 2
+    assert "parallax guide single_shot" in capsys.readouterr().err
+    assert cli.main(["guide", "--not-an-option"]) == 2
+    assert "parallax guide single_shot" in capsys.readouterr().err
+
+
 def test_guide_documents_brief_shape_and_gate_wiring():
     from parallax.brief import Brief
     from parallax.guide import build_guide
@@ -96,7 +105,13 @@ def test_guide_topics_chain_and_cross_references_resolve(capsys):
         assert target is None or target in names
         for ref in (data["stage"].get("see", []) if "stage" in data else data.get("see", [])):
             assert ref in names
-    assert {"produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll"} <= names
+    assert {"produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll", "single_shot", "character_first"} <= names
+
+
+def test_single_shot_guide_derives_end_frame_models_from_catalog(capsys):
+    from parallax.models import VIDEO_MODELS
+    topic = _topic(capsys, "single_shot")
+    assert topic["animate"]["end_frame_models"] == sorted(s.alias for s in VIDEO_MODELS.values() if s.end_frame)
 
 
 def test_guide_topics_only_name_real_commands(capsys):

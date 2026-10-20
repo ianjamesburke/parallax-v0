@@ -387,6 +387,14 @@ def test_clip_estimate_defaults_to_default_clip_duration():
     assert clip.duration_s == DEFAULT_CLIP_DURATION_S
 
 
+def test_end_frame_clip_estimate_uses_catalog_measured_multiplier():
+    """2026-10-19 evidence: 5s Seedance start+end billed $0.45738."""
+    plan = _make_plan([{"index": 0, "animate": True, "duration_s": 5,
+                        "still_path": "start.png", "end_frame_path": "end.png"}], video_model="draft")
+    clip = [s for s in compute_preflight(plan).scenes if s.kind == "clip"][0]
+    assert clip.cost_usd == pytest.approx(0.45738, rel=0.01)
+
+
 def test_voiceover_cost_scales_with_characters():
     from parallax.models import resolve
     text = "x" * 2000
@@ -436,4 +444,3 @@ def test_still_with_reference_images_includes_vision_estimate():
     base = resolve("mid", kind="image").cost_usd
     assert result.scenes[0].cost_usd == pytest.approx(base)
     assert result.scenes[1].cost_usd == pytest.approx(base + 0.01)
-

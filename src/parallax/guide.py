@@ -204,7 +204,14 @@ def _build_stages(group: Any) -> list[dict]:
                 if part not in getattr(node, "commands", {}):
                     raise ValueError(f"guide references unknown command `parallax {entry['command']}`; fix src/parallax/guide.py")
                 node = node.commands[part]
-            commands.append({**entry, "command": f"parallax {entry['command']}", "flags": _flags(node)})
+            flags = _flags(node)
+            # The command has a convenience default, but agents must pass the
+            # brief explicitly so they do not storyboard an unintended file.
+            if entry["command"] == "storyboard":
+                for flag in flags:
+                    if flag["name"].split("/")[0] == "--brief":
+                        flag["required"] = True
+            commands.append({**entry, "command": f"parallax {entry['command']}", "flags": flags})
         stages.append({**stage, "commands": commands})
     return stages
 
