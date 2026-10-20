@@ -26,7 +26,7 @@ def _style_drawtext_filter(
     # `%` starts a drawtext expansion (`%{...}`), so a literal one must reach drawtext as `\%`.
     # The filtergraph parser strips one backslash level first, hence two here.
     escaped = (
-        text.replace("\\", "\\\\").replace("'", "’").replace(":", "\\:").replace("%", "\\\\%")
+        text.replace("\\", "\\\\").replace("'", "’").replace(":", "\\:").replace("%", "\\\\%").replace("\n", "\\n")
     )
     if style.get("uppercase"):
         escaped = escaped.upper()
@@ -34,8 +34,8 @@ def _style_drawtext_filter(
     fontfile = style.get("fontfile")
     font_path = str(_FONTS_DIR / fontfile) if fontfile else style.get("system_font", "")
 
-    x_expr = style.get("x_expr", "(w-tw)/2")
-    y_expr = style.get("y_expr", "h*0.65-th")
+    x_expr = str(style.get("x", style.get("x_expr", "(w-tw)/2")))
+    y_expr = str(style.get("y", style.get("y_expr", "h*0.65-th")))
 
     kv: list[str] = [
         f"fontfile='{font_path}'",
@@ -71,7 +71,7 @@ def _burn_captions_drawtext(
     # chunks without one (animation disabled).
     filters = [
         _style_drawtext_filter(
-            style, c["text"], c["start"], c["end"],
+            {**style, "x": c.get("x", style.get("x_expr", "(w-tw)/2")), "y": c.get("y", style.get("y_expr", "h*.65-th"))}, c["text"], c["start"], c["end"],
             int(c.get("fontsize", fontsize)),
         )
         for c in chunks

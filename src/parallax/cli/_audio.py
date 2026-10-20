@@ -290,6 +290,7 @@ def audio_voiceover(
     speed: Optional[float] = typer.Option(None, "--speed", help="atempo multiplier applied after synthesis (e.g. 1.2 = 20% faster)."),
     style: Optional[str] = typer.Option(None, "--style", help="Delivery style preset: rapid_fire, fast, calm, natural."),
     trim_pauses: bool = typer.Option(False, "--trim-pauses", help="Opt in to timestamp-based pause trimming. By default, preserve the provider's original audio."),
+    no_verify: bool = typer.Option(False, "--no-verify", help="Skip local transcript verification of synthesized speech."),
 ) -> int:
     """Synthesize speech. Spends money; prints the estimated cost first."""
     import shutil
@@ -322,6 +323,7 @@ def audio_voiceover(
             style=style,
             voice_model=voice_model,
             trim_pauses=trim_pauses,
+            verify=not no_verify,
         )
         audio_src = _P(result["audio_path"])
         if trim_pauses or speed_applied:

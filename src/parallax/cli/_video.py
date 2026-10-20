@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import json
 from typing import List, Optional
 
 import typer
@@ -11,6 +12,35 @@ video_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=True,
 )
+
+@video_app.command("ken-burns")
+def video_ken_burns(image: str = typer.Option(..., "--image"), duration: float = typer.Option(..., "--duration"), move: str = typer.Option("in", "--move"), zoom: float = typer.Option(1.12, "--zoom"), aspect: str = typer.Option("9:16", "--aspect"), fps: int = typer.Option(30, "--fps"), out: str = typer.Option(..., "--out")) -> int:
+    """Render a smooth, silent Ken Burns clip locally (no provider call)."""
+    from ..local_video import ken_burns
+    if move not in {"in","out","pan-left","pan-right","pan-up","pan-down"}: raise typer.BadParameter("move must be in, out, pan-left, pan-right, pan-up, or pan-down")
+    print(ken_burns(image, duration, out, move=move, zoom=zoom, aspect=aspect, fps=fps)); return 0
+
+@video_app.command("assemble")
+def video_assemble(shot: list[str] = typer.Option([], "--shot", help="clip-or-still[:duration], repeatable"), shots: Optional[str] = typer.Option(None, "--shots", help="JSON shot manifest"), voice: Optional[str] = typer.Option(None,"--voice"), voice_offset: float = typer.Option(0,"--voice-offset"), words: Optional[str] = typer.Option(None,"--words"), captions: bool = typer.Option(False,"--captions/--no-captions"), caption_style: str = typer.Option("anton","--caption-style"), aspect: str = typer.Option("9:16","--aspect"), out: str = typer.Option(...,"--out")) -> int:
+    """Normalize and concatenate local shots; optionally mix VO and captions."""
+    from ..local_video import assemble
+    items = json.loads(open(shots).read()) if shots else [{"path": x.rsplit(":",1)[0], **({"duration":float(x.rsplit(":",1)[1])} if ":" in x and x.rsplit(":",1)[1].replace('.','',1).isdigit() else {})} for x in shot]
+    if not items: raise typer.BadParameter("provide --shot or --shots")
+    print(assemble(items,out,aspect=aspect,voice=voice,voice_offset=voice_offset,captions=captions,words=words,caption_style=caption_style)); return 0
+
+@video_app.command("captions")
+def video_captions(video: str = typer.Option(...,"--video"), words: str = typer.Option(...,"--words"), offset: float = typer.Option(0,"--offset"), style: str = typer.Option("anton","--style"), report: Optional[str] = typer.Option(None,"--report"), out: str = typer.Option(...,"--out")) -> int:
+    """Burn safe-area captions over an existing local video."""
+    from ..captions import burn_captions
+    print(burn_captions(video,words,out,caption_style=style,shift_s=offset,report_path=report)); return 0
+
+@video_app.command("text-overlay")
+def video_text_overlay(input: str = typer.Option(...,"--in"), text: str = typer.Option(...,"--text"), preset: str = typer.Option("pop","--preset"), position: str = typer.Option("center","--position"), duration: float = typer.Option(...,"--duration"), out: str = typer.Option(...,"--out"), aspect: str = typer.Option("9:16","--aspect")) -> int:
+    """Render zero-spend kinetic text over a still or clip; output is silent MP4."""
+    from ..local_video import text_overlay
+    if preset not in {"pop","count-up","slide-up","typewriter"}: raise typer.BadParameter("preset must be pop, count-up, slide-up, or typewriter")
+    if position not in {"center","upper","lower"}: raise typer.BadParameter("position must be center, upper, or lower")
+    print(text_overlay(input,text,duration,out,preset=preset,position=position,aspect=aspect)); return 0
 
 
 @video_app.command("frame")
@@ -46,6 +76,7 @@ def video_animate(
     start: Optional[str] = typer.Option(None, "--start", metavar="IMAGE", help="Start frame image path."),
     ref: Optional[List[str]] = typer.Option(None, "--ref", metavar="IMAGE", help="Reference image (repeatable). Mutually exclusive with --start/--end."),
     end: Optional[str] = typer.Option(None, "--end", metavar="IMAGE", help="End frame image path. Requires --start."),
+    allow_fallback: bool = typer.Option(False, "--allow-fallback", help="Permit a more expensive/capability-reduced provider fallback."),
 ) -> int:
     """Animate one clip. Spends money; prints the estimated cost first."""
     # Validate mutual exclusion of --start and --ref
@@ -88,6 +119,7 @@ def video_animate(
         path = generate_video(
             prompt, model, image_path=start_path, end_image_path=end_path,
             input_references=refs, duration_s=duration, out_dir=out_dir,
+            allow_fallback=allow_fallback,
         )
         if out_file is not None:
             Path(path).replace(out_file)

@@ -246,6 +246,8 @@ class Plan(BaseModel):
     trim_pauses: bool | float = True  # Safely cap long inter-word gaps with bilateral lead-in and crossfade. True caps at 0.75s; a float >=0.4 sets the cap; False preserves provider audio. Does NOT touch scene boundaries.
     voice_postprocess: VoicePostprocess | None = None
     titles: list[dict[str, Any]] | None = None
+    animate_opening_s: float = 15.0
+    allow_fallback: bool = False
 
     # Transitions
     default_transition: str | None = None

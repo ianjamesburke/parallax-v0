@@ -200,6 +200,7 @@ class Brief(BaseModel):
     # Lower is cheaper. Seedance 2.0 Fast: 480p=$0.054/s, 720p=$0.121/s, 1080p=$0.272/s.
     # Defaults are aspect-aware (9:16→480x854, 16:9→854x480, 1:1→480x480).
     animate_resolution: str | None = None  # None = use aspect-derived default
+    animate_opening_s: float = 15.0  # social default: opening beats must move
     # When true, the planner auto-sets `reference: true` on every character scene
     # so the engine uses `character_image` as the reference for still generation.
     character_reference: bool = False
@@ -273,6 +274,27 @@ class Brief(BaseModel):
                         f"scene {scene.index}: motion_graphic needs a locally rendered clip_path before planning. "
                         "Review the storyboard, render the graphic, then add its clip_path; AI generation is not supported for this scene type."
                     )
+        # Briefs have no measured timing yet.  Estimate at 2.5 words/s, which
+        # is deliberately conservative: every beat beginning in this window is
+        # animated unless the author explicitly wrote animate: false.
+        cursor = 0.0
+        scenes_out = []
+        for s in self.script.scenes:
+            explicit_false = "animate" in s.model_fields_set and not s.animate
+            auto = self.aspect == "9:16" and cursor < self.animate_opening_s and not explicit_false and s.resolved_scene_type == "still"
+            animate = s.animate or auto
+            item = {
+                "index": s.index, "shot_type": s.shot_type,
+                **({"scene_type": "animation"} if auto else ({"scene_type": s.scene_type} if s.scene_type else {})),
+                "vo_text": s.vo_text, "prompt": s.prompt,
+                **({"animate": True} if animate else {}),
+                **({"motion_prompt": s.motion_prompt or s.prompt} if animate else {}),
+                **({"aspect": s.aspect} if s.aspect else {}), **({"reference_images": s.image_refs} if s.image_refs else {}),
+                **({"reference": True} if self.character_reference and s.shot_type == "character" else {}),
+                **({"still_path": s.still_path} if s.still_path else {}), **({"clip_path": s.clip_path} if s.clip_path else {}),
+                **({"regenerate": True} if s.regenerate else {}),
+            }
+            scenes_out.append(item); cursor += max(.5, len(s.vo_text.split()) / 2.5)
         return {
             "aspect": self.aspect,
             "voice": self.voice,
@@ -280,22 +302,6 @@ class Brief(BaseModel):
             **({"stills_only": True} if stills_only else {}),
             **({"headline": self.headline} if self.headline else {}),
             **({"pronunciations": self.pronunciations} if self.pronunciations else {}),
-            "scenes": [
-                {
-                    "index": s.index,
-                    "shot_type": s.shot_type,
-                    **({"scene_type": s.scene_type} if s.scene_type else {}),
-                    "vo_text": s.vo_text,
-                    "prompt": s.prompt,
-                    **({"animate": True} if s.animate else {}),
-                    **({"motion_prompt": s.motion_prompt} if s.motion_prompt else {}),
-                    **({"aspect": s.aspect} if s.aspect else {}),
-                    **({"reference_images": s.image_refs} if s.image_refs else {}),
-                    **({"reference": True} if self.character_reference and s.shot_type == "character" else {}),
-                    **({"still_path": s.still_path} if s.still_path else {}),
-                    **({"clip_path": s.clip_path} if s.clip_path else {}),
-                    **({"regenerate": True} if s.regenerate else {}),
-                }
-                for s in self.script.scenes
-            ],
+            "animate_opening_s": self.animate_opening_s,
+            "scenes": scenes_out,
         }

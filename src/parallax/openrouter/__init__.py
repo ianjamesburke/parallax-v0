@@ -155,6 +155,7 @@ def _dispatch(
     test_call,
     prompt: str,
     out_dir: Path | None,
+    allow_fallback: bool = False,
 ) -> Path:
     spec0 = resolve(alias, kind=kind)  # validates kind early
     if is_test_mode():
@@ -162,13 +163,13 @@ def _dispatch(
         path = test_call(spec0)
         _record_usage(spec0, prompt, str(path), duration_ms=0, cost_usd=0.0, test=True, cost_source="test")
         return path
-    return _with_fallback(kind=kind, alias=alias, primary_call=primary_call)
+    return _with_fallback(kind=kind, alias=alias, primary_call=primary_call, allow_fallback=allow_fallback)
 
 
-def _with_fallback(*, kind: Kind, alias: str, primary_call):
+def _with_fallback(*, kind: Kind, alias: str, primary_call, allow_fallback: bool = False):
     chain = resolve_chain(alias, kind=kind)
     last_error: Exception | None = None
-    for spec in chain:
+    for pos, spec in enumerate(chain):
         try:
             result = _call_with_transient_retry(kind=kind, spec=spec, primary_call=primary_call)
             return result
@@ -178,7 +179,12 @@ def _with_fallback(*, kind: Kind, alias: str, primary_call):
             raise
         except Exception as e:
             last_error = e
-            log.warning("%s alias %s failed (%s); falling back", kind, spec.alias, type(e).__name__)
+            nxt = chain[pos + 1] if pos + 1 < len(chain) else None
+            if nxt and (nxt.cost_usd > spec.cost_usd or (kind == "video" and spec.end_frame and not nxt.end_frame)) and not allow_fallback:
+                body = getattr(getattr(e, "response", None), "text", "")[:500]
+                raise RuntimeError(f"{kind} model {spec.alias} failed ({type(e).__name__}: {e}; provider body: {body}); skipped fallback {nxt.alias} because it is pricier or lacks requested capability. Re-run with --allow-fallback / allow_fallback: true.") from e
+            if nxt:
+                log.warning("WARNING: %s model %s failed; substituting %s ($%.4f/unit)", kind, spec.alias, nxt.alias, nxt.cost_usd)
     # Exhausted chain
     raise RuntimeError(
         f"openrouter: all fallbacks exhausted for {kind} alias {alias!r}: "
@@ -309,6 +315,7 @@ def generate_video(
     out_dir: Path | None = None,
     size: str | None = None,
     aspect_ratio: str | None = None,
+    allow_fallback: bool = False,
 ) -> Path:
     """Generate a video. `size` is a passthrough like '1280x720' / '720x1280';
     `aspect_ratio` is e.g. '9:16'. Each video model has its own
@@ -349,6 +356,7 @@ def generate_video(
         ),
         prompt=prompt,
         out_dir=out_dir,
+        allow_fallback=allow_fallback,
     )
 
 

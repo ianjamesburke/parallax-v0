@@ -33,6 +33,7 @@ def burn_captions(
     gap_hold_frames: int = 15,
     animation_override: str | dict | None = None,
     shift_s: float = 0.0,
+    report_path: str | None = None,
 ) -> str:
     """Burn word-by-word captions onto a video.
 
@@ -57,7 +58,8 @@ def burn_captions(
         delays them. Applied AFTER smart-chunking and gap-hold.
     Returns captioned video path.
     """
-    from ..ffmpeg_utils import _ffmpeg_has_drawtext, _probe_fps
+    from ..ffmpeg_utils import _ffmpeg_has_drawtext, _probe_fps, probe_resolution
+    from .layout import layout_caption
     if not _ffmpeg_has_drawtext():
         raise RuntimeError(
             "burn_captions: ffmpeg on PATH lacks drawtext support (libfreetype). "
@@ -119,6 +121,16 @@ def burn_captions(
         anim = style.get("animation", {"type": "none"})
 
     keyed = _expand_animation_keyframes(chunks, fontsize, anim)
+    resolution = probe_resolution(video_path) or (720, 1280)
+    boxes = []
+    for c in keyed:
+        layout = layout_caption(c["text"], *resolution, int(c.get("fontsize", fontsize)), style)
+        c.update(layout)
+        boxes.append({"start": c["start"], "end": c["end"], "text": layout["text"],
+                      "box": layout["box"], "safe": layout["safe"]})
+    if report_path:
+        Path(report_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(report_path).write_text(json.dumps({"resolution": list(resolution), "boxes": boxes}, indent=2))
 
     _burn_captions_drawtext(video_path, keyed, out, fontsize, style)
 

@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 import re
 import time
+import shutil
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from .ffmpeg_utils import run_ffmpeg
@@ -59,6 +61,7 @@ def generate_voiceover_dict(
     voice_model: str = "tts-mini",
     pronunciations: dict[str, str] | None = None,
     trim_pauses: bool | float = True,
+    verify: bool = False,
 ) -> dict:
     """Generate voiceover and optionally cap overlong inter-word silences.
 
@@ -117,6 +120,21 @@ def generate_voiceover_dict(
             style_hint=style_hint,
         )
 
+    if verify:
+        from .whisper_backend import transcribe_wav
+        heard = transcribe_wav(str(raw_path), label="TTS verification")
+        def norm(v: str) -> list[str]:
+            # modest number normalization catches 8/eight and 20%/twenty percent
+            v = re.sub(r"20%", "twenty percent", v, flags=re.I)
+            v = re.sub(r"\b8\b", "eight", v)
+            return re.findall(r"[a-z]+", v.lower())
+        wanted, got = norm(tts_text), norm(" ".join(x["word"] for x in heard))
+        score = SequenceMatcher(None, wanted, got).ratio()
+        if score < .85 or len(got) > max(4, len(wanted) * 1.5):
+            rejected = dest / f"{Path(raw_path).stem}.rejected{Path(raw_path).suffix}"
+            shutil.move(str(raw_path), rejected)
+            excerpt = " ".join(x["word"] for x in heard[:30])
+            raise RuntimeError(f"TTS model did not read the script (word similarity {score:.2f}). Transcript: {excerpt!r}. Bad audio kept at {rejected}. Try dropping --style or another voice model; use --no-verify to override.")
     import shutil as _shutil
     raw_suffix = Path(raw_path).suffix or ".mp3"
     audio_path = dest / f"voiceover{raw_suffix}"
@@ -183,6 +201,7 @@ def generate_voiceover(
         voice_model=voice_model,
         pronunciations=pronunciations,
         trim_pauses=trim_pauses,
+        verify=False,  # legacy programmatic wrapper preserves its historical no-local-model contract
     ))
 
 
