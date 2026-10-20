@@ -21,7 +21,7 @@ def ken_burns(image: str, duration: float, out: str, *, move="in", zoom=1.12, as
     if r.returncode: raise RuntimeError(r.stderr[:500])
     return str(p)
 
-def assemble(shots: list[dict], out: str, *, aspect="9:16", resolution_: str | None=None, fps=30, voice: str|None=None, voice_offset=0., captions=False, words=None, caption_style="anton", caption_y: float=.65, report: str | None=None) -> str:
+def assemble(shots: list[dict], out: str, *, aspect="9:16", resolution_: str | None=None, fps=30, voice: str|None=None, voice_offset=0., captions=False, words=None, caption_style="anton", caption_y: float=.65, report: str | None=None, caption_size: int=55, words_per_chunk="smart") -> str:
     """Assemble local shots. Clip manifest entries accept `trim_start`, output
     `duration`, and `speed`; e.g. seconds 1.5–4.0 at 1.25x is
     `{\"path\": \"clip.mp4\", \"trim_start\": 1.5, \"duration\": 2.0, \"speed\": 1.25}`.
@@ -58,7 +58,7 @@ def assemble(shots: list[dict], out: str, *, aspect="9:16", resolution_: str | N
         cmd += ["-t",f"{total:.6f}","-c:v","libx264","-pix_fmt","yuv420p","-c:a","aac",str(base)]
         r=run_ffmpeg(cmd,capture_output=True,text=True)
         if r.returncode: raise RuntimeError(r.stderr[:500])
-        if captions and words: return burn_captions(str(base), words, str(outp), caption_style=caption_style, shift_s=voice_offset, caption_y=caption_y, report_path=report)
+        if captions and words: return burn_captions(str(base), words, str(outp), caption_style=caption_style, shift_s=voice_offset, caption_y=caption_y, report_path=report, fontsize=caption_size, words_per_chunk=words_per_chunk)
         base.replace(outp)
     return str(outp)
 
@@ -118,40 +118,21 @@ def _graphic_frames(duration, out, draw_frame, *, resolution_="1080x1920"):
         if r.returncode: raise RuntimeError(r.stderr[:500])
     return str(target)
 
-def app_screen(screen, duration, out, *, bg="#272137", bg_image=None, callout=None, highlight=None, zoom_to_highlight=False, accent="#721CFF", title=None, resolution_="1080x1920"):
-    from PIL import Image, ImageDraw, ImageFont
-    src=Image.open(screen).convert("RGB")
-    def frame(t,w,h):
-        im=Image.new("RGB",(w,h),bg)
-        if bg_image: im.paste(Image.open(bg_image).convert("RGB").resize((w,h)))
-        d=ImageDraw.Draw(im); safe=(int(w*.08),int(h*.10),int(w*.92),int(h*.90)); top=int(h*.18 if title else h*.10); pw=int(w*.72*(1+.035*t)); ph=int(pw*src.height/src.width); x=(w-pw)//2; y=top+int((h-top-ph)*.5+10*__import__('math').sin(t*6.28))
-        d.rounded_rectangle((x-12,y-12,x+pw+12,y+ph+12),radius=42,fill="#101018",outline=accent,width=3); im.paste(src.resize((pw,ph)),(x,y))
-        font=ImageFont.truetype(str(Path(__file__).parent/'fonts'/'Montserrat-Black.ttf'),max(28,w//28))
-        if title: d.text((safe[0],int(h*.10)),title,font=font,fill="white")
-        if highlight:
-            hx,hy,hw,hh=highlight; box=(x+hx*pw,y+hy*ph,x+(hx+hw)*pw,y+(hy+hh)*ph); d.rounded_rectangle(box,radius=16,outline=accent,width=max(4,int(8*(.5+.5*t))))
-            if callout:
-                cy=max(safe[1],int(box[1]-70)); d.rounded_rectangle((safe[0],cy,min(safe[2],safe[0]+w*.72),cy+55),radius=18,fill=accent); d.text((safe[0]+16,cy+10),callout,font=font,fill="white")
-        return im
-    return _graphic_frames(duration,out,frame,resolution_=resolution_)
+def app_screen(screen, duration, out, *, bg="#272137", bg_image=None, callout=None, highlight=None, zoom_to_highlight=False, accent="#721CFF", title=None, full_bleed=False, callout_y=None, resolution_="1080x1920"):
+    """Real screenshot + push-in + animated highlight/callout. See motion_graphics.app_screen."""
+    from . import motion_graphics as mg
+    return mg.app_screen(screen, duration, out, bg=bg, bg_image=bg_image, callout=callout, highlight=highlight, zoom_to_highlight=zoom_to_highlight, accent=accent, title=title, full_bleed=full_bleed, callout_y=callout_y, resolution_=resolution_)
 
 def end_card(logo,duration,out,*,icon=None,headline="Become a morning person",cta="Try RISE free",sub="Download on the App Store",bg="#14102A",accent="#721CFF",colors=None,resolution_="1080x1920"):
-    from PIL import Image, ImageDraw, ImageFont
-    mark=Image.open(logo).convert("RGBA")
-    def frame(t,w,h):
-        im=Image.new("RGB",(w,h),bg); d=ImageDraw.Draw(im); f=ImageFont.truetype(str(Path(__file__).parent/'fonts'/'Montserrat-Black.ttf'),max(28,w//19)); s=.65+.35*min(1,t/.3); mw=int(w*.58*s); mh=max(1,int(mark.height*mw/mark.width)); im.paste(mark.resize((mw,mh)),((w-mw)//2,int(h*.22)),mark.resize((mw,mh)))
-        d.multiline_text((w*.1,int(h*(.43+.04*(1-min(1,t/.35))))),headline,font=f,fill="white",anchor="ma",align="center",spacing=10)
-        by=int(h*.67); pulse=1+.035*max(0,__import__('math').sin(t*12)); bw=int(w*.65*pulse); x=(w-bw)//2; d.rounded_rectangle((x,by,x+bw,by+92),radius=46,fill=accent); d.text((w//2,by+46),cta,font=f,fill="white",anchor="mm"); d.text((w//2,by+130),sub,font=ImageFont.truetype(str(Path(__file__).parent/'fonts'/'Montserrat-Black.ttf'),max(18,w//42)),fill="white",anchor="ma"); return im
-    return _graphic_frames(duration,out,frame,resolution_=resolution_)
+    from . import motion_graphics as mg
+    return mg.end_card(logo, duration, out, icon=icon, headline=headline, cta=cta, sub=sub, bg=bg, accent=accent, colors=colors, resolution_=resolution_)
 
-def diagram(preset,duration,out,*,label="YOUR WINDOW",value=75,colors=None,bg="#14102A",resolution_="1080x1920"):
-    from PIL import Image, ImageDraw, ImageFont
-    accent=(colors or "#721CFF").split(",")[0]; fpath=str(Path(__file__).parent/'fonts'/'Montserrat-Black.ttf')
-    def frame(t,w,h):
-        im=Image.new("RGB",(w,h),bg); d=ImageDraw.Draw(im); f=ImageFont.truetype(fpath,max(26,w//24)); cx,cy=w//2,h//2
-        if preset=="meter": d.arc((w*.15,h*.32,w*.85,h*.85),180,360,fill="#55556A",width=24); a=180+180*min(1,float(value)/100)*t; import math; d.line((cx,cy,cx+math.cos(math.radians(a))*w*.29,cy+math.sin(math.radians(a))*w*.29),fill=accent,width=16); txt=f"{value}%"
-        elif preset=="curve":
-            pts=[(int(w*.12+i*w*.76/60),int(cy+80*__import__('math').sin(i/10))) for i in range(max(2,int(61*t)))]; d.line(pts,fill=accent,width=12); txt=label+"  PEAK / DIP"
-        else: d.ellipse((w*.2,h*.25,w*.8,h*.85),outline="white",width=12); d.arc((w*.2,h*.25,w*.8,h*.85),-70,-70+180*t,fill=accent,width=30); txt=label
-        d.text((cx,h*.12),txt,font=f,fill="white",anchor="ma"); return im
-    return _graphic_frames(duration,out,frame,resolution_=resolution_)
+def diagram(preset,duration,out,*,label="YOUR WINDOW",value=75,colors=None,bg="#14102A",sub=None,unit="",display=None,max_value=100.0,peak="PEAK",dip="DIP",resolution_="1080x1920"):
+    from . import motion_graphics as mg
+    if preset == "clock-window":
+        return mg.clock_window(duration, out, label=label, sub=sub, colors=colors, bg=bg, resolution_=resolution_)
+    if preset == "meter":
+        return mg.meter(duration, out, value=value, label=label, unit=unit, display=display, max_value=max_value, colors=colors, bg=bg, resolution_=resolution_)
+    if preset == "curve":
+        return mg.curve(duration, out, label=label, peak=peak, dip=dip, colors=colors, bg=bg, resolution_=resolution_)
+    raise ValueError("preset must be clock-window, meter, or curve")

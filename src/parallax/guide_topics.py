@@ -2,6 +2,16 @@
 
 Every fact here was checked against the code that enforces it (docs/skill-retirement.md lists
 the sources). Authored as data so an agent reads fields, not prose walls.
+
+
+App Store screenshots that already include a device frame + headline: use
+`parallax video app-screen --screen shot.png --full-bleed [--highlight x,y,w,h] [--callout TEXT] [--callout-y 0.6]`
+(screenshot fills the 9:16 frame, slow push-in, glowing highlight + pop callout; pixels used as-is).
+Crop marketing text off the bottom first if burned captions would sit on top of it.
+Diagrams: `video diagram --preset clock-window --label .. --sub ..`, `--preset meter --value 6.3 --max 10 --unit " HRS"`,
+`--preset curve --label .. --peak PEAK --dip DIP`. Graphics stay above y=0.70 so captions at
+`--caption-y 0.78` never collide. Captions: `--caption-style clean --caption-size 78 --words-per-chunk 3`
+reads well on 1080x1920 social ads (default 55 px single words is small).
 """
 from __future__ import annotations
 

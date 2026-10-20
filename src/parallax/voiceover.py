@@ -13,6 +13,7 @@ PARALLAX_TEST_MODE.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 import shutil
@@ -136,7 +137,9 @@ def generate_voiceover_dict(
         wanted, got = norm(text), norm(" ".join(x["word"] for x in heard))
         score = SequenceMatcher(None, wanted, got).ratio()
         if score < .85 or len(got) > max(4, len(wanted) * 1.5):
-            rejected = dest / f"{Path(raw_path).stem}.rejected{Path(raw_path).suffix}"
+            keep = Path(os.environ.get("PARALLAX_REJECT_DIR") or dest)
+            keep.mkdir(parents=True, exist_ok=True)
+            rejected = keep / f"{Path(raw_path).stem}.rejected{Path(raw_path).suffix}"
             shutil.move(str(raw_path), rejected)
             excerpt = " ".join(x["word"] for x in heard[:30])
             raise RuntimeError(f"TTS model did not read the script (word similarity {score:.2f}). Transcript: {excerpt!r}. Bad audio kept at {rejected}. Try dropping --style or another voice model; use --no-verify to override.")
