@@ -20,6 +20,10 @@ def ken_burns(image: str, duration: float, out: str, *, move="in", zoom=1.12, as
     return str(p)
 
 def assemble(shots: list[dict], out: str, *, aspect="9:16", fps=30, voice: str|None=None, voice_offset=0., captions=False, words=None, caption_style="anton") -> str:
+    """Assemble local shots. Clip manifest entries accept `trim_start`, output
+    `duration`, and `speed`; e.g. seconds 1.5–4.0 at 1.25x is
+    `{\"path\": \"clip.mp4\", \"trim_start\": 1.5, \"duration\": 2.0, \"speed\": 1.25}`.
+    """
     import tempfile
     from .captions import burn_captions
     w,h=resolution(aspect); outp=Path(out); outp.parent.mkdir(parents=True,exist_ok=True)

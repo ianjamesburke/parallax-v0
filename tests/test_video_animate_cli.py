@@ -85,7 +85,7 @@ def test_animate_out_file_is_written_exactly(mock_image, tmp_path, capsys):
     assert capsys.readouterr().out.strip() == str(wanted)
 
 
-def test_animate_end_frame_estimate_uses_catalog_multiplier(monkeypatch, mock_image, tmp_path, capsys):
+def test_animate_image_conditioned_estimate_uses_catalog_multiplier(monkeypatch, mock_image, tmp_path, capsys):
     end = tmp_path / "end.png"
     end.write_bytes(b"PNG")
     generated = tmp_path / "provider.mp4"
@@ -95,6 +95,26 @@ def test_animate_end_frame_estimate_uses_catalog_multiplier(monkeypatch, mock_im
         assert _run(["video", "animate", "--prompt", "x", "--model", "draft", "--duration", "5",
                      "--start", str(mock_image), "--end", str(end), "--out", str(tmp_path)]) == 0
     assert "~$0.4574" in capsys.readouterr().err
+
+
+def test_animate_start_frame_only_estimate_uses_catalog_multiplier(monkeypatch, mock_image, tmp_path, capsys):
+    generated = tmp_path / "provider.mp4"
+    generated.write_bytes(b"MP4")
+    monkeypatch.setattr("parallax.shim.is_test_mode", lambda: False)
+    with patch("parallax.openrouter.generate_video", return_value=generated):
+        assert _run(["video", "animate", "--prompt", "x", "--model", "draft", "--duration", "4",
+                     "--start", str(mock_image), "--out", str(tmp_path)]) == 0
+    assert "~$0.3659" in capsys.readouterr().err
+
+
+def test_animate_privacy_rejection_has_hint_but_no_false_recovery(mock_image, tmp_path, capsys):
+    error = RuntimeError("400 InputImageSensitiveContentDetected.PrivacyInformation")
+    with patch("parallax.openrouter.generate_video", side_effect=error):
+        assert _run(["video", "animate", "--prompt", "x", "--start", str(mock_image),
+                     "--out", str(tmp_path / "shot.mp4")]) == 1
+    err = capsys.readouterr().err
+    assert "Paid output is saved" not in err
+    assert "hide faces / stylize" in err
 
 
 def test_animate_ref_images(mock_image, tmp_path):

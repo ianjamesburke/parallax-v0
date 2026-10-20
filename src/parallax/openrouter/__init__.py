@@ -274,6 +274,7 @@ def generate_image(
     out_file: Path | None = None,
     size: str | None = None,
     aspect_ratio: str | None = None,
+    allow_fallback: bool = False,
 ) -> Path:
     """Generate an image via `/api/v1/images`. Output size is not chosen here: the
     catalog's `request:` params (quality / resolution) set it, to the smallest
@@ -301,6 +302,7 @@ def generate_image(
         ),
         prompt=prompt,
         out_dir=out_dir,
+        allow_fallback=allow_fallback,
     )
 
 

@@ -21,7 +21,7 @@ def video_ken_burns(image: str = typer.Option(..., "--image"), duration: float =
     print(ken_burns(image, duration, out, move=move, zoom=zoom, aspect=aspect, fps=fps)); return 0
 
 @video_app.command("assemble")
-def video_assemble(shot: list[str] = typer.Option([], "--shot", help="clip-or-still[:duration], repeatable"), shots: Optional[str] = typer.Option(None, "--shots", help="JSON shot manifest"), voice: Optional[str] = typer.Option(None,"--voice"), voice_offset: float = typer.Option(0,"--voice-offset"), words: Optional[str] = typer.Option(None,"--words"), captions: bool = typer.Option(False,"--captions/--no-captions"), caption_style: str = typer.Option("anton","--caption-style"), aspect: str = typer.Option("9:16","--aspect"), out: str = typer.Option(...,"--out")) -> int:
+def video_assemble(shot: list[str] = typer.Option([], "--shot", help="clip-or-still[:duration], repeatable"), shots: Optional[str] = typer.Option(None, "--shots", help="JSON shot manifest; clip fields: path, trim_start, duration, speed"), voice: Optional[str] = typer.Option(None,"--voice"), voice_offset: float = typer.Option(0,"--voice-offset"), words: Optional[str] = typer.Option(None,"--words"), captions: bool = typer.Option(False,"--captions/--no-captions"), caption_style: str = typer.Option("anton","--caption-style"), aspect: str = typer.Option("9:16","--aspect"), out: str = typer.Option(...,"--out")) -> int:
     """Normalize and concatenate local shots; optionally mix VO and captions."""
     from ..local_video import assemble
     items = json.loads(open(shots).read()) if shots else [{"path": x.rsplit(":",1)[0], **({"duration":float(x.rsplit(":",1)[1])} if ":" in x and x.rsplit(":",1)[1].replace('.','',1).isdigit() else {})} for x in shot]
@@ -103,6 +103,7 @@ def video_animate(
     else:
         out_dir = out_path if out_path is not None else Path.cwd()
         out_dir.mkdir(parents=True, exist_ok=True)
+    existing_output_files = set(out_dir.glob("*"))
     start_path = Path(start) if start else None
     end_path = Path(end) if end else None
     refs = [Path(r) for r in ref] if ref else None
@@ -114,7 +115,10 @@ def video_animate(
         print(f"Error: video model {model!r} does not support end frames. Choose one of: {supported}.", file=sys.stderr)
         return 2
     if not is_test_mode():
-        print_estimate(f"video animate --model {model}", spec.estimate_video_usd(duration, end_frame=end_path is not None))
+        print_estimate(
+            f"video animate --model {model}",
+            spec.estimate_video_usd(duration, image_conditioned=start_path is not None or end_path is not None),
+        )
     try:
         path = generate_video(
             prompt, model, image_path=start_path, end_image_path=end_path,
@@ -125,9 +129,18 @@ def video_animate(
             Path(path).replace(out_file)
             path = out_file
     except Exception as exc:
-        assets = [p for p in out_dir.glob("*") if p.is_file()]
-        if assets:
-            print(f"Paid assets are saved at {out_dir}. Rerunning the same command resumes and reuses them; do not regenerate them.", file=sys.stderr)
+        # A failed submit has no paid result to recover. Only promise recovery
+        # when this invocation has an actual video output to point at.
+        paid_output = out_file if out_file is not None and out_file.is_file() else next(
+            (p for p in out_dir.glob("*")
+             if p not in existing_output_files and p.is_file()
+             and p.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm"}),
+            None,
+        )
+        if paid_output is not None:
+            print(f"Paid output is saved at {paid_output}. Rerunning the same command resumes and reuses it; do not regenerate it.", file=sys.stderr)
+        if "InputImageSensitiveContentDetected.PrivacyInformation" in str(exc):
+            print("Hint: Seedance rejected an input image as a possible real person; hide faces / stylize, or choose another model explicitly (e.g. --model kling, pricier).", file=sys.stderr)
         print(f"Error: video animation failed ({type(exc).__name__}: {str(exc) or 'no message'})", file=sys.stderr)
         return 1
     print(path)

@@ -145,7 +145,9 @@ def compute_preflight(
                 # Estimate the billed length (the model's request_duration), not the scene length.
                 duration = float(clip_spec.request_duration(duration))
                 clip_cost = clip_spec.estimate_video_usd(
-                    duration, end_frame=bool(s.get("end_frame_path"))
+                    # stage_animate always supplies the approved still as the
+                    # first frame, so every generated plan clip is image-conditioned.
+                    duration, image_conditioned=True
                 )
                 clip_native_res = clip_spec.native_resolution
 

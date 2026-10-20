@@ -54,8 +54,8 @@ class ModelSpec:
     native_size: str | None = None
     # Durations (whole seconds) the video model accepts (video kind).
     durations: tuple[int, ...] = ()
-    # Catalog-measured multiplier for a request conditioned on its final frame.
-    end_frame_cost_multiplier: float = 1.0
+    # Catalog-measured multiplier for a request conditioned on one or more images.
+    image_conditioned_cost_multiplier: float = 1.0
 
     # Flat per-call USD on top of the per-unit `cost_usd` (TTS: fixed overhead of a call).
     fixed_cost_usd: float = 0.0
@@ -88,10 +88,10 @@ class ModelSpec:
                 return d
         return self.durations[-1]
 
-    def estimate_video_usd(self, seconds: float, *, end_frame: bool = False) -> float:
-        """Estimate a billed video request, including final-frame conditioning."""
+    def estimate_video_usd(self, seconds: float, *, image_conditioned: bool = False) -> float:
+        """Estimate a billed video request, including image conditioning."""
         return self.cost_usd * self.request_duration(seconds) * (
-            self.end_frame_cost_multiplier if end_frame else 1.0
+            self.image_conditioned_cost_multiplier if image_conditioned else 1.0
         )
 
     def supports_aspect(self, ratio: str) -> bool:

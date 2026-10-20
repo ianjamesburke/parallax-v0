@@ -35,6 +35,7 @@ TOPICS: dict[str, dict] = {
         "clip_scope": "One move per clip. Give a complex move more duration or split it into two clips.",
         "audio": "Model-generated clip audio is stripped before assembly; do not depend on it.",
         "wait": "animate can block for minutes with no output. Do not kill or retry a paid call; rerun the same command to resume/reuse saved work.",
+        "privacy_rejection": "If Seedance rejects an input image as a possible real person, hide faces or stylize it, or explicitly choose another model such as `--model kling` (pricier).",
         "next": "asset_locking",
     },
     "assemble": {
@@ -43,6 +44,7 @@ TOPICS: dict[str, dict] = {
             "parallax video ken-burns --image still.png --duration 3 --move in --out clip.mp4",
             "parallax video text-overlay --in still.png --text '+20%' --preset pop --position center --duration 3 --out graphic.mp4",
             "parallax video assemble --shot clip.mp4:3 --voice vo.wav --words words.json --captions --out final.mp4",
+            "# --shots shots.json also accepts clip {\"path\": \"clip.mp4\", \"trim_start\": 1.5, \"duration\": 2.0, \"speed\": 1.25}",
             "parallax video captions --video final.mp4 --words words.json --report boxes.json --out captioned.mp4",
         ],
         "contract": "All commands use local ffmpeg only. text-overlay outputs a silent clip appropriate for scene_type: motion_graphic clip_path. Caption reports expose actual safe-area boxes.",
