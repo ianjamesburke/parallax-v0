@@ -347,6 +347,14 @@ def _run_plan_command(
         _inject_resolution(str(result.plan_path), resolution)
 
     print(f"✓ Wrote plan.yaml ({result.scene_count} scenes) → {result.plan_path}")
+    try:
+        import yaml
+        planned = yaml.safe_load(Path(result.plan_path).read_text()) or {}
+        count = sum(1 for s in planned.get("scenes", []) if s.get("animate") and s.get("scene_type") == "animation")
+        if count:
+            print(f"note: auto-animated {count} opening social scene(s); set animate: false in the brief to opt out.")
+    except Exception:
+        pass
     return 0
 
 

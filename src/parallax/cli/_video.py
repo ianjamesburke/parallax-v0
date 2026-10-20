@@ -131,4 +131,16 @@ def video_animate(
         print(f"Error: video animation failed ({type(exc).__name__}: {str(exc) or 'no message'})", file=sys.stderr)
         return 1
     print(path)
+    # Dispatcher writes the provider job id and billed usage alongside every
+    # result. Surface that receipt immediately instead of making callers dig
+    # through ~/.parallax/usage.ndjson.
+    try:
+        from ..usage import load_records
+        record = next((r for r in reversed(load_records(include_test=True)) if r.get("output_path") == str(path)), None)
+        if record:
+            job = ", ".join(record.get("generation_ids") or []) or "(provider did not return an id)"
+            print(f"generation id: {job}")
+            print(f"actual billed cost: ${float(record.get('cost_usd', 0.0)):.4f} ({record.get('cost_source')})")
+    except Exception:
+        pass
     return 0
