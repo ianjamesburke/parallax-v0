@@ -797,6 +797,7 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
             pronunciations=pronunciations or None,
             trim_pauses=settings.trim_pauses,
             verify=True,
+            voice_prompt=plan.get("voice_prompt"),
         )
         audio_path = vo_result["audio_path"]
         words_path = vo_result["words_path"]

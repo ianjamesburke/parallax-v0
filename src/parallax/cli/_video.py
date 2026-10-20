@@ -35,12 +35,35 @@ def video_captions(video: str = typer.Option(...,"--video"), words: str = typer.
     print(burn_captions(video,words,out,caption_style=style,shift_s=offset,caption_y=caption_y,report_path=report)); return 0
 
 @video_app.command("text-overlay")
-def video_text_overlay(input: str = typer.Option(...,"--in"), text: str = typer.Option(...,"--text"), preset: str = typer.Option("pop","--preset"), position: str = typer.Option("center","--position"), y: Optional[float] = typer.Option(None,"--y", min=0., max=1.), size: int = typer.Option(64,"--size"), color: str = typer.Option("#ffffff","--color"), duration: float = typer.Option(...,"--duration"), out: str = typer.Option(...,"--out"), aspect: str = typer.Option("9:16","--aspect"), resolution: Optional[str] = typer.Option(None,"--resolution")) -> int:
+def video_text_overlay(input: Optional[str] = typer.Option(None,"--in"), bg_color: Optional[str] = typer.Option(None,"--bg-color"), text: str = typer.Option(...,"--text"), preset: str = typer.Option("pop","--preset"), position: str = typer.Option("center","--position"), y: Optional[float] = typer.Option(None,"--y", min=0., max=1.), size: int = typer.Option(64,"--size"), color: str = typer.Option("#ffffff","--color"), duration: float = typer.Option(...,"--duration"), out: str = typer.Option(...,"--out"), aspect: str = typer.Option("9:16","--aspect"), resolution: Optional[str] = typer.Option(None,"--resolution")) -> int:
     """Render zero-spend kinetic text over a still or clip; output is silent MP4."""
     from ..local_video import text_overlay
     if preset not in {"pop","count-up","slide-up","typewriter"}: raise typer.BadParameter("preset must be pop, count-up, slide-up, or typewriter")
     if position not in {"center","upper","lower"}: raise typer.BadParameter("position must be center, upper, or lower")
-    print(text_overlay(input,text,duration,out,preset=preset,position=position,y=y,size=size,color=color,aspect=aspect,resolution_=resolution)); return 0
+    if not input and not bg_color: raise typer.BadParameter("provide --in or --bg-color")
+    if bg_color and not input:
+        from PIL import Image
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.png') as f:
+            Image.new('RGB',(1080,1920),bg_color).save(f.name); print(text_overlay(f.name,text,duration,out,preset=preset,position=position,y=y,size=size,color=color,aspect=aspect,resolution_=resolution))
+    else: print(text_overlay(input,text,duration,out,preset=preset,position=position,y=y,size=size,color=color,aspect=aspect,resolution_=resolution))
+    return 0
+
+@video_app.command("app-screen")
+def video_app_screen(screen:str=typer.Option(...,"--screen"),duration:float=typer.Option(...,"--duration"),out:str=typer.Option(...,"--out"),bg:str=typer.Option("#272137","--bg"),bg_image:Optional[str]=typer.Option(None,"--bg-image"),callout:Optional[str]=typer.Option(None,"--callout"),highlight:Optional[str]=typer.Option(None,"--highlight"),zoom_to_highlight:bool=typer.Option(False,"--zoom-to-highlight"),accent:str=typer.Option("#721CFF","--accent"),title:Optional[str]=typer.Option(None,"--title"),resolution:str=typer.Option("1080x1920","--resolution")):
+    from ..local_video import app_screen
+    box=tuple(map(float,highlight.split(','))) if highlight else None; print(app_screen(screen,duration,out,bg=bg,bg_image=bg_image,callout=callout,highlight=box,zoom_to_highlight=zoom_to_highlight,accent=accent,title=title,resolution_=resolution)); return 0
+
+@video_app.command("end-card")
+def video_end_card(logo:str=typer.Option(...,"--logo"),duration:float=typer.Option(...,"--duration"),out:str=typer.Option(...,"--out"),icon:Optional[str]=typer.Option(None,"--icon"),headline:str=typer.Option("Become a morning person","--headline"),cta:str=typer.Option("Try RISE free","--cta"),sub:str=typer.Option("Download on the App Store","--sub"),bg:str=typer.Option("#14102A","--bg"),accent:str=typer.Option("#721CFF","--accent"),colors:Optional[str]=typer.Option(None,"--colors"),resolution:str=typer.Option("1080x1920","--resolution")):
+    from ..local_video import end_card
+    print(end_card(logo,duration,out,icon=icon,headline=headline,cta=cta,sub=sub,bg=bg,accent=accent,colors=colors,resolution_=resolution)); return 0
+
+@video_app.command("diagram")
+def video_diagram(preset:str=typer.Option(...,"--preset"),duration:float=typer.Option(...,"--duration"),out:str=typer.Option(...,"--out"),label:str=typer.Option("YOUR WINDOW","--label"),value:float=typer.Option(75,"--value"),colors:Optional[str]=typer.Option(None,"--colors"),bg:str=typer.Option("#14102A","--bg"),resolution:str=typer.Option("1080x1920","--resolution")):
+    if preset not in {'clock-window','meter','curve'}: raise typer.BadParameter('preset must be clock-window, meter, or curve')
+    from ..local_video import diagram
+    print(diagram(preset,duration,out,label=label,value=value,colors=colors,bg=bg,resolution_=resolution)); return 0
 
 
 @video_app.command("frame")

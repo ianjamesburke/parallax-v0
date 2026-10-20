@@ -36,6 +36,8 @@ def validate_brief(brief_path: str | Path, folder: str | Path) -> dict:
         return _result(errors, warnings)
 
     log.info("validate: brief parsed, %d scene(s)", len(brief.script.scenes))
+    if not brief.brand and any(x in (brief.goal + " " + " ".join(s.prompt for s in brief.script.scenes)).lower() for x in ("app", "product", "brand", "cta")):
+        warnings.append({"code": "brand_assets_missing", "message": "Product/app briefs need a brand block with real assets; run `parallax guide brand`."})
 
     # Provided asset existence
     for i, asset in enumerate(brief.assets.provided):
@@ -161,6 +163,8 @@ def validate_plan(plan_path: str | Path, folder: str | Path) -> dict:
         return _result(errors, warnings)
 
     log.info("validate: plan parsed, %d scene(s)", len(plan.scenes))
+    if not plan.brand and any(x in (" ".join(s.prompt for s in plan.scenes)).lower() for x in ("app", "product", "brand", "cta")):
+        warnings.append({"code": "brand_assets_missing", "message": "Product/app plans need a brand block with real assets; run `parallax guide brand`."})
 
     # Model alias validation
     from . import models as _models

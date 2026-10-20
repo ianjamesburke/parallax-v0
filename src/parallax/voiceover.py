@@ -25,6 +25,8 @@ from .shim import is_test_mode, output_dir
 
 log = get_logger(__name__)
 
+SOCIAL_SEED_VOICE_PROMPT = "A fast documentary narrator revealing a secret: fast-paced social-media-ad delivery, rapid with minimal pauses between lines, highly expressive animated storyteller building intrigue, deep, low, warm, slightly gravelly male voice, punchy emphasis on key words."
+
 
 def apply_pronunciations(text: str, pronunciations: dict[str, str]) -> str:
     """Substitute phonetic spellings before TTS. Word-boundary, case-insensitive."""
@@ -62,6 +64,7 @@ def generate_voiceover_dict(
     pronunciations: dict[str, str] | None = None,
     trim_pauses: bool | float = True,
     verify: bool = False,
+    voice_prompt: str | None = None,
 ) -> dict:
     """Generate voiceover and optionally cap overlong inter-word silences.
 
@@ -103,6 +106,8 @@ def generate_voiceover_dict(
     if pronunciations and tts_text != text:
         log.info("voiceover: applying %d pronunciation substitution(s)", len(pronunciations))
 
+    if voice_model == "seed-audio" and not voice_prompt:
+        raise ValueError("seed-audio requires a meaningful voice_prompt")
     if voice_model == "elevenlabs":
         from . import elevenlabs as _elevenlabs
         raw_path, words_with_ends, raw_audio_duration = _elevenlabs.generate_tts(
@@ -112,7 +117,7 @@ def generate_voiceover_dict(
         )
     else:
         raw_path, words_with_ends, raw_audio_duration = openrouter.generate_tts(
-            text=tts_text,
+            text=(f'{voice_prompt} He says: "{tts_text}"' if voice_model == "seed-audio" else tts_text),
             alias=voice_model,
             voice=voice,
             out_dir=dest,
@@ -128,7 +133,7 @@ def generate_voiceover_dict(
             v = re.sub(r"20%", "twenty percent", v, flags=re.I)
             v = re.sub(r"\b8\b", "eight", v)
             return re.findall(r"[a-z]+", v.lower())
-        wanted, got = norm(tts_text), norm(" ".join(x["word"] for x in heard))
+        wanted, got = norm(text), norm(" ".join(x["word"] for x in heard))
         score = SequenceMatcher(None, wanted, got).ratio()
         if score < .85 or len(got) > max(4, len(wanted) * 1.5):
             rejected = dest / f"{Path(raw_path).stem}.rejected{Path(raw_path).suffix}"
@@ -187,6 +192,7 @@ def generate_voiceover(
     voice_model: str = "tts-mini",
     pronunciations: dict[str, str] | None = None,
     trim_pauses: bool | float = True,
+    voice_prompt: str | None = None,
 ) -> str:
     """JSON-string wrapper around generate_voiceover_dict. Kept for CLI/external callers.
 
@@ -202,6 +208,7 @@ def generate_voiceover(
         pronunciations=pronunciations,
         trim_pauses=trim_pauses,
         verify=False,  # legacy programmatic wrapper preserves its historical no-local-model contract
+        voice_prompt=voice_prompt,
     ))
 
 

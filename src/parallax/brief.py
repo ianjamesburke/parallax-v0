@@ -195,6 +195,8 @@ class Brief(BaseModel):
     headline: str | None = None  # opening overlay, never included in voiceover
     aspect: Literal["9:16", "16:9", "1:1", "4:3", "3:4"] = "9:16"
     voice: str = "nova"
+    voice_prompt: str | None = None
+    brand: dict[str, Any] | None = None
     voice_speed: float = 1.0
     # Video-gen resolution — upscaled to the output resolution during assembly.
     # Lower is cheaper. Seedance 2.0 Fast: 480p=$0.054/s, 720p=$0.121/s, 1080p=$0.272/s.
@@ -298,6 +300,8 @@ class Brief(BaseModel):
         return {
             "aspect": self.aspect,
             "voice": self.voice,
+            **({"voice_prompt": self.voice_prompt} if self.voice_prompt else {}),
+            **({"brand": self.brand} if self.brand else {}),
             "voice_speed": self.voice_speed,
             **({"stills_only": True} if stills_only else {}),
             **({"headline": self.headline} if self.headline else {}),

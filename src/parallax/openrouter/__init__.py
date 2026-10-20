@@ -345,6 +345,15 @@ def generate_video(
             raise ValueError(f"Video model {alias!r} does not support end frames. Choose one of: {supported}.")
     from ..settings import _ASPECT_TO_RESOLUTION as _ASPECT_RES
     test_resolution = size or _ASPECT_RES.get(aspect_ratio or "", "720x1280")
+    # Mock image-to-video keeps the start-frame geometry, making contact-sheet
+    # and assembly iteration representative without touching a provider.
+    if is_test_mode() and image_path is not None and not size:
+        try:
+            from PIL import Image
+            with Image.open(image_path) as _im:
+                test_resolution = f"{_im.width}x{_im.height}"
+        except Exception:
+            pass
     return _dispatch(
         kind="video",
         alias=alias,
@@ -356,7 +365,7 @@ def generate_video(
             on_submit=on_submit,
         ),
         test_call=lambda spec: render_mock_video(
-            prompt=prompt, model=spec.alias, duration_s=duration_s, out_dir=out_dir,
+            prompt=f"MOCK · {spec.alias} · {prompt[:40]}", model=spec.alias, duration_s=duration_s, out_dir=out_dir,
             resolution=test_resolution,
         ),
         prompt=prompt,

@@ -106,3 +106,52 @@ def text_overlay(source: str, text: str, duration: float, out: str, *, preset="p
         r=run_ffmpeg(["ffmpeg","-y","-hide_banner","-loglevel","error","-i",str(base),"-framerate","30","-i",str(frames/"%06d.png"),"-filter_complex",f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps=30[b];[b][1:v]overlay=0:0:shortest=1","-frames:v",str(count),"-an","-c:v","libx264","-pix_fmt","yuv420p",out],capture_output=True,text=True)
         if r.returncode: raise RuntimeError(r.stderr[:500])
     return out
+
+def _graphic_frames(duration, out, draw_frame, *, resolution_="1080x1920"):
+    """Render a safe-area-aware, silent 30fps MP4 from PIL frames."""
+    import tempfile
+    w,h=parse_resolution(resolution_); count=max(1, round(float(duration)*30)); target=Path(out); target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="parallax-graphic-") as td:
+        frames=Path(td)/"frames"; frames.mkdir()
+        for n in range(count): draw_frame(n/max(1,count-1),w,h).save(frames/f"{n:06d}.png")
+        r=run_ffmpeg(["ffmpeg","-y","-hide_banner","-loglevel","error","-framerate","30","-i",str(frames/"%06d.png"),"-frames:v",str(count),"-an","-c:v","libx264","-pix_fmt","yuv420p",str(target)],capture_output=True,text=True)
+        if r.returncode: raise RuntimeError(r.stderr[:500])
+    return str(target)
+
+def app_screen(screen, duration, out, *, bg="#272137", bg_image=None, callout=None, highlight=None, zoom_to_highlight=False, accent="#721CFF", title=None, resolution_="1080x1920"):
+    from PIL import Image, ImageDraw, ImageFont
+    src=Image.open(screen).convert("RGB")
+    def frame(t,w,h):
+        im=Image.new("RGB",(w,h),bg)
+        if bg_image: im.paste(Image.open(bg_image).convert("RGB").resize((w,h)))
+        d=ImageDraw.Draw(im); safe=(int(w*.08),int(h*.10),int(w*.92),int(h*.90)); top=int(h*.18 if title else h*.10); pw=int(w*.72*(1+.035*t)); ph=int(pw*src.height/src.width); x=(w-pw)//2; y=top+int((h-top-ph)*.5+10*__import__('math').sin(t*6.28))
+        d.rounded_rectangle((x-12,y-12,x+pw+12,y+ph+12),radius=42,fill="#101018",outline=accent,width=3); im.paste(src.resize((pw,ph)),(x,y))
+        font=ImageFont.truetype(str(Path(__file__).parent/'fonts'/'Montserrat-Black.ttf'),max(28,w//28))
+        if title: d.text((safe[0],int(h*.10)),title,font=font,fill="white")
+        if highlight:
+            hx,hy,hw,hh=highlight; box=(x+hx*pw,y+hy*ph,x+(hx+hw)*pw,y+(hy+hh)*ph); d.rounded_rectangle(box,radius=16,outline=accent,width=max(4,int(8*(.5+.5*t))))
+            if callout:
+                cy=max(safe[1],int(box[1]-70)); d.rounded_rectangle((safe[0],cy,min(safe[2],safe[0]+w*.72),cy+55),radius=18,fill=accent); d.text((safe[0]+16,cy+10),callout,font=font,fill="white")
+        return im
+    return _graphic_frames(duration,out,frame,resolution_=resolution_)
+
+def end_card(logo,duration,out,*,icon=None,headline="Become a morning person",cta="Try RISE free",sub="Download on the App Store",bg="#14102A",accent="#721CFF",colors=None,resolution_="1080x1920"):
+    from PIL import Image, ImageDraw, ImageFont
+    mark=Image.open(logo).convert("RGBA")
+    def frame(t,w,h):
+        im=Image.new("RGB",(w,h),bg); d=ImageDraw.Draw(im); f=ImageFont.truetype(str(Path(__file__).parent/'fonts'/'Montserrat-Black.ttf'),max(28,w//19)); s=.65+.35*min(1,t/.3); mw=int(w*.58*s); mh=max(1,int(mark.height*mw/mark.width)); im.paste(mark.resize((mw,mh)),((w-mw)//2,int(h*.22)),mark.resize((mw,mh)))
+        d.multiline_text((w*.1,int(h*(.43+.04*(1-min(1,t/.35))))),headline,font=f,fill="white",anchor="ma",align="center",spacing=10)
+        by=int(h*.67); pulse=1+.035*max(0,__import__('math').sin(t*12)); bw=int(w*.65*pulse); x=(w-bw)//2; d.rounded_rectangle((x,by,x+bw,by+92),radius=46,fill=accent); d.text((w//2,by+46),cta,font=f,fill="white",anchor="mm"); d.text((w//2,by+130),sub,font=ImageFont.truetype(str(Path(__file__).parent/'fonts'/'Montserrat-Black.ttf'),max(18,w//42)),fill="white",anchor="ma"); return im
+    return _graphic_frames(duration,out,frame,resolution_=resolution_)
+
+def diagram(preset,duration,out,*,label="YOUR WINDOW",value=75,colors=None,bg="#14102A",resolution_="1080x1920"):
+    from PIL import Image, ImageDraw, ImageFont
+    accent=(colors or "#721CFF").split(",")[0]; fpath=str(Path(__file__).parent/'fonts'/'Montserrat-Black.ttf')
+    def frame(t,w,h):
+        im=Image.new("RGB",(w,h),bg); d=ImageDraw.Draw(im); f=ImageFont.truetype(fpath,max(26,w//24)); cx,cy=w//2,h//2
+        if preset=="meter": d.arc((w*.15,h*.32,w*.85,h*.85),180,360,fill="#55556A",width=24); a=180+180*min(1,float(value)/100)*t; import math; d.line((cx,cy,cx+math.cos(math.radians(a))*w*.29,cy+math.sin(math.radians(a))*w*.29),fill=accent,width=16); txt=f"{value}%"
+        elif preset=="curve":
+            pts=[(int(w*.12+i*w*.76/60),int(cy+80*__import__('math').sin(i/10))) for i in range(max(2,int(61*t)))]; d.line(pts,fill=accent,width=12); txt=label+"  PEAK / DIP"
+        else: d.ellipse((w*.2,h*.25,w*.8,h*.85),outline="white",width=12); d.arc((w*.2,h*.25,w*.8,h*.85),-70,-70+180*t,fill=accent,width=30); txt=label
+        d.text((cx,h*.12),txt,font=f,fill="white",anchor="ma"); return im
+    return _graphic_frames(duration,out,frame,resolution_=resolution_)

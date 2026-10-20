@@ -289,6 +289,7 @@ def audio_voiceover(
     voice_model: str = typer.Option("tts-mini", "--voice-model", help="TTS backend: tts-mini, tts-gemini, elevenlabs (default: tts-mini)."),
     speed: Optional[float] = typer.Option(None, "--speed", help="atempo multiplier applied after synthesis (e.g. 1.2 = 20% faster)."),
     style: Optional[str] = typer.Option(None, "--style", help="Delivery style preset: rapid_fire, fast, calm, natural."),
+    voice_prompt: Optional[str] = typer.Option(None, "--voice-prompt", help="Natural-language voice description (required for seed-audio)."),
     trim_pauses: bool = typer.Option(False, "--trim-pauses", help="Opt in to timestamp-based pause trimming. By default, preserve the provider's original audio."),
     no_verify: bool = typer.Option(False, "--no-verify", help="Skip local transcript verification of synthesized speech."),
 ) -> int:
@@ -324,6 +325,7 @@ def audio_voiceover(
             voice_model=voice_model,
             trim_pauses=trim_pauses,
             verify=not no_verify,
+            voice_prompt=voice_prompt,
         )
         audio_src = _P(result["audio_path"])
         if trim_pauses or speed_applied:

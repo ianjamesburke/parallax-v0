@@ -13,6 +13,20 @@ def _end_frame_models() -> list[str]:
     return sorted(spec.alias for spec in VIDEO_MODELS.values() if spec.end_frame)
 
 TOPICS: dict[str, dict] = {
+    "brand": {
+        "summary": "For any product or app ad, collect real brand assets before making shots.",
+        "rules": ["First collect the official site, App Store lookup (`https://itunes.apple.com/lookup?id=<id>`) screenshotUrls/artworkUrl512, and an inline SVG logo where available; save each with its source URL.", "Use real app screens composited in local app-screen motion graphics—never AI-generate UI.", "Pass logo/screens as image refs only in shots that show the product, and finish on a brand CTA end card."],
+        "brand_shape": {"name":"RISE","logo":"brand/logo.png","logo_on_dark":"brand/logo-white.png","app_screens":["brand/screen01.jpg"],"colors":["#721CFF"],"font":"Montserrat","cta":"Try RISE free","sources":["https://example.com"]},
+        "commands": ["parallax video app-screen --screen brand/screen01.jpg --title 'Track the sleep you owe' --duration 4 --out app.mp4", "parallax video end-card --logo brand/logo-white.png --headline 'Become a morning person' --cta 'Try RISE free' --duration 3 --out end.mp4"],
+        "next": "assemble",
+    },
+    "motion_graphic": {
+        "summary": "Zero-spend, safe-area-aware local motion graphics. Use real product screens and brand colors.",
+        "commands": ["parallax video app-screen --screen shot.jpg --callout '6.3 HRS SLEEP DEBT' --highlight .1,.2,.5,.2 --duration 4 --out app.mp4", "parallax video diagram --preset clock-window --duration 3 --out clock.mp4", "parallax video end-card --logo logo.png --duration 3 --out end.mp4", "parallax video text-overlay --bg-color '#14102A' --text 'SLEEP DEBT' --duration 2 --out type.mp4"],
+        "brand_note": "For product shots use actual screenshots, never generated UI; complete the sequence with a branded CTA end card.", "next":"assemble",
+    },
+    "mock": {"summary":"Iterate structure, timing, and captions in PARALLAX_TEST_MODE=1, then rerun the same commands for real.", "next":"produce_loop"},
+    "voiceover": {"summary":"Seed Audio requires a natural-language voice_prompt. Social default: A fast documentary narrator revealing a secret: fast-paced social-media-ad delivery, rapid with minimal pauses between lines, highly expressive animated storyteller building intrigue, deep, low, warm, slightly gravelly male voice, punchy emphasis on key words.", "next":"assemble"},
     "single_shot": {
         "summary": "One camera move, using separate frozen start and end frames when the view, scale, or subject changes.",
         "separate_stills": {
