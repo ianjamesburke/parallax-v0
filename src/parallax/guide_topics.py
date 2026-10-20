@@ -3,15 +3,6 @@
 Every fact here was checked against the code that enforces it (docs/skill-retirement.md lists
 the sources). Authored as data so an agent reads fields, not prose walls.
 
-
-App Store screenshots that already include a device frame + headline: use
-`parallax video app-screen --screen shot.png --full-bleed [--highlight x,y,w,h] [--callout TEXT] [--callout-y 0.6]`
-(screenshot fills the 9:16 frame, slow push-in, glowing highlight + pop callout; pixels used as-is).
-Crop marketing text off the bottom first if burned captions would sit on top of it.
-Diagrams: `video diagram --preset clock-window --label .. --sub ..`, `--preset meter --value 6.3 --max 10 --unit " HRS"`,
-`--preset curve --label .. --peak PEAK --dip DIP`. Graphics stay above y=0.70 so captions at
-`--caption-y 0.78` never collide. Captions: `--caption-style clean --caption-size 78 --words-per-chunk 3`
-reads well on 1080x1920 social ads (default 55 px single words is small).
 """
 from __future__ import annotations
 
@@ -188,7 +179,14 @@ TOPICS: dict[str, dict] = {
         "next": "produce",
     },
     "motion_graphic": {
-        "summary": "scene_type: motion_graphic is a locally rendered clip. Parallax never AI-generates it and does not render it for you.",
+        "summary": "scene_type: motion_graphic is a locally rendered clip. Parallax never AI-generates it; render it with the zero-spend `parallax video` primitives below (or your own tool) and set clip_path.",
+        "local_primitives": {
+            "app_screen": "`parallax video app-screen --screen shot.png --full-bleed --highlight x,y,w,h --callout TEXT [--callout-y 0.6] --duration S --out c.mp4`. --full-bleed for App Store screenshots that already include a device frame + headline (fills 9:16, push-in, glowing highlight, pop callout; pixels as-is). Without it the screenshot sits in a drawn phone frame. Crop marketing text off the bottom first if captions would sit on it.",
+            "diagram": "`parallax video diagram --preset clock-window --label .. --sub ..` | `--preset meter --value 6.3 --max 10 --unit \" HRS\" --label ..` | `--preset curve --label .. --peak PEAK --dip DIP`. Brand colors via --colors hex,hex,...",
+            "end_card": "`parallax video end-card --logo wordmark.png --icon icon.png --headline .. --cta .. --sub .. --duration 3`: icon pop, wordmark, headline slide-up, pulsing CTA pill.",
+            "kinetic_text": "`parallax video text-overlay --bg-color '#14102A' --text .. --preset pop|count-up|slide-up|typewriter --duration S --out c.mp4` (or --in still/clip).",
+            "layout": "Graphics stay above y=0.70 of the frame, so captions at `--caption-y 0.78` never collide. For 1080x1920 social ads use `--caption-style clean --caption-size 78 --words-per-chunk 3` (55 px single words read small).",
+        },
         "contract": {
             "brief_scene": "scene_type: motion_graphic plus clip_path (a rendered MP4 under the project folder). Optional still_path for the poster. `prompt` and `motion_prompt` describe the graphic for review.",
             "storyboard": "A scene with no existing clip file is storyboarded with advisory `motion_graphic_clip_missing`, and `produce` stays blocked (`blocked_by`) until the clip exists.",
