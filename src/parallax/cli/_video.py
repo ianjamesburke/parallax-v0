@@ -21,26 +21,26 @@ def video_ken_burns(image: str = typer.Option(..., "--image"), duration: float =
     print(ken_burns(image, duration, out, move=move, zoom=zoom, aspect=aspect, fps=fps)); return 0
 
 @video_app.command("assemble")
-def video_assemble(shot: list[str] = typer.Option([], "--shot", help="clip-or-still[:duration], repeatable"), shots: Optional[str] = typer.Option(None, "--shots", help="JSON shot manifest; clip fields: path, trim_start, duration, speed"), voice: Optional[str] = typer.Option(None,"--voice"), voice_offset: float = typer.Option(0,"--voice-offset"), words: Optional[str] = typer.Option(None,"--words"), captions: bool = typer.Option(False,"--captions/--no-captions"), caption_style: str = typer.Option("anton","--caption-style"), aspect: str = typer.Option("9:16","--aspect"), out: str = typer.Option(...,"--out")) -> int:
+def video_assemble(shot: list[str] = typer.Option([], "--shot", help="clip-or-still[:duration], repeatable"), shots: Optional[str] = typer.Option(None, "--shots", help="JSON shot manifest; clip fields: path, trim_start, duration, speed"), voice: Optional[str] = typer.Option(None,"--voice"), voice_offset: float = typer.Option(0,"--voice-offset"), words: Optional[str] = typer.Option(None,"--words"), captions: bool = typer.Option(False,"--captions/--no-captions"), caption_style: str = typer.Option("anton","--caption-style"), caption_y: float = typer.Option(.65,"--caption-y", min=0., max=1.), report: Optional[str] = typer.Option(None,"--report"), aspect: str = typer.Option("9:16","--aspect"), resolution: Optional[str] = typer.Option(None,"--resolution"), out: str = typer.Option(...,"--out")) -> int:
     """Normalize and concatenate local shots; optionally mix VO and captions."""
     from ..local_video import assemble
     items = json.loads(open(shots).read()) if shots else [{"path": x.rsplit(":",1)[0], **({"duration":float(x.rsplit(":",1)[1])} if ":" in x and x.rsplit(":",1)[1].replace('.','',1).isdigit() else {})} for x in shot]
     if not items: raise typer.BadParameter("provide --shot or --shots")
-    print(assemble(items,out,aspect=aspect,voice=voice,voice_offset=voice_offset,captions=captions,words=words,caption_style=caption_style)); return 0
+    print(assemble(items,out,aspect=aspect,resolution_=resolution,voice=voice,voice_offset=voice_offset,captions=captions,words=words,caption_style=caption_style,caption_y=caption_y,report=report)); return 0
 
 @video_app.command("captions")
-def video_captions(video: str = typer.Option(...,"--video"), words: str = typer.Option(...,"--words"), offset: float = typer.Option(0,"--offset"), style: str = typer.Option("anton","--style"), report: Optional[str] = typer.Option(None,"--report"), out: str = typer.Option(...,"--out")) -> int:
+def video_captions(video: str = typer.Option(...,"--video"), words: str = typer.Option(...,"--words"), offset: float = typer.Option(0,"--offset"), style: str = typer.Option("anton","--style"), caption_y: float = typer.Option(.65,"--caption-y", min=0., max=1.), report: Optional[str] = typer.Option(None,"--report"), out: str = typer.Option(...,"--out")) -> int:
     """Burn safe-area captions over an existing local video."""
     from ..captions import burn_captions
-    print(burn_captions(video,words,out,caption_style=style,shift_s=offset,report_path=report)); return 0
+    print(burn_captions(video,words,out,caption_style=style,shift_s=offset,caption_y=caption_y,report_path=report)); return 0
 
 @video_app.command("text-overlay")
-def video_text_overlay(input: str = typer.Option(...,"--in"), text: str = typer.Option(...,"--text"), preset: str = typer.Option("pop","--preset"), position: str = typer.Option("center","--position"), duration: float = typer.Option(...,"--duration"), out: str = typer.Option(...,"--out"), aspect: str = typer.Option("9:16","--aspect")) -> int:
+def video_text_overlay(input: str = typer.Option(...,"--in"), text: str = typer.Option(...,"--text"), preset: str = typer.Option("pop","--preset"), position: str = typer.Option("center","--position"), y: Optional[float] = typer.Option(None,"--y", min=0., max=1.), size: int = typer.Option(64,"--size"), color: str = typer.Option("#ffffff","--color"), duration: float = typer.Option(...,"--duration"), out: str = typer.Option(...,"--out"), aspect: str = typer.Option("9:16","--aspect"), resolution: Optional[str] = typer.Option(None,"--resolution")) -> int:
     """Render zero-spend kinetic text over a still or clip; output is silent MP4."""
     from ..local_video import text_overlay
     if preset not in {"pop","count-up","slide-up","typewriter"}: raise typer.BadParameter("preset must be pop, count-up, slide-up, or typewriter")
     if position not in {"center","upper","lower"}: raise typer.BadParameter("position must be center, upper, or lower")
-    print(text_overlay(input,text,duration,out,preset=preset,position=position,aspect=aspect)); return 0
+    print(text_overlay(input,text,duration,out,preset=preset,position=position,y=y,size=size,color=color,aspect=aspect,resolution_=resolution)); return 0
 
 
 @video_app.command("frame")
@@ -53,6 +53,18 @@ def video_frame(
     out_path = extract_frame(input, time, out)
     print(out_path)
     return 0
+
+@video_app.command("resume")
+def video_resume(job: str = typer.Option(..., "--job"), out: Optional[str] = typer.Option(None, "--out")) -> int:
+    """Resume polling an accepted animation job; never submits a new request."""
+    from pathlib import Path
+    from ..openrouter import resume_video_job
+    receipt = Path(job); payload = json.loads(receipt.read_text())
+    target = Path(out) if out else Path(payload.get("out", receipt.parent))
+    directory = target.parent if target.suffix else target
+    path = resume_video_job(receipt, directory)
+    if target.suffix: Path(path).replace(target); path = target
+    print(path); return 0
 
 
 @video_app.command("color")
@@ -119,12 +131,26 @@ def video_animate(
             f"video animate --model {model}",
             spec.estimate_video_usd(duration, image_conditioned=start_path is not None or end_path is not None),
         )
+    job_path = Path(str(out_file or (out_dir / "animation")) + ".job.json")
+    def persist_job(job: dict) -> None:
+        # This callback is invoked immediately after the provider's accepted submit,
+        # before the first poll, so an interrupted process leaves a recoverable receipt.
+        payload = {**job, "out": str(out_file or out_dir), "estimate_usd": spec.estimate_video_usd(duration, image_conditioned=start_path is not None or end_path is not None)}
+        job_path.write_text(json.dumps(payload, indent=2))
+        try:
+            from .. import runlog
+            runlog.event("video.animate.submitted", generation_id=job.get("id"), polling_url=job.get("polling_url"), model=spec.alias, out_path=payload["out"], estimate_usd=payload["estimate_usd"])
+        except Exception: pass
     try:
-        path = generate_video(
-            prompt, model, image_path=start_path, end_image_path=end_path,
-            input_references=refs, duration_s=duration, out_dir=out_dir,
-            allow_fallback=allow_fallback,
-        )
+        if job_path.exists():
+            from ..openrouter import resume_video_job
+            path = resume_video_job(job_path, out_dir)
+        else:
+            path = generate_video(
+                prompt, model, image_path=start_path, end_image_path=end_path,
+                input_references=refs, duration_s=duration, out_dir=out_dir,
+                allow_fallback=allow_fallback, on_submit=persist_job,
+            )
         if out_file is not None:
             Path(path).replace(out_file)
             path = out_file

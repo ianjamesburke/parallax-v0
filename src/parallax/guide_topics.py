@@ -42,12 +42,13 @@ TOPICS: dict[str, dict] = {
         "summary": "Zero-spend local finishing: concatenate clips/stills, voiceover, and safe captions without raw ffmpeg.",
         "commands": [
             "parallax video ken-burns --image still.png --duration 3 --move in --out clip.mp4",
-            "parallax video text-overlay --in still.png --text '+20%' --preset pop --position center --duration 3 --out graphic.mp4",
-            "parallax video assemble --shot clip.mp4:3 --voice vo.wav --words words.json --captions --out final.mp4",
+            "parallax video text-overlay --in still.png --text '+20%' --preset count-up --y .50 --size 96 --color '#ffffff' --resolution 1080x1920 --duration 3 --out graphic.mp4",
+            "parallax video assemble --shots shots.json --voice vo.wav --voice-offset 1 --words words.json --captions --caption-y .72 --report caption-boxes.json --resolution 1080x1920 --out final.mp4",
             "# --shots shots.json also accepts clip {\"path\": \"clip.mp4\", \"trim_start\": 1.5, \"duration\": 2.0, \"speed\": 1.25}",
             "parallax video captions --video final.mp4 --words words.json --report boxes.json --out captioned.mp4",
         ],
         "contract": "All commands use local ffmpeg only. text-overlay outputs a silent clip appropriate for scene_type: motion_graphic clip_path. Caption reports expose actual safe-area boxes.",
+        "social_ad_example": "9:16 social ad: shots.json starts with animated clips using trim_start and speed; after about 15 seconds use stills with move: pan-left/pan-right; insert the count-up graphic as a motion_graphic clip; then assemble at 1080x1920 with the delayed VO, --caption-y .72, and --report.",
     },
     "character_first": {
         "summary": "For a new character-driven ad, lock an approved character sheet before storyboarding or generating production shots.",

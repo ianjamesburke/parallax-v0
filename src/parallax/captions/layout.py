@@ -49,7 +49,7 @@ def _wrap(text: str, font, limit: int, max_lines: int, stroke: int) -> str:
     return "\n".join(lines[:max_lines])
 
 
-def layout_caption(text: str, width: int, height: int, fontsize: int, style: dict) -> dict:
+def layout_caption(text: str, width: int, height: int, fontsize: int, style: dict, center_y: float | None = None) -> dict:
     """Wrap and shrink text until its outlined box is within the safe rectangle."""
     rect = safe_rectangle(width, height, style)
     avail_w = min(rect["right"] - rect["left"], round(width * float(style.get("max_line_width", .84))))
@@ -75,7 +75,7 @@ def layout_caption(text: str, width: int, height: int, fontsize: int, style: dic
         if bw <= avail_w and bh <= avail_h:
             x = max(rect["left"], min(rect["right"] - bw, (width - bw) // 2))
             # Keep the established lower-third feeling, but clamp to safe area.
-            desired = round(height * .65 - bh)
+            desired = round(height * (float(center_y) if center_y is not None else .65) - bh / 2)
             y = max(rect["top"], min(rect["bottom"] - bh, desired))
             return {"text": wrapped, "fontsize": size, "x": x, "y": y,
                     "box": {"left": x, "top": y, "right": x + bw, "bottom": y + bh}, "safe": rect}

@@ -25,12 +25,34 @@ from .client import (
 # tests. This module reads it from the package namespace at runtime.
 _VIDEO_POLL_TIMEOUT_S = 600.0  # 10 min
 
+def resume_video_job(job_path: str | Path, out_dir: Path) -> Path:
+    """Finish polling a previously accepted OpenRouter video job without resubmitting."""
+    import httpx
+    job = __import__("json").loads(Path(job_path).read_text())
+    polling_url = job.get("polling_url")
+    if not polling_url: raise ValueError(f"job receipt has no polling_url: {job_path}")
+    headers = {"Authorization": _auth_headers()["Authorization"]}
+    deadline = _time.monotonic() + _VIDEO_POLL_TIMEOUT_S
+    last = job
+    while _time.monotonic() < deadline:
+        _time.sleep(getattr(sys.modules.get("parallax.openrouter"), "_VIDEO_POLL_INTERVAL_S", 5.0))
+        response=httpx.get(polling_url, headers=headers, timeout=30.0); _raise_for_credits_or_status(response); last=response.json()
+        if last.get("status") == "completed": break
+        if last.get("status") in ("failed", "error"): raise RuntimeError(f"OpenRouter video job failed: {last!r}")
+    else: raise RuntimeError(f"OpenRouter video poll timed out for {job.get('id')}")
+    note_billed_cost(last); urls=last.get("unsigned_urls") or []
+    if not urls: raise RuntimeError(f"completed job returned no unsigned_urls: {last!r}")
+    download=httpx.get(urls[0],headers=headers,timeout=120.0); download.raise_for_status()
+    out_dir.mkdir(parents=True,exist_ok=True); path=out_dir/f"openrouter_{job.get('model','video')}_{int(_time.time()*1000)}.mp4"; path.write_bytes(download.content)
+    return path
+
 
 def _video_real(
     prompt: str, spec: ModelSpec, image_path: Path | None, duration_s: float, out_dir: Path | None,
     *, size: str | None = None, aspect_ratio: str | None = None,
     end_image_path: Path | None = None,
     input_references: list[Path] | None = None,
+    on_submit=None,
 ) -> Path:
     """Generate a video via OpenRouter's `/api/v1/videos` async endpoint.
 
@@ -109,6 +131,8 @@ def _video_real(
     polling_url = job.get("polling_url")
     if not polling_url:
         raise RuntimeError(f"OpenRouter video submit returned no polling_url: {job!r}")
+    if on_submit:
+        on_submit({"id": job.get("id"), "polling_url": polling_url, "model": spec.alias})
 
     # Polling URLs are absolute (the server returns them); they are signed
     # off the same OpenRouter backend so we send the auth header but not

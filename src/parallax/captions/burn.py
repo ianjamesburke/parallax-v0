@@ -34,6 +34,7 @@ def burn_captions(
     animation_override: str | dict | None = None,
     shift_s: float = 0.0,
     report_path: str | None = None,
+    caption_y: float = .65,
 ) -> str:
     """Burn word-by-word captions onto a video.
 
@@ -124,10 +125,13 @@ def burn_captions(
     resolution = probe_resolution(video_path) or (720, 1280)
     boxes = []
     for c in keyed:
-        layout = layout_caption(c["text"], *resolution, int(c.get("fontsize", fontsize)), style)
+        layout = layout_caption(c["text"], *resolution, int(c.get("fontsize", fontsize)), style, center_y=caption_y)
         c.update(layout)
-        boxes.append({"start": c["start"], "end": c["end"], "text": layout["text"],
-                      "box": layout["box"], "safe": layout["safe"]})
+        box, safe = layout["box"], layout["safe"]
+        boxes.append({"start": c["start"], "end": c["end"], "text": layout["text"], "fontsize": c.get("fontsize", fontsize),
+                      "box": box, "safe": safe,
+                      "inside_safe": box["left"] >= safe["left"] and box["right"] <= safe["right"] and box["top"] >= safe["top"] and box["bottom"] <= safe["bottom"],
+                      "inside_frame": box["left"] >= 0 and box["top"] >= 0 and box["right"] <= resolution[0] and box["bottom"] <= resolution[1]})
     if report_path:
         Path(report_path).parent.mkdir(parents=True, exist_ok=True)
         Path(report_path).write_text(json.dumps({"resolution": list(resolution), "boxes": boxes}, indent=2))

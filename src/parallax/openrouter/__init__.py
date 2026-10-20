@@ -96,6 +96,7 @@ from .tts import (  # noqa: F401
 from .video import (  # noqa: F401
     _VIDEO_POLL_TIMEOUT_S,
     _video_real,
+    resume_video_job,
 )
 
 from .retry import (  # noqa: F401
@@ -318,6 +319,7 @@ def generate_video(
     size: str | None = None,
     aspect_ratio: str | None = None,
     allow_fallback: bool = False,
+    on_submit=None,
 ) -> Path:
     """Generate a video. `size` is a passthrough like '1280x720' / '720x1280';
     `aspect_ratio` is e.g. '9:16'. Each video model has its own
@@ -351,6 +353,7 @@ def generate_video(
             size=size, aspect_ratio=aspect_ratio,
             end_image_path=end_image_path,
             input_references=input_references,
+            on_submit=on_submit,
         ),
         test_call=lambda spec: render_mock_video(
             prompt=prompt, model=spec.alias, duration_s=duration_s, out_dir=out_dir,
