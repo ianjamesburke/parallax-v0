@@ -82,15 +82,24 @@ def _storyboard_cmd(
     folder: str = typer.Option(..., "--folder", help="Project root for resolving assets."),
     brief: Optional[str] = typer.Option(None, "--brief", help="Path to the authored brief.yaml (default: <folder>/brief.yaml)."),
     timing: Optional[str] = typer.Option(None, "--timing", help="Aligned manifest YAML/JSON with index, start_s, end_s for every scene; replaces reading estimates."),
+    from_video: Optional[str] = typer.Option(None, "--from-video", help="Finished MP4 to analyze with ffmpeg and frame into the package."),
+    scenes: Optional[str] = typer.Option(None, "--scenes", help="Standalone YAML/JSON scene metadata for --from-video."),
+    cut_threshold: float = typer.Option(.25, "--cut-threshold", help="ffmpeg scene-cut threshold for --from-video."),
     package_dir: Optional[str] = typer.Option(None, "--package-dir", help="Package output directory (default: <folder>/storyboard-package)."),
-    pdf: bool = typer.Option(True, "--pdf/--no-pdf", help="Render a printable PDF of the storyboard if a headless browser is available."),
+    pdf: bool = typer.Option(False, "--pdf/--no-pdf", help="Render a printable PDF of the storyboard (requires Chrome/Chromium or Playwright Chromium)."),
     check: bool = typer.Option(False, "--check", help="Print the status, open gates, and advisories as JSON without writing a package."),
     as_json: bool = typer.Option(False, "--json", help="Print the handoff manifest as JSON: status, open reference gates with choices and resolving commands, advisories."),
 ) -> int:
     """Write a portable storyboard package and its reference gates. No provider calls."""
     import json
     from pathlib import Path
-    from ..storyboard_package import check_storyboard, write_package
+    from ..storyboard_package import check_storyboard, write_package, write_package_from_video
+    if from_video and not scenes and not brief:
+        typer.echo("Error: --from-video requires --scenes or --brief", err=True)
+        return 2
+    if from_video and (timing or check):
+        typer.echo("Error: --from-video cannot be combined with --timing or --check", err=True)
+        return 2
     brief_resolved = brief if brief is not None else str(Path(folder).expanduser() / "brief.yaml")
     if check:
         try:
@@ -101,7 +110,25 @@ def _storyboard_cmd(
         return 0
     destination = Path(package_dir) if package_dir else Path(folder) / "storyboard-package"
     try:
-        manifest = write_package(brief_resolved, folder, destination, timing_path=timing, pdf=pdf)
+        if from_video and not scenes:
+            import tempfile
+            import yaml
+            from ..brief import Brief
+            authored = Brief.from_yaml(brief_resolved)
+            payload = {"title": authored.concept_name or authored.goal, "version": authored.concept_id,
+                       "scenes": [{"id": s.index, "title": s.prompt, "narration": s.vo_text,
+                                   "on_screen_text": s.on_screen_text, "treatment": s.prompt,
+                                   "motion": s.motion_prompt} for s in authored.script.scenes]}
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", encoding="utf-8", delete=False) as tmp:
+                yaml.safe_dump(payload, tmp, sort_keys=False)
+                generated_scenes = tmp.name
+            try:
+                manifest = write_package_from_video(from_video, generated_scenes, folder, destination, cut_threshold=cut_threshold, pdf=pdf)
+            finally:
+                Path(generated_scenes).unlink(missing_ok=True)
+        else:
+            manifest = (write_package_from_video(from_video, scenes, folder, destination, cut_threshold=cut_threshold, pdf=pdf)
+                        if from_video else write_package(brief_resolved, folder, destination, timing_path=timing, pdf=pdf))
     except (ValueError, OSError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         return 2

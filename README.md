@@ -106,7 +106,7 @@ Other commands: `parallax usage`, `parallax credits`, `parallax log <run|latest|
 
 ## Storyboard package
 
-`parallax guide` prints the whole workflow as JSON (stages, commands, flags, preconditions, review boundaries, what needs a human decision). `parallax guide <topic>` prints one slice (a stage id, or `produce_loop`, `asset_locking`, `models`, `cost`, `motion_graphic`, `voiceover_broll`). An agent needs only `--help`, `parallax schema`, and the guide; there is no separate operator skill.
+`parallax guide` prints the whole workflow as JSON (stages, commands, flags, preconditions, review boundaries, what needs a human decision). `parallax guide storyboard` is the concise storyboard-package topic. An agent needs only `--help`, `parallax schema`, and the guide; there is no separate operator skill.
 
     parallax storyboard --folder ./my-project --brief ./my-project/brief.yaml --json
 
@@ -123,6 +123,30 @@ Writes `./my-project/storyboard-package/` (override with `--package-dir`), plain
     assets/             referenced files at their brief-relative paths
 
 No provider calls, no `.parallax` directory, no job or approval state. Assets must live under `--folder`. The package records proposals, never approval.
+
+Style A is the standard editorial package: a letter-landscape cover, then one scene per page with its uncropped 9:16 frame, narration, copy, timing, treatment, position bar, and footer. HTML is always written. PDF is opt-in (`--pdf`); it needs Chrome/Chromium or Playwright Chromium. If no renderer is found, HTML remains written and the command exits with: `uv pip install playwright && playwright install chromium` (or install Chrome).
+
+To re-storyboard a finished cut without any provider calls, use `--from-video` and ffmpeg:
+
+    parallax storyboard --folder ./my-project --from-video ./my-project/final.mp4 --scenes ./my-project/scenes.yaml --pdf
+
+`scenes.yaml` (YAML or JSON) has top-level `title`, optional `version`, and `scenes`. Each scene needs `id` and `title`; optional fields are `narration`, `on_screen_text`, `treatment`, `motion`, `start`, `end`, `frame_at`, and `kicker`. Keep IDs quoted when leading zeros matter. For example:
+
+```yaml
+title: Lunavia pool party
+version: v3
+scenes:
+  - id: "00"
+    title: Opening headline
+    treatment: Poolside establishing shot
+    kicker: ESTABLISHING
+    start: 0
+    end: 2.4
+  - id: 12a
+    title: Detail beat
+```
+
+Without `start`/`end`, detected shots are assigned in order and an unequal count fails with the detected cut times. Explicit boundaries are snapped to a nearby cut (within 0.25 seconds); change it with `--cut-threshold`, and misses are recorded in `handoff.json`. The package records source-video duration and SHA-256, extracts package-relative scene frames, and does not create a synthetic `brief.yaml` or planning advisories. After each review round, update `scenes.yaml` and re-run the exact `rerun_after_review` command in `handoff.json` (or repeat the command above).
 
 `handoff.json` `status` is `needs_reference_decision` while a reference gate is open. Each gate carries the question, the allowed choices (`supplied`, `official`, `generated_anchor`, `no_reference`) and the exact command for each. Answers are written into brief.yaml, with comments preserved:
 

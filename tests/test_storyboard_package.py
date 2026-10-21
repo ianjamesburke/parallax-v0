@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
+import shutil
 import socket
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -91,6 +94,52 @@ def test_package_html_is_portable(tmp_path, capsys):
     moved.parent.mkdir()
     package.rename(moved)
     assert (moved / "assets/stills/a.png").is_file()
+
+
+def test_brief_package_has_one_frame_per_scene_page_without_visible_paths(tmp_path, capsys):
+    folder, brief = _project(tmp_path)
+    _png(folder / "stills/b.png", "#ccaa88")
+    data = yaml.safe_load(brief.read_text())
+    data["script"]["scenes"][1]["still_path"] = "stills/b.png"
+    brief.write_text(yaml.safe_dump(data, sort_keys=False))
+    package = Path(_storyboard(folder, brief, capsys)["package_dir"])
+    html = (package / "storyboard.html").read_text()
+    pages = re.findall(r'<article class="scene-page".*?</article>', html, re.S)
+    assert len(pages) == 2 and all(page.count("<img ") == 1 for page in pages)
+    visible = re.sub(r"<[^>]+>", "", html)
+    assert not any(token in visible for token in ("http", "www.", str(folder.resolve()), "/home", "/workspace"))
+
+
+def test_cover_uses_two_tables_for_more_than_fourteen_scenes(tmp_path, capsys):
+    folder, brief = _project(tmp_path)
+    data = yaml.safe_load(brief.read_text())
+    data["script"]["scenes"] = [
+        {"index": i, "vo_text": "Short narration.", "prompt": f"Treatment for scene {i}"}
+        for i in range(15)
+    ]
+    brief.write_text(yaml.safe_dump(data, sort_keys=False))
+    html = (Path(_storyboard(folder, brief, capsys)["package_dir"]) / "storyboard.html").read_text()
+    cover = re.search(r'<section class="cover compact">(.*?)</section>', html, re.S).group(1)
+    assert cover.count("<table>") == 2
+
+
+def test_pdf_page_count_when_a_renderer_is_available(tmp_path, capsys):
+    from parallax.storyboard_package import find_pdf_renderer
+    if not find_pdf_renderer():
+        pytest.skip("no PDF renderer available")
+    folder, brief = _project(tmp_path)
+    result = _storyboard(folder, brief, capsys, "--pdf")
+    pdf = Path(result["pdf"])
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        if not shutil.which("pdfinfo"):
+            pytest.skip("neither pypdf nor pdfinfo available")
+        output = subprocess.run(["pdfinfo", str(pdf)], check=True, text=True, stdout=subprocess.PIPE).stdout
+        pages = int(re.search(r"^Pages:\s+(\d+)$", output, re.M).group(1))
+    else:
+        pages = len(PdfReader(pdf).pages)
+    assert pages == result["scene_count"] + 1
 
 
 def test_missing_assets_are_listed_and_outside_assets_are_rejected(tmp_path, capsys):
@@ -772,6 +821,15 @@ def test_write_package_with_no_pdf_skips_pdf_generation(tmp_path, capsys):
     assert "pdf" not in data
 
 
+def test_pdf_without_renderer_keeps_html_and_prints_install_hint(tmp_path, capsys, monkeypatch):
+    import parallax.storyboard_package as sbp
+    folder, brief = _project(tmp_path)
+    monkeypatch.setattr(sbp, "find_pdf_renderer", lambda: None)
+    assert cli.main(["storyboard", "--folder", str(folder), "--brief", str(brief), "--pdf"]) == 2
+    assert (folder / "storyboard-package/storyboard.html").is_file()
+    assert "playwright install chromium" in capsys.readouterr().err
+
+
 def test_write_package_registers_pdf_when_created(tmp_path, monkeypatch):
     import parallax.storyboard_package as sbp
     folder, brief = _project(tmp_path)
@@ -787,4 +845,3 @@ def test_write_package_registers_pdf_when_created(tmp_path, monkeypatch):
     assert "storyboard.pdf" in {f["path"] for f in res["files"]}
     disk_manifest = json.loads((custom_pkg / "handoff.json").read_text(encoding="utf-8"))
     assert "storyboard.pdf" in {f["path"] for f in disk_manifest["files"]}
-
