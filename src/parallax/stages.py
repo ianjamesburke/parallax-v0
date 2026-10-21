@@ -1273,6 +1273,7 @@ def stage_headline(plan: dict[str, Any], settings: Settings, state: PipelineStat
         "text": headline_text,
         "output_path": final_path,
         "fontsize": h_fontsize,
+        "fade_in_s": settings.headline_fade_in_s,
     }
     if settings.headline_y_position is not None:
         headline_kwargs["y_position"] = settings.headline_y_position
