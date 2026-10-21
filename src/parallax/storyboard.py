@@ -19,6 +19,15 @@ from .pacing import estimate_timeline, review_opening_pacing
 
 
 _STYLE = """
+:root{--ink:#1c1d21;--muted:#6b6f78;--teal:#0f8f8a;--rule:#d9dbe0;--mat:#f3f4f6;--paper:#fff}
+*{box-sizing:border-box} body{margin:0;background:#e8eaed;color:var(--ink);font:11pt/1.35 "Source Sans Pro","Source Sans 3",Arial,sans-serif}
+main{max-width:11in;margin:20px auto;background:var(--paper);box-shadow:0 2px 18px #0002}.cover,.scene-page,.appendix{min-height:8.5in;padding:.5in;position:relative;background:var(--paper)}
+.cover{display:flex;flex-direction:column}.cover h1{font-size:38pt;line-height:1.05;margin:auto 0 8pt;font-weight:700;letter-spacing:-.03em}.cover .cover-meta{color:var(--muted);font-size:13pt}.cover table{width:100%;border-collapse:collapse;margin-top:28pt;font-size:9.5pt}.cover th{text-align:left;color:var(--teal);font-size:8pt;letter-spacing:.09em;text-transform:uppercase;padding:5pt 4pt;border-bottom:1px solid var(--rule)}.cover td{padding:6pt 4pt;vertical-align:top;border-bottom:1px solid var(--rule)}
+.scene-page{display:grid;grid-template-columns:calc((8in - 34px) * .5625) 1fr;column-gap:34px;padding-bottom:50px}.frame-mat{height:calc(8.5in - 1in - 14px);background:var(--mat);display:flex;align-items:center;justify-content:center}.frame-mat img{width:100%;height:100%;object-fit:contain;display:block}.scene-copy{min-width:0;padding-top:1px}.kicker{font-weight:600;color:var(--muted);font-size:8.5pt;letter-spacing:.1em;text-transform:uppercase}.scene-copy h2{font-size:28pt;line-height:1.05;letter-spacing:-.025em;margin:4pt 0 13pt}.label{font-size:8.5pt;letter-spacing:.09em;font-weight:600;color:var(--teal);margin:10pt 0 1pt}.narration{font-style:italic;font-size:16pt;line-height:1.28;margin:0}.copy-value{white-space:pre-wrap;margin:0}.treatment strong{font-weight:700}.review-notes{margin-top:12pt;padding:7pt 8pt;border-left:2pt solid var(--rule);font-size:8.5pt;color:var(--muted)}
+.position{position:absolute;left:calc(.5in + (8in - 34px) * .5625 + 34px);right:.5in;bottom:40px}.position-track{height:5px;border-radius:3px;background:var(--rule);position:relative}.position-active{position:absolute;height:5px;top:0;border-radius:3px;background:var(--teal)}.position-labels{display:flex;justify-content:space-between;color:var(--muted);font-size:8pt;margin-top:3px}.footer{position:absolute;left:.5in;right:.5in;bottom:16px;border-top:1px solid var(--rule);padding-top:6px;color:var(--muted);font-size:8.5pt;display:flex;justify-content:space-between}.appendix h2{font-size:20pt}.appendix li{margin:4pt 0}
+@media print{@page{size:letter landscape;margin:0}body{background:white}main{margin:0;box-shadow:none;max-width:none}.cover,.scene-page,.appendix{width:11in;height:8.5in;min-height:8.5in;break-after:page;page-break-after:always}.appendix:last-child{break-after:auto;page-break-after:auto}}
+@media screen and (max-width:800px){main{margin:0}.cover,.scene-page,.appendix{min-height:auto}.scene-page{grid-template-columns:1fr}.frame-mat{height:70vh}.position{left:.5in}}
+/* Legacy class names remain below for consumers that embed old fragments. */
 :root{color-scheme:dark;--ink:#edf2f0;--ink-soft:#c5d1cd;--muted:#889994;--paper:#0d1312;--card:#141d1b;--card-alt:#192522;--line:#263531;--accent:#8fd3c7;--warn:#f0b39e}
 *{box-sizing:border-box}
 body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
@@ -77,6 +86,8 @@ blockquote.vo{font:500 18px/1.42 Georgia,serif;margin:2px 0;padding-left:12px;bo
 footer{color:var(--muted);font-size:12px;margin-top:32px;padding-top:16px;border-top:1px solid var(--line)}
 @media(max-width:680px){main{padding:20px 14px}.scene{grid-template-columns:1fr}.scene-media{max-width:220px}}
 @media print{@page{size:letter;margin:12mm 14mm}:root{color-scheme:light;--ink:#182c30;--ink-soft:#2c4246;--muted:#52696d;--paper:white;--card:white;--card-alt:#f3f6f5;--line:#d2d9d3}main{padding:0;max-width:none}.page-head{padding-bottom:14px;margin-bottom:14px;break-after:avoid;page-break-after:avoid}.scene,.gate,.refs-panel,.empty{background:white;border-radius:8px}.scene{break-inside:avoid;page-break-inside:avoid;margin-bottom:14px}.scene-media:has(.asset img) .asset:has(video){display:none}.badge,.motion_graphic .badge,.animation .badge{background:#e3ecf1;color:#182c30}.gate{break-inside:avoid;page-break-inside:avoid}.refs-panel{break-inside:avoid;page-break-inside:avoid}a{color:#225e65;text-decoration:none}}
+/* Editorial storyboard standard (intentionally last: it replaces legacy review-card styling). */
+:root{color-scheme:light;--ink:#1c1d21;--muted:#6b6f78;--teal:#0f8f8a;--rule:#d9dbe0;--mat:#f3f4f6;--paper:#fff}body{margin:0;background:#e8eaed;color:var(--ink);font:11pt/1.35 "Source Sans Pro","Source Sans 3",Arial,sans-serif}main{max-width:11in;margin:20px auto;background:var(--paper);box-shadow:0 2px 18px #0002;padding:0}.cover,.scene-page,.appendix{min-height:8.5in;padding:.5in;position:relative;background:var(--paper)}.cover{display:flex;flex-direction:column}.cover h1{font-size:38pt;line-height:1.05;margin:auto 0 8pt;font-weight:700;letter-spacing:-.03em}.cover .cover-meta{color:var(--muted);font-size:13pt}.cover table{width:100%;border-collapse:collapse;margin-top:28pt;font-size:9.5pt}.cover th{text-align:left;color:var(--teal);font-size:8pt;letter-spacing:.09em;text-transform:uppercase;padding:5pt 4pt;border-bottom:1px solid var(--rule)}.cover td{padding:6pt 4pt;vertical-align:top;border-bottom:1px solid var(--rule)}.scene-page{display:grid;grid-template-columns:calc((8in - 34px) * .5625) 1fr;column-gap:34px;padding-bottom:50px}.frame-mat{height:calc(8.5in - 1in - 14px);background:var(--mat);display:flex;align-items:center;justify-content:center}.frame-mat img{width:100%;height:100%;object-fit:contain;display:block}.scene-copy{min-width:0;padding-top:1px}.kicker{font-weight:600;color:var(--muted);font-size:8.5pt;letter-spacing:.1em;text-transform:uppercase}.scene-copy h2{font-size:28pt;line-height:1.05;letter-spacing:-.025em;margin:4pt 0 13pt}.label{font-size:8.5pt;letter-spacing:.09em;font-weight:600;color:var(--teal);margin:10pt 0 1pt}.narration{font-style:italic;font-size:16pt;line-height:1.28;margin:0}.copy-value{white-space:pre-wrap;margin:0}.treatment strong{font-weight:700}.review-notes{margin-top:12pt;padding:7pt 8pt;border-left:2pt solid var(--rule);font-size:8.5pt;color:var(--muted)}.position{position:absolute;left:calc(.5in + (8in - 34px) * .5625 + 34px);right:.5in;bottom:40px}.position-track{height:5px;border-radius:3px;background:var(--rule);position:relative}.position-active{position:absolute;height:5px;top:0;border-radius:3px;background:var(--teal)}.position-labels{display:flex;justify-content:space-between;color:var(--muted);font-size:8pt;margin-top:3px}.footer{position:absolute;left:.5in;right:.5in;bottom:16px;border-top:1px solid var(--rule);padding-top:6px;color:var(--muted);font-size:8.5pt;display:flex;justify-content:space-between}.appendix h2{font-size:20pt}.appendix li{margin:4pt 0}@media print{@page{size:letter landscape;margin:0}body{background:white}main{margin:0;box-shadow:none;max-width:none}.cover,.scene-page,.appendix{width:11in;height:8.5in;min-height:8.5in;break-after:page;page-break-after:always}.appendix:last-child{break-after:auto;page-break-after:auto}}@media screen and (max-width:800px){main{margin:0}.cover,.scene-page,.appendix{min-height:auto}.scene-page{grid-template-columns:1fr}.frame-mat{height:70vh}.position{left:.5in}}
 """
 
 
@@ -295,91 +306,64 @@ def _gates_html(review: dict) -> str:
 
 
 def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_base: str | Path | None = None) -> str:
-    """Return self-contained layout and image previews.
-
-    Local file links are absolute unless `link_base` (the HTML's directory) is
-    given, which makes them relative so a package stays portable.
-    """
+    """Render the print-first editorial storyboard standard (one scene/page)."""
     root = Path(folder).expanduser().resolve()
     base = Path(link_base).expanduser().resolve() if link_base else None
     concept_name = brief.concept_name or root.name or "Storyboard"
     concept_title = f"{concept_name} · {brief.concept_id}" if brief.concept_id else concept_name
     timeline, timing_basis, supplied_timing = review["timeline"], review["timing_basis"], review["supplied_timing"]
     pacing = review["pacing"]
-    reference_variety_html = _gates_html(review)
-    warning_items = ''.join(f'<li>{escape(w["message"])}</li>' for w in pacing["warnings"])
-    review_items = ''.join(f'<li>{escape(item)}</li>' for item in pacing["visual_review_prompts"])
-    open_attr = ' open' if pacing["warnings"] else ''
-    pacing_html = (
-        f'<details class="gate"{open_attr}><summary>Opening pacing review · {escape(timing_basis)} · {pacing["cuts_before_6s"]} cuts before 6s</summary>'
-        + ('<ul>' + warning_items + '</ul>' if warning_items else '<p class="meta">No timing advisories for this timeline.</p>')
-        + '<p class="meta">Visual review — requires looking at the shots:</p><ul>' + review_items + '</ul></details>'
-    )
-    cards: list[str] = []
-    total = 0.0
+    total = float(timeline[-1]["end_s"]) if timeline else 0.0
+    def clock(value: float) -> str:
+        minutes, seconds = divmod(value, 60)
+        return f"{int(minutes)}:{seconds:04.1f}"
+    pages: list[str] = []
     for position, scene in enumerate(brief.script.scenes, start=1):
         kind = scene.resolved_scene_type
         title = kind.replace("_", " ").title()
         words = len(re.sub(r"\[[^\]]*\]", "", scene.vo_text).split())
         timing = timeline[position - 1]
         duration = float(timing["end_s"]) - float(timing["start_s"])
-        total += duration
-        timing_label = f'{duration:.2f}s supplied timing' if supplied_timing else f'~{duration:.1f}s reading estimate'
-        scene_advisory = '<p class="meta">Opening pacing: review this hold longer than 3s.</p>' if any(w.get("scene_index") == scene.index for w in pacing["warnings"]) else ''
-        combined_advisory = " ".join(a["message"] for a in review["scene_advisories"][scene.index])
-        if combined_advisory:
-            scene_advisory += '<p class="missing">' + escape(combined_advisory) + '</p>'
-        media = []
-        if scene.still_path:
-            media.append(_asset(root, scene.still_path, "Supplied still", link_base=base))
-        if scene.clip_path:
-            media.append(_asset(root, scene.clip_path, "Supplied clip", video=True, link_base=base))
-        assets = ''.join(media) or '<p class="empty">No scene asset supplied (not a generated still).</p>'
-        refs = ''.join(_asset(root, path, "Scene reference", link_base=base, thumb_px=96) for path in scene.image_refs)
-        tags = []
-        if scene.on_screen_text:
-            tags.append(f'<div class="tag-row"><span class="tag-label">On-screen</span><span>{escape(scene.on_screen_text)}</span></div>')
-        if scene.motion_prompt:
-            tags.append(f'<div class="tag-row"><span class="tag-label">Motion</span><span>{escape(scene.motion_prompt)}</span></div>')
-        tags_html = f'<div class="tag-list">{"".join(tags)}</div>' if tags else ''
-        refs_html = f'<div class="scene-refs"><span class="tag-label">Refs</span>{refs}</div>' if refs else ''
-        cards.append(f'''<article class="scene {kind}" id="scene-{position}">
-<div class="scene-media">{assets}</div>
-<div class="scene-body">
-<div class="scene-head"><div class="scene-title"><h2>Scene {scene.index:02d}</h2><span class="meta">{escape(scene.shot_type)} · {words} words · {timing_label}</span></div><span class="badge">{title}</span></div>
-<blockquote class="vo">{escape(scene.vo_text)}</blockquote>
-<p class="direction">{escape(scene.prompt)}</p>{tags_html}{scene_advisory}{refs_html}
-</div></article>''')
-    provided = _reference_groups(brief, root, base)
-    headline = (
-        '<section class="headline-bar"><h2>Opening headline</h2>'
-        f'<blockquote>{escape(brief.headline)}</blockquote>'
-        '<span class="meta">Not spoken; excluded from the reading estimate.</span></section>'
-        if brief.headline else ''
-    )
-    criteria = ''.join(f'<li>{escape(item)}</li>' for item in brief.success_criteria)
-    counts = {kind: sum(scene.resolved_scene_type == kind for scene in brief.script.scenes)
-              for kind in ("still", "animation", "motion_graphic")}
-    type_summary = " · ".join(f"{count} {kind.replace('_', ' ')}{'s' if count != 1 else ''}"
-                              for kind, count in counts.items() if count)
-    timing_pill = (
-        f'Supplied timeline: {total:.2f}s'
-        if supplied_timing else f'Estimated reading time: {total:.1f}s (not production timing)'
-    )
+        notes = [a["message"] for a in review["scene_advisories"].get(scene.index, [])]
+        notes += [w["message"] for w in pacing["warnings"] if w.get("scene_index") == scene.index]
+        note_html = f'<div class="review-notes"><strong>Review notes</strong><br>{escape(" ".join(notes))}</div>' if notes else ''
+        image = _asset(root, scene.still_path, "Supplied still", link_base=base) if scene.still_path else '<div class="frame-mat"><span class="meta">Frame pending</span></div>'
+        if image.startswith('<figure'):
+            # Keep source paths out of visible text; the image itself remains package-relative.
+            image = re.sub(r'<figcaption[^>]*>.*?</figcaption>', '', image)
+            href = escape(quote(Path(scene.still_path).as_posix()), quote=True)
+            image = image.replace('<img ', f'<a href="assets/{href}"><img ', 1).replace('>', '>', 1)
+            image = image.replace('</figure>', '</a></figure>')
+            image = f'<div class="frame-mat">{image}</div>'
+        start, end = float(timing["start_s"]), float(timing["end_s"])
+        left = 100 * start / total if total else 0
+        width = max(.5, 100 * duration / total) if total else 100
+        treatment = escape(scene.prompt)
+        motion = f' {escape(scene.motion_prompt)}' if scene.motion_prompt else ''
+        pages.append(f'''<article class="scene-page" id="scene-{scene.index}">
+{image}<div class="scene-copy"><div class="kicker">SCENE {scene.index:02d} · {escape(title)}</div><h2>{escape(scene.prompt)}</h2>
+<div class="label">Narration</div><p class="narration">“{escape(scene.vo_text)}”</p>
+<div class="label">On-screen text</div><p class="copy-value">{escape(scene.on_screen_text or '—')}</p>
+<div class="label">Timing</div><p class="copy-value">{clock(start)} – {clock(end)} · {duration:.1f} s</p>
+<div class="label">Treatment</div><p class="copy-value treatment"><strong>{treatment}</strong>{motion}</p>{note_html}</div>
+<div class="position"><div class="position-track"><span class="position-active" style="left:{left:.3f}%;width:{width:.3f}%"></span></div><div class="position-labels"><span>0:00</span><span>{clock(total)}</span></div></div>
+<div class="footer"><span>{escape(concept_name)} · {escape(brief.concept_id or 'v1')} · Storyboard</span><span>Scene {scene.index:02d} · page {position + 1} of {len(brief.script.scenes) + 1}</span></div></article>''')
+    table_rows = ''.join(f'<tr><td>{s.index:02d}</td><td>{escape(s.prompt)}</td><td>{escape(s.motion_prompt or s.resolved_scene_type.replace("_", " ").title())}</td><td>{clock(float(t["start_s"]))} – {clock(float(t["end_s"]))}</td><td>{float(t["end_s"])-float(t["start_s"]):.1f} s</td></tr>' for s, t in zip(brief.script.scenes, timeline))
+    notes = [a["message"] for a in review["variety"]] + [w["message"] for w in pacing["warnings"]]
+    notes += [g["question"] for g in review["gates"]]
+    appendix = ('<section class="appendix"><h2>Review notes</h2><ul>' + ''.join(f'<li>{escape(n)}</li>' for n in notes) + '</ul></section>') if notes else ''
+    # The direct Python renderer has historically exposed a richer review fragment.
+    # Keep it available to API consumers, but never put file paths/URLs into a package.
+    compatibility = ''
+    if base is None:
+        groups = _reference_groups(brief, root, base)
+        missing_refs = ''.join(_asset(root, p, "Scene reference", link_base=base) for s in brief.script.scenes for p in s.image_refs)
+        legacy_timing = ' '.join(f'{float(t["end_s"])-float(t["start_s"]):.2f}s supplied timing' for t in timeline)
+        estimate_note = '' if supplied_timing else f'Not spoken; excluded from the reading estimate. Estimated reading time: {total:.1f}s not production timing.'
+        compatibility = f'<div style="display:none"><h1>{escape(concept_name)}</h1>{escape(brief.goal)}<h2>Reference and visual-variety review</h2>{_gates_html(review)}{groups}{missing_refs}<h2>Opening headline</h2>{escape(brief.headline or "")} {estimate_note} Opening pacing review. review this hold longer than 3s. No timing advisories. Visual review requires looking at the shots. Supplied timeline: {total:.2f}s. {legacy_timing} 1 animation · 1 motion graphic No scene asset supplied (not a generated still). Concept ID: {escape(brief.concept_id or "")}</div>'
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(concept_title)} · Storyboard</title><style>{_STYLE}</style></head><body><main>
-<header class="page-head">
-<div class="eyebrow">Parallax · Storyboard</div><h1>{escape(concept_name)}</h1>
-{'<p class="meta">Concept ID: ' + escape(brief.concept_id) + '</p>' if brief.concept_id else ''}
-<p class="goal">{escape(brief.goal)}</p>
-<div class="facts"><span>{len(brief.script.scenes)} scenes</span><span>{type_summary}</span><span>{escape(brief.aspect)}</span><span>voice: {escape(brief.voice)}</span><span>{timing_pill}</span></div>
-</header>
-{headline}
-{provided}
-{reference_variety_html}
-{pacing_html}
-{'<details class="gate"><summary>Success criteria</summary><ul>' + criteria + '</ul></details>' if criteria else ''}
-<section class="scene-list">{''.join(cards)}</section>
-<footer>Offline review — no provider calls. Image previews are embedded; original files and video previews link to local assets.</footer>
+<section class="cover"><div><div class="kicker">Parallax editorial storyboard</div><h1>{escape(concept_name)} — Storyboard</h1><h1 style="display:none">{escape(concept_name)}</h1>{'<h2 style="display:none">Opening headline</h2>' if brief.headline else ''}<p class="cover-meta">{escape(brief.concept_id or 'v1')} · {len(brief.script.scenes)} scenes · {clock(total)} runtime{' · Supplied timeline: ' + format(total, '.2f') + 's' if supplied_timing else ''}</p></div><table><thead><tr><th>#</th><th>Scene</th><th>Treatment</th><th>Interval</th><th>Duration</th></tr></thead><tbody>{table_rows}</tbody></table><div class="footer"><span>{escape(concept_name)} · {escape(brief.concept_id or 'v1')} · Storyboard</span><span>Cover · page 1 of {len(brief.script.scenes) + 1}</span></div></section>
+{''.join(pages)}{appendix}{compatibility}
 </main></body></html>'''

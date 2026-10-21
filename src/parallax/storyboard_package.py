@@ -20,6 +20,9 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import hashlib
+import re
+from datetime import date
 
 import yaml
 from PIL import Image, ImageOps
@@ -50,6 +53,7 @@ def find_pdf_renderer() -> list[str] | None:
     Falls back to wkhtmltopdf or weasyprint.
     """
     candidates = [
+        os.environ.get("PARALLAX_CHROME"),
         shutil.which("google-chrome"),
         shutil.which("google-chrome-stable"),
         shutil.which("chromium"),
@@ -253,22 +257,32 @@ def _manifest(brief: Brief, review: dict, files: dict[str, str], contact: list[i
 
 
 def write_package(brief_path: str | Path, folder: str | Path, package_dir: str | Path,
-                  timing_path: str | Path | None = None, *, pdf: bool = True) -> dict:
+                  timing_path: str | Path | None = None, *, pdf: bool = True,
+                  brief_override: Brief | None = None, frame_sources: list[tuple[str, Path]] | None = None,
+                  video_metadata: dict | None = None) -> dict:
     """Write the storyboard package and return its handoff manifest. Makes no provider calls."""
     brief_path = Path(brief_path).expanduser().resolve()
     root = Path(folder).expanduser().resolve()
     package = Path(package_dir).expanduser().resolve()
     if package.exists() and any(package.iterdir()) and not (package / "handoff.json").is_file():
         raise ValueError(f"{package} exists and is not a storyboard package (no handoff.json); choose an empty --package-dir")
-    brief = _load_brief(brief_path)
+    brief = brief_override or _load_brief(brief_path)
     review = review_storyboard(brief, root, brief_path, _load_timing(timing_path) if timing_path else None)
     package.mkdir(parents=True, exist_ok=True)
     assets = package / "assets"
     missing = _copy_assets(brief, root, assets)
+    missing = [p for p in missing if p not in {relative for relative, _ in frame_sources or []}]
+    for relative, source in frame_sources or []:
+        target = assets / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
     timeline = review["timeline"]
     contact = _contact_sheet(brief, assets, package / "contact-sheet.jpg")
 
-    (package / "brief.yaml").write_bytes(brief_path.read_bytes())
+    if brief_override:
+        (package / "brief.yaml").write_text(_dump(brief.model_dump(exclude_none=True)), encoding="utf-8")
+    else:
+        (package / "brief.yaml").write_bytes(brief_path.read_bytes())
     (package / "script.md").write_text(_script_md(brief), encoding="utf-8")
     (package / "references.yaml").write_text(_dump({
         "asset_root": "assets",
@@ -293,6 +307,8 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
     pdf_created = False
     if pdf:
         pdf_created = render_pdf(package / "storyboard.html", package / "storyboard.pdf")
+        if not pdf_created:
+            raise ValueError("PDF export needs Playwright Chromium or Chrome/Chromium. Install with `uv pip install playwright && playwright install chromium`, or install Chrome.")
         if pdf_created and package == (root / "storyboard-package").resolve():
             shutil.copy2(package / "storyboard.pdf", root / "storyboard.pdf")
 
@@ -301,9 +317,94 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
         if (name != "contact-sheet.jpg" or contact) and (name != "storyboard.pdf" or pdf_created)
     }
     on_disk = _manifest(brief, portable, files, contact, missing, FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER)
+    if video_metadata:
+        on_disk["source_video"] = video_metadata
     (package / "qa-notes.md").write_text(_qa_notes(on_disk), encoding="utf-8")
     (package / "handoff.json").write_text(json.dumps(on_disk, indent=2) + "\n", encoding="utf-8")
-    return _manifest(brief, review, files, contact, missing, str(root), str(brief_path))
+    result = _manifest(brief, review, files, contact, missing, str(root), str(brief_path))
+    if video_metadata:
+        result["source_video"] = video_metadata
+    return result
+
+
+def _run(args: list[str]) -> str:
+    try:
+        return subprocess.run(args, check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+    except FileNotFoundError as exc:
+        raise ValueError(f"{args[0]} is required for --from-video; install ffmpeg.") from exc
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(exc.stderr.strip() or f"{args[0]} failed") from exc
+
+
+def _duration(video: Path) -> float:
+    value = _run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(video)]).strip()
+    try: return float(value)
+    except ValueError as exc: raise ValueError("ffprobe could not read video duration") from exc
+
+
+def _cuts(video: Path, threshold: float) -> list[float]:
+    stderr = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(video), "-filter:v", f"select='gt(scene,{threshold})',showinfo", "-f", "null", "-"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False).stderr
+    if "No such file" in stderr: raise ValueError("ffmpeg is required for --from-video; install ffmpeg.")
+    return [float(x) for x in re.findall(r"pts_time:([0-9.]+)", stderr)]
+
+
+def _load_standalone_scenes(path: str | Path) -> dict:
+    raw = yaml.safe_load(Path(path).expanduser().read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or not isinstance(raw.get("scenes"), list) or not raw["scenes"]:
+        raise ValueError("--scenes must be YAML or JSON with top-level title and a non-empty scenes list")
+    for item in raw["scenes"]:
+        if not isinstance(item, dict) or "id" not in item or "title" not in item:
+            raise ValueError("each --scenes entry needs id and title")
+    return raw
+
+
+def write_package_from_video(video: str | Path, scenes_path: str | Path, folder: str | Path, package_dir: str | Path,
+                             *, cut_threshold: float = .25, pdf: bool = True) -> dict:
+    """Build an offline package from a finished cut and standalone scene metadata."""
+    video_path, root, package = Path(video).expanduser().resolve(), Path(folder).expanduser().resolve(), Path(package_dir).expanduser().resolve()
+    if not video_path.is_file(): raise ValueError(f"video not found: {video_path}")
+    data, duration, cuts = _load_standalone_scenes(scenes_path), _duration(video_path), _cuts(video_path, cut_threshold)
+    entries, explicit = data["scenes"], all("start" in s and "end" in s for s in data["scenes"])
+    boundaries = [0.0] + cuts + [duration]
+    qa: list[dict] = []
+    if explicit:
+        intervals = []
+        for item in entries:
+            start, end = float(item["start"]), float(item["end"])
+            for name, value in (("start", start), ("end", end)):
+                near = min(cuts, key=lambda x: abs(x-value), default=None)
+                if near is not None and abs(near-value) <= .25: value = near
+                elif value not in (0.0, duration): qa.append({"scene": item["id"], "kind": "boundary_no_nearby_cut", "boundary": name, "requested_s": value})
+                if name == "start": start = value
+                else: end = value
+            if end <= start: raise ValueError(f"scene {item['id']}: end must be after start")
+            intervals.append((start, end))
+    else:
+        if len(cuts) + 1 != len(entries):
+            listed = ", ".join(f"{x:.3f}" for x in cuts)
+            raise ValueError(f"detected {len(cuts)+1} shots for {len(entries)} scenes; detected cut times: {listed or '(none)'}. Add explicit start/end to --scenes.")
+        intervals = list(zip(boundaries[:-1], boundaries[1:]))
+    from .brief import Brief
+    generated = []
+    temp = package.parent / ".parallax-storyboard-frames"
+    temp.mkdir(parents=True, exist_ok=True)
+    sources: list[tuple[str, Path]] = []
+    for number, (item, (start, end)) in enumerate(zip(entries, intervals), 1):
+        ident = str(item["id"])
+        relative, target = f"frames/scene-{ident}.jpg", temp / f"scene-{ident}.jpg"
+        at = float(item.get("frame_at", (start + end) / 2))
+        _run(["ffmpeg", "-y", "-ss", f"{at:.4f}", "-i", str(video_path), "-frames:v", "1", "-q:v", "2", str(target)])
+        sources.append((relative, target))
+        generated.append({"index": number, "shot_type": "broll", "scene_type": "still", "vo_text": item.get("narration", ""), "prompt": item.get("treatment", item["title"]), "motion_prompt": item.get("motion"), "on_screen_text": item.get("on_screen_text"), "still_path": relative})
+    brief = Brief.model_validate({"goal": data.get("title", "Finished video"), "concept_name": data.get("title", "Finished video"), "concept_id": data.get("version"), "reference_decisions": [{"gate": "editorial-reference", "choice": "no_reference", "scenes": list(range(1, len(generated) + 1)), "note": "Frames extracted from finished video"}], "script": {"scenes": generated}})
+    timeline = [{"index": i, "start_s": start, "end_s": end} for i, (start, end) in enumerate(intervals, 1)]
+    timing_file = temp / "timing.yaml"; timing_file.write_text(_dump({"scenes": timeline}), encoding="utf-8")
+    digest = hashlib.sha256(video_path.read_bytes()).hexdigest()
+    meta = {"duration_s": round(duration, 3), "sha256": digest, "size": video_path.stat().st_size, "cut_threshold": cut_threshold, "detected_cuts_s": cuts, "boundary_notes": qa}
+    try:
+        return write_package(video_path, root, package, timing_file, pdf=pdf, brief_override=brief, frame_sources=sources, video_metadata=meta)
+    finally:
+        shutil.rmtree(temp, ignore_errors=True)
 
 
 def check_storyboard(brief_path: str | Path, folder: str | Path, timing_path: str | Path | None = None) -> dict:

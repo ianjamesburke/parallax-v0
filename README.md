@@ -124,6 +124,14 @@ Writes `./my-project/storyboard-package/` (override with `--package-dir`), plain
 
 No provider calls, no `.parallax` directory, no job or approval state. Assets must live under `--folder`. The package records proposals, never approval.
 
+The editorial page (style A) is the storyboard standard: a letter-landscape cover, then one scene per page with its uncropped 9:16 frame, narration, copy, timing, treatment, position bar, and footer. Add `--pdf` to render that same HTML as `storyboard.pdf`; if no Chrome/Chromium or Playwright Chromium is available, HTML remains written and the command explains how to install a renderer.
+
+To re-storyboard a finished cut without any provider calls, use `--from-video` and ffmpeg:
+
+    parallax storyboard --folder ./my-project --from-video ./my-project/final.mp4 --scenes ./my-project/scenes.yaml --pdf
+
+`scenes.yaml` (YAML or JSON) has top-level `title`, optional `version`, and `scenes`. Each scene needs `id` and `title`; optional fields are `narration`, `on_screen_text`, `treatment`, `motion`, `start`, `end`, `frame_at`, and `kicker`. Without `start`/`end`, detected shots are assigned in order and an unequal count fails with the detected cut times. Explicit boundaries are snapped to a nearby cut (within 0.25 seconds) and misses are recorded in `handoff.json`. The package records source-video duration and SHA-256, and extracts package-relative scene frames.
+
 `handoff.json` `status` is `needs_reference_decision` while a reference gate is open. Each gate carries the question, the allowed choices (`supplied`, `official`, `generated_anchor`, `no_reference`) and the exact command for each. Answers are written into brief.yaml, with comments preserved:
 
     parallax reference resolve --folder F --brief B --gate editorial-reference --choice supplied --asset refs/style.png
