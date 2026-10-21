@@ -107,6 +107,16 @@ def test_burn_headline_multiline(tmp_path):
     assert out.exists()
 
 
+def test_headline_layout_wraps_and_fits_long_text():
+    """Headline overlays have the same no-cropping contract as captions."""
+    laid = headline._layout_headline(
+        "THIS IS A DELIBERATELY LONG HEADLINE THAT MUST STAY ON SCREEN", 1080, 1920, 96, "bangers"
+    )
+    assert len(laid["lines"]) >= 2
+    assert laid["left"] >= laid["safe"]["left"]
+    assert laid["right"] <= laid["safe"]["right"]
+
+
 @pytest.mark.skipif(not _ffmpeg_has_drawtext(),
                     reason="local ffmpeg lacks drawtext")
 def test_burn_headline_end_time_s_bounds_visibility(tmp_path):

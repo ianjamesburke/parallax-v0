@@ -11,6 +11,7 @@ import subprocess
 from pathlib import Path
 
 from .styles import _FONTS_DIR
+from .layout import _font, _measure
 from ..ffmpeg_utils import run_ffmpeg
 
 
@@ -26,7 +27,7 @@ def _style_drawtext_filter(
     # `%` starts a drawtext expansion (`%{...}`), so a literal one must reach drawtext as `\%`.
     # The filtergraph parser strips one backslash level first, hence two here.
     escaped = (
-        text.replace("\\", "\\\\").replace("'", "’").replace(":", "\\:").replace("%", "\\\\%").replace("\n", "\\n")
+        text.replace("\\", "\\\\").replace("'", "’").replace(":", "\\:").replace("%", "\\\\%").replace("\n", " ")
     )
     if style.get("uppercase"):
         escaped = escaped.upper()
@@ -69,13 +70,25 @@ def _burn_captions_drawtext(
     # Each chunk may have its own per-keyframe fontsize set by
     # `_expand_pop_keyframes`; fall back to the global fontsize for
     # chunks without one (animation disabled).
-    filters = [
-        _style_drawtext_filter(
-            {**style, "x": c.get("x", style.get("x_expr", "(w-tw)/2")), "y": c.get("y", style.get("y_expr", "h*.65-th"))}, c["text"], c["start"], c["end"],
-            int(c.get("fontsize", fontsize)),
-        )
-        for c in chunks
-    ]
+    filters: list[str] = []
+    for c in chunks:
+        size = int(c.get("fontsize", fontsize))
+        lines = c["text"].split("\n")
+        # A physical drawtext instance per line is deliberate: the filtergraph
+        # parser consumes newline escapes before drawtext receives them. It also
+        # makes this renderer use the exact same wrapped lines as layout_caption.
+        font = _font(style, size)
+        widths = [_measure(font, line, int(style.get("borderw", 0)))[0] for line in lines]
+        line_heights = [_measure(font, line, int(style.get("borderw", 0)))[1] for line in lines]
+        widest = max(widths)
+        y = c.get("y", style.get("y_expr", "h*.65-th"))
+        for i, line in enumerate(lines):
+            if "x" in c:
+                x = int(c["x"]) + (widest - widths[i]) // 2
+            else:
+                x = style.get("x_expr", "(w-tw)/2")
+            line_y = y if i == 0 else (int(c["y"]) + sum(line_heights[:i]) if "y" in c else y)
+            filters.append(_style_drawtext_filter({**style, "x": x, "y": line_y}, line, c["start"], c["end"], size))
     result = run_ffmpeg(
         [_get_drawtext_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
          "-i", video_path,

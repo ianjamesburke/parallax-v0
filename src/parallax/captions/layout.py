@@ -31,6 +31,13 @@ def _measure(font, text: str, stroke: int) -> tuple[int, int]:
     return max(b[2] - b[0] for b in boxes), sum(b[3] - b[1] for b in boxes)
 
 
+def _visual_padding(style: dict) -> tuple[int, int]:
+    """Extra pixels painted outside glyph bounds by the selected renderer."""
+    pad = int(style.get("boxborderw", 0)) if style.get("box") else 0
+    # drawtext's shadow is offset outwards from the glyph/outline.
+    return pad + abs(int(style.get("shadowx", 0))), pad + abs(int(style.get("shadowy", 0)))
+
+
 def _wrap(text: str, font, limit: int, max_lines: int, stroke: int) -> str:
     words = text.split()
     lines: list[str] = []
@@ -55,6 +62,11 @@ def layout_caption(text: str, width: int, height: int, fontsize: int, style: dic
     avail_w = min(rect["right"] - rect["left"], round(width * float(style.get("max_line_width", .84))))
     avail_h = rect["bottom"] - rect["top"]
     stroke = int(style.get("borderw", 0))
+    pad_x, pad_y = _visual_padding(style)
+    # The safe-area promise includes drawtext's box border and shadow, not just
+    # the glyphs Pillow happens to measure.
+    avail_w -= 2 * pad_x
+    avail_h -= 2 * pad_y
     # Preserve caller text; drawtext performs the preset's uppercase transform.
     # Fonts here are bold uppercase-friendly, and shrinking below adds margin.
     source = text
@@ -73,14 +85,17 @@ def layout_caption(text: str, width: int, height: int, fontsize: int, style: dic
             wrapped = "\n".join(chars[:int(style.get("max_lines", 2))])
         bw, bh = _measure(font, wrapped, stroke)
         if bw <= avail_w and bh <= avail_h:
-            x = max(rect["left"], min(rect["right"] - bw, (width - bw) // 2))
+            x = max(rect["left"] + pad_x, min(rect["right"] - pad_x - bw, (width - bw) // 2))
             # Keep the established lower-third feeling, but clamp to safe area.
             desired = round(height * (float(center_y) if center_y is not None else .65) - bh / 2)
-            y = max(rect["top"], min(rect["bottom"] - bh, desired))
+            y = max(rect["top"] + pad_y, min(rect["bottom"] - pad_y - bh, desired))
             return {"text": wrapped, "fontsize": size, "x": x, "y": y,
-                    "box": {"left": x, "top": y, "right": x + bw, "bottom": y + bh}, "safe": rect}
+                    "text_box": {"left": x, "top": y, "right": x + bw, "bottom": y + bh},
+                    "box": {"left": x - pad_x, "top": y - pad_y, "right": x + bw + pad_x, "bottom": y + bh + pad_y}, "safe": rect}
     # At 8px, input necessarily fits after truncation; defensive clamp guarantees frame bounds.
     font = _font(style, 8); wrapped = source[:1]
     bw, bh = _measure(font, wrapped, stroke)
-    return {"text": wrapped, "fontsize": 8, "x": rect["left"], "y": rect["top"],
-            "box": {"left": rect["left"], "top": rect["top"], "right": rect["left"] + bw, "bottom": rect["top"] + bh}, "safe": rect}
+    x, y = rect["left"] + pad_x, rect["top"] + pad_y
+    return {"text": wrapped, "fontsize": 8, "x": x, "y": y,
+            "text_box": {"left": x, "top": y, "right": x + bw, "bottom": y + bh},
+            "box": {"left": x - pad_x, "top": y - pad_y, "right": x + bw + pad_x, "bottom": y + bh + pad_y}, "safe": rect}

@@ -132,17 +132,21 @@ def _pill(im, cx, cy, text, font, fill, scale=1.0, text_fill="#FFFFFF", alpha=1.
     td = ImageDraw.Draw(tile)
     td.rounded_rectangle((20, 20, 20 + W, 20 + H), radius=H // 2, fill=(*_rgb(fill), 255))
     td.text((20 + W / 2, 20 + H / 2), text, font=font, fill=text_fill, anchor="mm")
+    # Pop animations may overshoot. Clamp the *whole rendered tile* before
+    # rounding coordinates so a long label can never be cut by the frame.
+    scale = min(scale, (im.width * (1 - 2 * SAFE_X)) / tile.width, (im.height * .96) / tile.height)
     if scale != 1.0:
-        tile = tile.resize((max(1, int(tile.width * scale)), max(1, int(tile.height * scale))), Image.LANCZOS)
+        tile = tile.resize((max(1, round(tile.width * scale)), max(1, round(tile.height * scale))), Image.LANCZOS)
     if alpha < 1:
         a = tile.getchannel("A").point(lambda v: int(v * alpha))
         tile.putalpha(a)
-    x, y = int(cx - tile.width / 2), int(cy - tile.height / 2)
+    x = round(min(max(cx - tile.width / 2, 0), im.width - tile.width))
+    y = round(min(max(cy - tile.height / 2, 0), im.height - tile.height))
     if glow:
         from PIL import ImageFilter
         gl = Image.new("RGBA", tile.size, (*_rgb(fill), 0))
         gl.putalpha(tile.getchannel("A").point(lambda v: int(v * 0.6)))
-        gl = gl.filter(ImageFilter.GaussianBlur(18 * scale))
+        gl = gl.filter(ImageFilter.GaussianBlur(max(1, round(18 * scale))))
         im.paste(gl, (x, y), gl)
     im.paste(tile, (x, y), tile)
     return (x, y, x + tile.width, y + tile.height)
@@ -404,7 +408,7 @@ def end_card(logo, duration, out, *, icon=None, headline="Become a morning perso
         if sp > 0 and sub:
             layer = im.convert("RGBA")
             d = ImageDraw.Draw(layer)
-            d.text((w / 2, y + w * 0.14), sub, font=_font(w * 0.038, "semi"), fill=(220, 216, 240, int(230 * sp)), anchor="mm")
+            d.text((w / 2, y + w * 0.14), sub, font=_fit_font(sub, int(w * (1 - 2 * SAFE_X)), int(w * 0.038), "semi"), fill=(220, 216, 240, int(230 * sp)), anchor="mm")
             im = layer.convert("RGB")
         return im
     return render(duration, out, frame, resolution_)

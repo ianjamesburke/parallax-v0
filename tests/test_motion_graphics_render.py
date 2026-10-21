@@ -7,6 +7,7 @@ import pytest
 from PIL import Image
 
 from parallax import motion_graphics as mg
+from parallax.assembly import _zoom_filter
 
 RES = "270x480"
 
@@ -66,3 +67,22 @@ def test_rejected_voiceover_dir_env(monkeypatch, tmp_path):
     assert "PARALLAX_REJECT_DIR" in src
     cli = Path(__import__("parallax.cli._audio", fromlist=["x"]).__file__).read_text()
     assert 'setdefault("PARALLAX_REJECT_DIR", str(out_path.parent))' in cli
+
+
+def test_ken_burns_filter_uses_target_width_not_a_hard_coded_1080_crop():
+    """Non-1080 graphics must retain a centered, continuous crop path."""
+    vf = _zoom_filter("in", 1.15, 2.0, "720", "1280")
+    assert "1080" not in vf
+    assert "(iw-720)/2" in vf
+    assert "eval=frame" in vf
+
+
+def test_pill_clamps_animated_long_text_inside_frame():
+    from PIL import Image
+    im = Image.new("RGB", (270, 480), "black")
+    bounds = mg._pill(im, 5, 10, "CORTISOL · C21H30O5 " * 3,
+                      mg._font(28), "#721CFF", scale=1.3)
+    assert bounds is not None
+    left, top, right, bottom = bounds
+    assert 0 <= left < right <= im.width
+    assert 0 <= top < bottom <= im.height
