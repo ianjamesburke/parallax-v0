@@ -116,7 +116,7 @@ _STAGES = [
             "json_fields": ["status", "package_dir", "html", "files", "gates", "produce_blocked", "blocked_by", "advisories", "next_steps"],
             "check_only": "Add --check (instead of writing a package) to preview status, gates, and advisories as JSON without writing files.",
             "writes": ["<folder>/storyboard-package/"],
-            "editorial_standard": "Style A editorial pages are standard. --pdf prints the same storyboard.html. For a finished cut, --from-video VIDEO --scenes SCENES uses ffmpeg cuts and extracted frames; scenes is YAML/JSON with title, optional version, and id/title scene entries (optional narration, on_screen_text, treatment, motion, start, end, frame_at, kicker).",
+            "editorial_standard": "Style A editorial pages are standard. HTML is always written; --pdf is opt-in and needs Chrome/Chromium or `uv pip install playwright && playwright install chromium`. For a finished cut, --from-video VIDEO --scenes SCENES uses ffmpeg cuts and extracted frames; scenes is YAML/JSON with title, optional version, and id/title scene entries (optional narration, on_screen_text, treatment, motion, start, end, frame_at, kicker). Quote IDs such as \"00\". Use --cut-threshold to tune cut detection; after every review round edit scenes and re-run the command recorded in handoff.json.",
         }],
         "preconditions": ["brief validates"],
         "outputs": ["storyboard-package/handoff.json", "storyboard-package/storyboard.html"],

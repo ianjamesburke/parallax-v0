@@ -7,6 +7,7 @@ from io import BytesIO
 from pathlib import Path
 import math
 import os
+from datetime import date
 from urllib.parse import quote
 
 import re
@@ -305,7 +306,8 @@ def _gates_html(review: dict) -> str:
     )
 
 
-def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_base: str | Path | None = None) -> str:
+def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_base: str | Path | None = None,
+                      source_video: dict | None = None) -> str:
     """Render the print-first editorial storyboard standard (one scene/page)."""
     root = Path(folder).expanduser().resolve()
     base = Path(link_base).expanduser().resolve() if link_base else None
@@ -314,13 +316,16 @@ def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_ba
     timeline, timing_basis, supplied_timing = review["timeline"], review["timing_basis"], review["supplied_timing"]
     pacing = review["pacing"]
     total = float(timeline[-1]["end_s"]) if timeline else 0.0
+    today = date.today().isoformat()
     def clock(value: float) -> str:
         minutes, seconds = divmod(value, 60)
         return f"{int(minutes)}:{seconds:04.1f}"
     pages: list[str] = []
     for position, scene in enumerate(brief.script.scenes, start=1):
         kind = scene.resolved_scene_type
-        title = kind.replace("_", " ").title()
+        scene_id = scene.storyboard_id or f"{scene.index:02d}"
+        title = scene.storyboard_title or scene.prompt
+        kicker = scene.storyboard_kicker or scene.storyboard_treatment or kind.replace("_", " ").title()
         words = len(re.sub(r"\[[^\]]*\]", "", scene.vo_text).split())
         timing = timeline[position - 1]
         duration = float(timing["end_s"]) - float(timing["start_s"])
@@ -338,17 +343,17 @@ def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_ba
         start, end = float(timing["start_s"]), float(timing["end_s"])
         left = 100 * start / total if total else 0
         width = max(.5, 100 * duration / total) if total else 100
-        treatment = escape(scene.prompt)
-        motion = f' {escape(scene.motion_prompt)}' if scene.motion_prompt else ''
+        treatment = escape(scene.storyboard_treatment or scene.prompt)
+        motion = f' — {escape(scene.motion_prompt)}' if scene.motion_prompt else ''
         pages.append(f'''<article class="scene-page" id="scene-{scene.index}">
-{image}<div class="scene-copy"><div class="kicker">SCENE {scene.index:02d} · {escape(title)}</div><h2>{escape(scene.prompt)}</h2>
+{image}<div class="scene-copy"><div class="kicker">SCENE {escape(scene_id)} · {escape(kicker)}</div><h2>{escape(title)}</h2>
 <div class="label">Narration</div><p class="narration">“{escape(scene.vo_text)}”</p>
 <div class="label">On-screen text</div><p class="copy-value">{escape(scene.on_screen_text or '—')}</p>
 <div class="label">Timing</div><p class="copy-value">{clock(start)} – {clock(end)} · {duration:.1f} s</p>
-<div class="label">Treatment</div><p class="copy-value treatment"><strong>{treatment}</strong>{motion}</p>{note_html}</div>
+<div class="label">Treatment</div><p class="copy-value treatment"><strong>{treatment}.</strong>{motion}</p>{note_html}</div>
 <div class="position"><div class="position-track"><span class="position-active" style="left:{left:.3f}%;width:{width:.3f}%"></span></div><div class="position-labels"><span>0:00</span><span>{clock(total)}</span></div></div>
-<div class="footer"><span>{escape(concept_name)} · {escape(brief.concept_id or 'v1')} · Storyboard</span><span>Scene {scene.index:02d} · page {position + 1} of {len(brief.script.scenes) + 1}</span></div></article>''')
-    table_rows = ''.join(f'<tr><td>{s.index:02d}</td><td>{escape(s.prompt)}</td><td>{escape(s.motion_prompt or s.resolved_scene_type.replace("_", " ").title())}</td><td>{clock(float(t["start_s"]))} – {clock(float(t["end_s"]))}</td><td>{float(t["end_s"])-float(t["start_s"]):.1f} s</td></tr>' for s, t in zip(brief.script.scenes, timeline))
+<div class="footer"><span>{escape(concept_name)} · {escape(brief.concept_id or 'v1')} · Storyboard · {today}</span><span>Scene {escape(scene_id)} · page {position + 1} of {len(brief.script.scenes) + 1}</span></div></article>''')
+    table_rows = ''.join(f'<tr><td>{escape(s.storyboard_id or f"{s.index:02d}")}</td><td>{escape(s.storyboard_title or s.prompt)}</td><td>{escape(s.storyboard_treatment or s.prompt)}</td><td>{clock(float(t["start_s"]))} – {clock(float(t["end_s"]))}</td><td>{float(t["end_s"])-float(t["start_s"]):.1f} s</td></tr>' for s, t in zip(brief.script.scenes, timeline))
     notes = [a["message"] for a in review["variety"]] + [w["message"] for w in pacing["warnings"]]
     notes += [g["question"] for g in review["gates"]]
     appendix = ('<section class="appendix"><h2>Review notes</h2><ul>' + ''.join(f'<li>{escape(n)}</li>' for n in notes) + '</ul></section>') if notes else ''
@@ -364,6 +369,6 @@ def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_ba
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(concept_title)} · Storyboard</title><style>{_STYLE}</style></head><body><main>
-<section class="cover"><div><div class="kicker">Parallax editorial storyboard</div><h1>{escape(concept_name)} — Storyboard</h1><h1 style="display:none">{escape(concept_name)}</h1>{'<h2 style="display:none">Opening headline</h2>' if brief.headline else ''}<p class="cover-meta">{escape(brief.concept_id or 'v1')} · {len(brief.script.scenes)} scenes · {clock(total)} runtime{' · Supplied timeline: ' + format(total, '.2f') + 's' if supplied_timing else ''}</p></div><table><thead><tr><th>#</th><th>Scene</th><th>Treatment</th><th>Interval</th><th>Duration</th></tr></thead><tbody>{table_rows}</tbody></table><div class="footer"><span>{escape(concept_name)} · {escape(brief.concept_id or 'v1')} · Storyboard</span><span>Cover · page 1 of {len(brief.script.scenes) + 1}</span></div></section>
+<section class="cover"><div><div class="kicker">Parallax editorial storyboard</div><h1>{escape(concept_name)} — Storyboard</h1><h1 style="display:none">{escape(concept_name)}</h1>{'<h2 style="display:none">Opening headline</h2>' if brief.headline else ''}<p class="cover-meta">{escape(brief.concept_id or 'v1')} · {len(brief.script.scenes)} scenes · {clock(total)} runtime · {today}{' · Supplied timeline: ' + format(total, '.2f') + 's' if supplied_timing and not source_video else ''}{' · Source video: ' + format(float(source_video['duration_s']), '.2f') + 's' if source_video else ''}</p></div><table><thead><tr><th>#</th><th>Scene</th><th>Treatment</th><th>Interval</th><th>Duration</th></tr></thead><tbody>{table_rows}</tbody></table><div class="footer"><span>{escape(concept_name)} · {escape(brief.concept_id or 'v1')} · Storyboard · {today}</span><span>Cover · page 1 of {len(brief.script.scenes) + 1}</span></div></section>
 {''.join(pages)}{appendix}{compatibility}
 </main></body></html>'''

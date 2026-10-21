@@ -86,7 +86,7 @@ def _storyboard_cmd(
     scenes: Optional[str] = typer.Option(None, "--scenes", help="Standalone YAML/JSON scene metadata for --from-video."),
     cut_threshold: float = typer.Option(.25, "--cut-threshold", help="ffmpeg scene-cut threshold for --from-video."),
     package_dir: Optional[str] = typer.Option(None, "--package-dir", help="Package output directory (default: <folder>/storyboard-package)."),
-    pdf: bool = typer.Option(True, "--pdf/--no-pdf", help="Render a printable PDF of the storyboard if a headless browser is available."),
+    pdf: bool = typer.Option(False, "--pdf/--no-pdf", help="Render a printable PDF of the storyboard (requires Chrome/Chromium or Playwright Chromium)."),
     check: bool = typer.Option(False, "--check", help="Print the status, open gates, and advisories as JSON without writing a package."),
     as_json: bool = typer.Option(False, "--json", help="Print the handoff manifest as JSON: status, open reference gates with choices and resolving commands, advisories."),
 ) -> int:

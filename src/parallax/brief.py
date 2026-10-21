@@ -141,6 +141,12 @@ class BriefScene(BaseModel):
     clip_path: str | None = None  # reusable locally rendered or previously generated clip
     on_screen_text: str | None = None  # storyboard copy; not automatically burned into video
     regenerate: bool = False  # when true, clears locks on produce and archives the previous version to parallax/assets/versions/
+    # Presentation-only fields used by an imported finished-cut storyboard.  They
+    # deliberately do not participate in planning or production.
+    storyboard_id: str | None = None
+    storyboard_title: str | None = None
+    storyboard_kicker: str | None = None
+    storyboard_treatment: str | None = None
 
     @model_validator(mode="before")
     @classmethod

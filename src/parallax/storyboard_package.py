@@ -213,7 +213,10 @@ def _produce_block(review: dict, missing: list[str]) -> dict:
     return {"produce_blocked": bool(blocked_by), "blocked_by": blocked_by}
 
 
-def _next_steps(gates: list[dict], folder: str, brief_path: str) -> list[dict]:
+def _next_steps(gates: list[dict], folder: str, brief_path: str, rerun_command: str | None = None) -> list[dict]:
+    if rerun_command:
+        return [{"step": "human_review", "detail": "The human reviews storyboard.html and requests changes if needed."},
+                {"step": "rerun_after_review", "command": rerun_command}]
     if _blocking(gates):
         return [{"step": "answer_gates", "detail": "Ask the human each open gate question, run the chosen choice command, then re-run `parallax storyboard`."}]
     steps = [{"step": "human_review", "detail": "The human reviews storyboard.html and approves or requests changes. Approval is not recorded by the CLI."}]
@@ -230,7 +233,7 @@ def _load_brief(brief_path: Path) -> Brief:
 
 
 def _manifest(brief: Brief, review: dict, files: dict[str, str], contact: list[int], missing: list[str],
-              folder: str, brief_path: str) -> dict:
+              folder: str, brief_path: str, rerun_command: str | None = None) -> dict:
     timeline = review["timeline"]
     block = _produce_block(review, missing)
     return {
@@ -252,14 +255,15 @@ def _manifest(brief: Brief, review: dict, files: dict[str, str], contact: list[i
         "gates": review["gates"],
         **block,
         "advisories": _advisories(review),
-        "next_steps": _next_steps(review["gates"], folder, brief_path),
+        "next_steps": _next_steps(review["gates"], folder, brief_path, rerun_command),
     }
 
 
 def write_package(brief_path: str | Path, folder: str | Path, package_dir: str | Path,
                   timing_path: str | Path | None = None, *, pdf: bool = True,
                   brief_override: Brief | None = None, frame_sources: list[tuple[str, Path]] | None = None,
-                  video_metadata: dict | None = None) -> dict:
+                  video_metadata: dict | None = None, standalone_scenes: dict | None = None,
+                  finished_cut: bool = False, rerun_command: str | None = None) -> dict:
     """Write the storyboard package and return its handoff manifest. Makes no provider calls."""
     brief_path = Path(brief_path).expanduser().resolve()
     root = Path(folder).expanduser().resolve()
@@ -267,8 +271,19 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
     if package.exists() and any(package.iterdir()) and not (package / "handoff.json").is_file():
         raise ValueError(f"{package} exists and is not a storyboard package (no handoff.json); choose an empty --package-dir")
     brief = brief_override or _load_brief(brief_path)
-    review = review_storyboard(brief, root, brief_path, _load_timing(timing_path) if timing_path else None)
+    supplied_timing = _load_timing(timing_path) if timing_path else None
+    review = (review_storyboard(brief, root, brief_path, supplied_timing) if not finished_cut else {
+        "timeline": supplied_timing or [], "timing_basis": "finished-cut video", "supplied_timing": True,
+        "pacing": {"warnings": []}, "gates": [], "variety": [],
+        "scene_advisories": {scene.index: [] for scene in brief.script.scenes},
+    })
     package.mkdir(parents=True, exist_ok=True)
+    # A finished-cut package has no authored brief or planning review. Remove
+    # artifacts from an earlier brief-based run in this same package so its
+    # visible contents tell the truth as well as its manifest does.
+    if finished_cut:
+        for name in ("brief.yaml", "script.md", "references.yaml", "qa-notes.md"):
+            (package / name).unlink(missing_ok=True)
     assets = package / "assets"
     missing = _copy_assets(brief, root, assets)
     missing = [p for p in missing if p not in {relative for relative, _ in frame_sources or []}]
@@ -279,19 +294,20 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
     timeline = review["timeline"]
     contact = _contact_sheet(brief, assets, package / "contact-sheet.jpg")
 
-    if brief_override:
+    if brief_override and not finished_cut:
         (package / "brief.yaml").write_text(_dump(brief.model_dump(exclude_none=True)), encoding="utf-8")
-    else:
+    elif not brief_override:
         (package / "brief.yaml").write_bytes(brief_path.read_bytes())
-    (package / "script.md").write_text(_script_md(brief), encoding="utf-8")
-    (package / "references.yaml").write_text(_dump({
+    if not finished_cut:
+        (package / "script.md").write_text(_script_md(brief), encoding="utf-8")
+        (package / "references.yaml").write_text(_dump({
         "asset_root": "assets",
         "review_status_note": "review_status is set to approved by editing brief.yaml after the human accepts the asset. The CLI never approves.",
         "provided": [{**a.model_dump(exclude_none=True), "present": a.path not in missing} for a in brief.assets.provided],
         "decisions": [d.model_dump() for d in brief.reference_decisions],
         "open_gates": [g["id"] for g in review["gates"]],
-    }), encoding="utf-8")
-    (package / "scenes.yaml").write_text(_dump({
+        }), encoding="utf-8")
+    scenes_document = standalone_scenes or {
         "asset_root": "assets",
         "timing_basis": review["timing_basis"],
         "scenes": [
@@ -299,11 +315,12 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
              "start_s": round(float(t["start_s"]), 3), "end_s": round(float(t["end_s"]), 3)}
             for scene, t in zip(brief.script.scenes, timeline)
         ],
-    }), encoding="utf-8")
+    }
+    (package / "scenes.yaml").write_text(_dump(scenes_document), encoding="utf-8")
 
     # Files on disk carry placeholders instead of this machine's paths; the returned manifest has exact commands.
-    portable = {**review, "gates": open_gates(brief, FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER)}
-    (package / "storyboard.html").write_text(render_storyboard(brief, assets, portable, link_base=package), encoding="utf-8")
+    portable = {**review, "gates": ([] if finished_cut else open_gates(brief, FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER))}
+    (package / "storyboard.html").write_text(render_storyboard(brief, assets, portable, link_base=package, source_video=video_metadata), encoding="utf-8")
     pdf_created = False
     if pdf:
         pdf_created = render_pdf(package / "storyboard.html", package / "storyboard.pdf")
@@ -315,13 +332,16 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
     files = {
         name: role for name, role in _FILES.items()
         if (name != "contact-sheet.jpg" or contact) and (name != "storyboard.pdf" or pdf_created)
+        and (not finished_cut or name not in {"brief.yaml", "script.md", "references.yaml", "qa-notes.md"})
     }
-    on_disk = _manifest(brief, portable, files, contact, missing, FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER)
+    portable_rerun = rerun_command.replace(str(root), FOLDER_PLACEHOLDER) if rerun_command else None
+    on_disk = _manifest(brief, portable, files, contact, missing, FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER, portable_rerun)
     if video_metadata:
         on_disk["source_video"] = video_metadata
-    (package / "qa-notes.md").write_text(_qa_notes(on_disk), encoding="utf-8")
+    if not finished_cut or on_disk["gates"] or on_disk["advisories"] or missing:
+        (package / "qa-notes.md").write_text(_qa_notes(on_disk), encoding="utf-8")
     (package / "handoff.json").write_text(json.dumps(on_disk, indent=2) + "\n", encoding="utf-8")
-    result = _manifest(brief, review, files, contact, missing, str(root), str(brief_path))
+    result = _manifest(brief, review, files, contact, missing, str(root), str(brief_path), rerun_command)
     if video_metadata:
         result["source_video"] = video_metadata
     return result
@@ -395,14 +415,23 @@ def write_package_from_video(video: str | Path, scenes_path: str | Path, folder:
         at = float(item.get("frame_at", (start + end) / 2))
         _run(["ffmpeg", "-y", "-ss", f"{at:.4f}", "-i", str(video_path), "-frames:v", "1", "-q:v", "2", str(target)])
         sources.append((relative, target))
-        generated.append({"index": number, "shot_type": "broll", "scene_type": "still", "vo_text": item.get("narration", ""), "prompt": item.get("treatment", item["title"]), "motion_prompt": item.get("motion"), "on_screen_text": item.get("on_screen_text"), "still_path": relative})
+        generated.append({"index": number, "shot_type": "broll", "scene_type": "still", "vo_text": item.get("narration", ""), "prompt": item.get("treatment", item["title"]), "motion_prompt": item.get("motion"), "on_screen_text": item.get("on_screen_text"), "still_path": relative, "storyboard_id": ident, "storyboard_title": str(item["title"]), "storyboard_kicker": item.get("kicker"), "storyboard_treatment": item.get("treatment", item["title"])})
     brief = Brief.model_validate({"goal": data.get("title", "Finished video"), "concept_name": data.get("title", "Finished video"), "concept_id": data.get("version"), "reference_decisions": [{"gate": "editorial-reference", "choice": "no_reference", "scenes": list(range(1, len(generated) + 1)), "note": "Frames extracted from finished video"}], "script": {"scenes": generated}})
     timeline = [{"index": i, "start_s": start, "end_s": end} for i, (start, end) in enumerate(intervals, 1)]
     timing_file = temp / "timing.yaml"; timing_file.write_text(_dump({"scenes": timeline}), encoding="utf-8")
     digest = hashlib.sha256(video_path.read_bytes()).hexdigest()
     meta = {"duration_s": round(duration, 3), "sha256": digest, "size": video_path.stat().st_size, "cut_threshold": cut_threshold, "detected_cuts_s": cuts, "boundary_notes": qa}
+    normalized = {key: value for key, value in data.items() if key != "scenes"}
+    normalized["source_video"] = {"duration_s": round(duration, 3), "cut_threshold": cut_threshold}
+    normalized["scenes"] = [
+        {**item, "id": str(item["id"]), "start": round(start, 3), "end": round(end, 3),
+         "frame": relative}
+        for item, (start, end), (relative, _) in zip(entries, intervals, sources)
+    ]
+    rerun = f"parallax storyboard --folder {root} --from-video {video_path} --scenes {Path(scenes_path).expanduser().resolve()} --cut-threshold {cut_threshold} --pdf"
     try:
-        return write_package(video_path, root, package, timing_file, pdf=pdf, brief_override=brief, frame_sources=sources, video_metadata=meta)
+        return write_package(video_path, root, package, timing_file, pdf=pdf, brief_override=brief, frame_sources=sources,
+                             video_metadata=meta, standalone_scenes=normalized, finished_cut=True, rerun_command=rerun)
     finally:
         shutil.rmtree(temp, ignore_errors=True)
 
