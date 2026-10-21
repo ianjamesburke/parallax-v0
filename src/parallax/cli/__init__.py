@@ -11,7 +11,10 @@ from . import _audio, _guide, _image, _log, _meta, _models, _produce, _reference
 
 app = typer.Typer(
     name="parallax",
-    help="Agentic creative production CLI.",
+    help=("Agentic creative production CLI.\n\n"
+          "Agents: start with `parallax guide` (workflow map + topics). "
+          "Single shot with start/end frames: `parallax guide single_shot`. "
+          "Character design first: `parallax guide character_first`."),
     no_args_is_help=True,
 )
 
@@ -75,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
         # shared protocol (`show`, `exit_code`) rather than a click class.
         if hasattr(e, "show") and hasattr(e, "exit_code"):
             e.show(file=sys.stderr)
+            print("Agents: start with `parallax guide`; for one move use `parallax guide single_shot`.", file=sys.stderr)
             # Bare sub-group invocation prints help: success
             return 0 if type(e).__name__ == "NoArgsIsHelpError" else e.exit_code
         import logging

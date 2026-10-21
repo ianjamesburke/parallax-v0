@@ -377,7 +377,9 @@ def test_clip_estimate_uses_billed_duration_not_scene_length():
     plan = _make_plan([{"index": 0, "animate": True, "duration_s": 3.0, "still_path": "s.png"}], video_model="seedance")
     clip = [s for s in compute_preflight(plan).scenes if s.kind == "clip"][0]
     assert clip.duration_s == 4.0
-    assert clip.cost_usd == pytest.approx(resolve("seedance", kind="video").cost_usd * 4)
+    assert clip.cost_usd == pytest.approx(
+        resolve("seedance", kind="video").cost_usd * 4 * 2.1473
+    )
 
 
 def test_clip_estimate_defaults_to_default_clip_duration():
@@ -385,6 +387,21 @@ def test_clip_estimate_defaults_to_default_clip_duration():
     plan = _make_plan([{"index": 0, "animate": True, "still_path": "s.png"}], video_model="seedance")
     clip = [s for s in compute_preflight(plan).scenes if s.kind == "clip"][0]
     assert clip.duration_s == DEFAULT_CLIP_DURATION_S
+
+
+def test_image_conditioned_clip_estimate_uses_catalog_measured_multiplier():
+    """2026-10-20 evidence: Seedance start-frame-only and start+end cost alike."""
+    plan = _make_plan([{"index": 0, "animate": True, "duration_s": 5,
+                        "still_path": "start.png", "end_frame_path": "end.png"}], video_model="draft")
+    clip = [s for s in compute_preflight(plan).scenes if s.kind == "clip"][0]
+    assert clip.cost_usd == pytest.approx(0.45738, rel=0.01)
+
+
+def test_start_frame_only_clip_estimate_uses_catalog_measured_multiplier():
+    plan = _make_plan([{"index": 0, "animate": True, "duration_s": 4,
+                        "still_path": "start.png"}], video_model="draft")
+    clip = [s for s in compute_preflight(plan).scenes if s.kind == "clip"][0]
+    assert clip.cost_usd == pytest.approx(0.3667, rel=0.01)
 
 
 def test_voiceover_cost_scales_with_characters():
@@ -436,4 +453,3 @@ def test_still_with_reference_images_includes_vision_estimate():
     base = resolve("mid", kind="image").cost_usd
     assert result.scenes[0].cost_usd == pytest.approx(base)
     assert result.scenes[1].cost_usd == pytest.approx(base + 0.01)
-

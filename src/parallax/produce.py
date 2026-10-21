@@ -396,6 +396,9 @@ def run_plan(
                 traceback=traceback.format_exc(),
             )
             runlog.end_run(status="error")
+            # Preserve recovery context for the CLI while retaining the original
+            # exception type and traceback for library callers and run.log.
+            setattr(_exc, "parallax_run_id", run_id)
             raise
     finally:
         _tmo.reset(_tmo_token)

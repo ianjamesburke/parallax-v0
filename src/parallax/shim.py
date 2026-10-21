@@ -211,7 +211,7 @@ def render_mock_tts(
     text: str,
     voice: str,
     out_dir: Path | None = None,
-    wpm: float = 165.0,
+    wpm: float = 180.0,
 ) -> tuple[Path, list[dict[str, Any]], float]:
     """Render a sine-wave WAV with wpm-derived duration. Returns (path, words, total_s).
 

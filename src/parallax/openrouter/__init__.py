@@ -96,6 +96,7 @@ from .tts import (  # noqa: F401
 from .video import (  # noqa: F401
     _VIDEO_POLL_TIMEOUT_S,
     _video_real,
+    resume_video_job,
 )
 
 from .retry import (  # noqa: F401
@@ -155,6 +156,7 @@ def _dispatch(
     test_call,
     prompt: str,
     out_dir: Path | None,
+    allow_fallback: bool = False,
 ) -> Path:
     spec0 = resolve(alias, kind=kind)  # validates kind early
     if is_test_mode():
@@ -162,13 +164,13 @@ def _dispatch(
         path = test_call(spec0)
         _record_usage(spec0, prompt, str(path), duration_ms=0, cost_usd=0.0, test=True, cost_source="test")
         return path
-    return _with_fallback(kind=kind, alias=alias, primary_call=primary_call)
+    return _with_fallback(kind=kind, alias=alias, primary_call=primary_call, allow_fallback=allow_fallback)
 
 
-def _with_fallback(*, kind: Kind, alias: str, primary_call):
+def _with_fallback(*, kind: Kind, alias: str, primary_call, allow_fallback: bool = False):
     chain = resolve_chain(alias, kind=kind)
     last_error: Exception | None = None
-    for spec in chain:
+    for pos, spec in enumerate(chain):
         try:
             result = _call_with_transient_retry(kind=kind, spec=spec, primary_call=primary_call)
             return result
@@ -178,7 +180,12 @@ def _with_fallback(*, kind: Kind, alias: str, primary_call):
             raise
         except Exception as e:
             last_error = e
-            log.warning("%s alias %s failed (%s); falling back", kind, spec.alias, type(e).__name__)
+            nxt = chain[pos + 1] if pos + 1 < len(chain) else None
+            if nxt and (nxt.cost_usd > spec.cost_usd or (kind == "video" and spec.end_frame and not nxt.end_frame)) and not allow_fallback:
+                body = getattr(getattr(e, "response", None), "text", "")[:500]
+                raise RuntimeError(f"{kind} model {spec.alias} failed ({type(e).__name__}: {e}; provider body: {body}); skipped fallback {nxt.alias} because it is pricier or lacks requested capability. Re-run with --allow-fallback / allow_fallback: true.") from e
+            if nxt:
+                log.warning("WARNING: %s model %s failed; substituting %s ($%.4f/unit)", kind, spec.alias, nxt.alias, nxt.cost_usd)
     # Exhausted chain
     raise RuntimeError(
         f"openrouter: all fallbacks exhausted for {kind} alias {alias!r}: "
@@ -268,6 +275,7 @@ def generate_image(
     out_file: Path | None = None,
     size: str | None = None,
     aspect_ratio: str | None = None,
+    allow_fallback: bool = False,
 ) -> Path:
     """Generate an image via `/api/v1/images`. Output size is not chosen here: the
     catalog's `request:` params (quality / resolution) set it, to the smallest
@@ -295,6 +303,7 @@ def generate_image(
         ),
         prompt=prompt,
         out_dir=out_dir,
+        allow_fallback=allow_fallback,
     )
 
 
@@ -309,6 +318,8 @@ def generate_video(
     out_dir: Path | None = None,
     size: str | None = None,
     aspect_ratio: str | None = None,
+    allow_fallback: bool = False,
+    on_submit=None,
 ) -> Path:
     """Generate a video. `size` is a passthrough like '1280x720' / '720x1280';
     `aspect_ratio` is e.g. '9:16'. Each video model has its own
@@ -324,8 +335,25 @@ def generate_video(
     when `image_path` is set, the model uses frame_images and ignores
     input_references. Only pass input_references when there is no image_path.
     """
+    spec = resolve(alias, kind="video")
+    if end_image_path is not None:
+        if image_path is None:
+            raise ValueError("--end requires --start")
+        if not spec.end_frame:
+            from ..models import VIDEO_MODELS
+            supported = ", ".join(sorted(s.alias for s in VIDEO_MODELS.values() if s.end_frame))
+            raise ValueError(f"Video model {alias!r} does not support end frames. Choose one of: {supported}.")
     from ..settings import _ASPECT_TO_RESOLUTION as _ASPECT_RES
     test_resolution = size or _ASPECT_RES.get(aspect_ratio or "", "720x1280")
+    # Mock image-to-video keeps the start-frame geometry, making contact-sheet
+    # and assembly iteration representative without touching a provider.
+    if is_test_mode() and image_path is not None and not size:
+        try:
+            from PIL import Image
+            with Image.open(image_path) as _im:
+                test_resolution = f"{_im.width}x{_im.height}"
+        except Exception:
+            pass
     return _dispatch(
         kind="video",
         alias=alias,
@@ -334,13 +362,15 @@ def generate_video(
             size=size, aspect_ratio=aspect_ratio,
             end_image_path=end_image_path,
             input_references=input_references,
+            on_submit=on_submit,
         ),
         test_call=lambda spec: render_mock_video(
-            prompt=prompt, model=spec.alias, duration_s=duration_s, out_dir=out_dir,
+            prompt=f"MOCK · {spec.alias} · {prompt[:40]}", model=spec.alias, duration_s=duration_s, out_dir=out_dir,
             resolution=test_resolution,
         ),
         prompt=prompt,
         out_dir=out_dir,
+        allow_fallback=allow_fallback,
     )
 
 

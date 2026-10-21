@@ -209,16 +209,22 @@ def _tts_real_speech(
     out_dir.mkdir(parents=True, exist_ok=True)
     _check_key()
 
+    is_seed = "seed-audio" in model
     body = {
         "model": model,
         "input": text,
-        "voice": voice,
-        "response_format": "pcm",
+        "response_format": "mp3" if is_seed else "pcm",
     }
+    if not is_seed:
+        body["voice"] = voice
 
     resp = _post("/audio/speech", body, timeout=120.0)
     _raise_for_credits_or_status(resp)
     note_generation_id(resp.headers.get("x-generation-id"))
+    try:
+        note_billed_cost(resp.json())
+    except Exception:
+        pass
 
     if not resp.content:
         raise RuntimeError(
@@ -226,14 +232,20 @@ def _tts_real_speech(
         )
 
     safe_voice = "".join(c for c in voice if c.isalnum() or c in ("-", "_")).strip() or "voice"
-    wav_path = out_dir / f"openrouter_tts_{safe_voice}_{int(_time.time()*1000)}.wav"
-    with wave.open(str(wav_path), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(_TTS_PCM_BYTES_PER_SAMPLE)
-        w.setframerate(_TTS_PCM_SAMPLE_RATE)
-        w.writeframes(resp.content)
-
-    duration_s = len(resp.content) / (_TTS_PCM_SAMPLE_RATE * _TTS_PCM_BYTES_PER_SAMPLE)
+    if is_seed:
+        mp3_path = out_dir / f"openrouter_tts_seed_{int(_time.time()*1000)}.mp3"
+        mp3_path.write_bytes(resp.content)
+        from ..ffmpeg_utils import probe_duration
+        duration_s = probe_duration(str(mp3_path))
+        wav_path = mp3_path
+    else:
+      wav_path = out_dir / f"openrouter_tts_{safe_voice}_{int(_time.time()*1000)}.wav"
+      with wave.open(str(wav_path), "wb") as w:
+          w.setnchannels(1)
+          w.setsampwidth(_TTS_PCM_BYTES_PER_SAMPLE)
+          w.setframerate(_TTS_PCM_SAMPLE_RATE)
+          w.writeframes(resp.content)
+      duration_s = len(resp.content) / (_TTS_PCM_SAMPLE_RATE * _TTS_PCM_BYTES_PER_SAMPLE)
 
     # Forced alignment for word timestamps, same as chat_audio backend.
     try:

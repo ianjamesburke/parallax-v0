@@ -289,7 +289,9 @@ def audio_voiceover(
     voice_model: str = typer.Option("tts-mini", "--voice-model", help="TTS backend: tts-mini, tts-gemini, elevenlabs (default: tts-mini)."),
     speed: Optional[float] = typer.Option(None, "--speed", help="atempo multiplier applied after synthesis (e.g. 1.2 = 20% faster)."),
     style: Optional[str] = typer.Option(None, "--style", help="Delivery style preset: rapid_fire, fast, calm, natural."),
+    voice_prompt: Optional[str] = typer.Option(None, "--voice-prompt", help="Natural-language voice description (required for seed-audio)."),
     trim_pauses: bool = typer.Option(False, "--trim-pauses", help="Opt in to timestamp-based pause trimming. By default, preserve the provider's original audio."),
+    no_verify: bool = typer.Option(False, "--no-verify", help="Skip local transcript verification of synthesized speech."),
 ) -> int:
     """Synthesize speech. Spends money; prints the estimated cost first."""
     import shutil
@@ -314,6 +316,9 @@ def audio_voiceover(
     speed_applied = speed is not None and speed != 1.0
     raw_saved = None
 
+    import os as _os
+    # Rejected (paid) takes must survive the temp dir: keep them next to --out.
+    _os.environ.setdefault("PARALLAX_REJECT_DIR", str(out_path.parent))
     with tempfile.TemporaryDirectory() as tmp:
         result = generate_voiceover_dict(
             text=text_val,
@@ -322,6 +327,8 @@ def audio_voiceover(
             style=style,
             voice_model=voice_model,
             trim_pauses=trim_pauses,
+            verify=not no_verify,
+            voice_prompt=voice_prompt,
         )
         audio_src = _P(result["audio_path"])
         if trim_pauses or speed_applied:
@@ -345,7 +352,18 @@ def audio_voiceover(
         )
         if probe.stdout.strip():
             duration = float(probe.stdout.strip())
+    # Persist word timings next to the audio so `video captions --words` works without re-transcribing.
+    try:
+        import json as _json
+        k = float(speed) if speed_applied else 1.0
+        ws = [{**w, "start": round(w["start"] / k, 3), "end": round(w["end"] / k, 3)} for w in result.get("words") or []]
+        words_out = out_path.with_name(out_path.stem + ".words.json")
+        words_out.write_text(_json.dumps({"words": ws, "total_duration_s": duration}, indent=2))
+    except Exception:
+        words_out = None
     print(f"voiceover: {duration:.2f}s → {out_path}")
+    if words_out is not None:
+        print(f"  words: {words_out}")
     if trim_pauses:
         print("  pause trimming: enabled")
     elif speed_applied:

@@ -98,7 +98,7 @@ def test_image_real_posts_to_images_endpoint_with_catalog_request_params(monkeyp
 
 def test_image_real_rejects_unsupported_aspect(monkeypatch, tmp_path):
     monkeypatch.setattr(httpx, "post", lambda *a, **k: pytest.fail("must not call the API"))
-    with pytest.raises(RuntimeError, match="all fallbacks exhausted"):
+    with pytest.raises(RuntimeError, match="skipped fallback .*Re-run with --allow-fallback"):
         openrouter.generate_image("x", alias="draft", out_dir=tmp_path, aspect_ratio="21:9")
 
 
@@ -144,7 +144,7 @@ def test_image_real_raises_when_response_has_no_images(monkeypatch, tmp_path):
         return _FakeResponse(200, {"choices": [{"message": {}}]})
     monkeypatch.setattr(httpx, "post", fake_post)
 
-    with pytest.raises(RuntimeError, match="all fallbacks exhausted"):
+    with pytest.raises(RuntimeError, match="skipped fallback .*Re-run with --allow-fallback"):
         openrouter.generate_image("x", alias="draft", out_dir=tmp_path)
 
 
@@ -263,7 +263,7 @@ def test_video_real_raises_when_submit_returns_no_polling_url(monkeypatch, tmp_p
         return _FakeResponse(202, {"id": "x", "status": "pending"})  # missing polling_url
     monkeypatch.setattr(httpx, "post", fake_post)
 
-    with pytest.raises(RuntimeError, match="all fallbacks exhausted"):
+    with pytest.raises(RuntimeError, match="skipped fallback .*Re-run with --allow-fallback"):
         openrouter.generate_video("x", alias="seedance", duration_s=4, out_dir=tmp_path)
 
 
@@ -277,7 +277,7 @@ def test_video_real_raises_on_failed_status(monkeypatch, tmp_path):
     monkeypatch.setattr(httpx, "get", fake_get)
     monkeypatch.setattr(openrouter, "_VIDEO_POLL_INTERVAL_S", 0.0)
 
-    with pytest.raises(RuntimeError, match="all fallbacks exhausted"):
+    with pytest.raises(RuntimeError, match="skipped fallback .*Re-run with --allow-fallback"):
         openrouter.generate_video("x", alias="seedance", duration_s=4, out_dir=tmp_path)
 
 

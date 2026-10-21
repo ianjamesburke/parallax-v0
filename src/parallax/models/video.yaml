@@ -19,11 +19,17 @@
 # at assembly. The `size` sent comes from the plan's animate_resolution, so a model
 # whose live `supported_sizes` lacks it (e.g. veo-lite) needs `animate_resolution:
 # 720x1280` in the plan; the API rejects an unsupported size.
+# Seedance 2.0 Fast image-conditioned measurement (2026-10-20): 4 s 720x1280
+# clips with either a start frame only or start+end frames both billed $0.3667,
+# versus the base $0.1704 (2.1473x). The provider delivered 720p despite the
+# 480p default; use this multiplier for any image-conditioned request until
+# OpenRouter publishes a price card.
 
 - alias: draft
   model_id: openrouter/bytedance/seedance-2.0-fast
   tier: draft
   cost: 0.0426
+  image_conditioned_cost_multiplier: 2.1473
   unit: second
   description: "ByteDance Seedance 2.0 Fast at 480p. Measured $0.0426/s (4 s clip = $0.170, output 496x864). Token-priced, so higher resolutions cost more."
   fallback: mid
@@ -74,6 +80,7 @@
   model_id: openrouter/bytedance/seedance-2.0-fast
   tier: default
   cost: 0.0426
+  image_conditioned_cost_multiplier: 2.1473
   unit: second
   description: "ByteDance Seedance 2.0 Fast at 480p. Measured $0.0426/s."
   fallback: kling

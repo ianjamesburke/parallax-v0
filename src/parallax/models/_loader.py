@@ -57,6 +57,7 @@ def _to_spec(entry: dict[str, Any], kind: Kind) -> ModelSpec:
         request_params=dict(entry.get("request") or {}),
         native_size=caps.get("native_size") or None,
         durations=durations,
+        image_conditioned_cost_multiplier=float(entry.get("image_conditioned_cost_multiplier", 1.0)),
     )
 
 

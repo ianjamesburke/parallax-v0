@@ -13,8 +13,11 @@ PARALLAX_TEST_MODE.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
+import shutil
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from .ffmpeg_utils import run_ffmpeg
@@ -22,6 +25,8 @@ from .log import get_logger
 from .shim import is_test_mode, output_dir
 
 log = get_logger(__name__)
+
+SOCIAL_SEED_VOICE_PROMPT = "A fast documentary narrator revealing a secret: fast-paced social-media-ad delivery, rapid with minimal pauses between lines, highly expressive animated storyteller building intrigue, deep, low, warm, slightly gravelly male voice, punchy emphasis on key words."
 
 
 def apply_pronunciations(text: str, pronunciations: dict[str, str]) -> str:
@@ -59,6 +64,8 @@ def generate_voiceover_dict(
     voice_model: str = "tts-mini",
     pronunciations: dict[str, str] | None = None,
     trim_pauses: bool | float = True,
+    verify: bool = False,
+    voice_prompt: str | None = None,
 ) -> dict:
     """Generate voiceover and optionally cap overlong inter-word silences.
 
@@ -100,6 +107,8 @@ def generate_voiceover_dict(
     if pronunciations and tts_text != text:
         log.info("voiceover: applying %d pronunciation substitution(s)", len(pronunciations))
 
+    if voice_model == "seed-audio" and not voice_prompt:
+        raise ValueError("seed-audio requires a meaningful voice_prompt")
     if voice_model == "elevenlabs":
         from . import elevenlabs as _elevenlabs
         raw_path, words_with_ends, raw_audio_duration = _elevenlabs.generate_tts(
@@ -109,7 +118,7 @@ def generate_voiceover_dict(
         )
     else:
         raw_path, words_with_ends, raw_audio_duration = openrouter.generate_tts(
-            text=tts_text,
+            text=(f'{voice_prompt} He says: "{tts_text}"' if voice_model == "seed-audio" else tts_text),
             alias=voice_model,
             voice=voice,
             out_dir=dest,
@@ -117,6 +126,23 @@ def generate_voiceover_dict(
             style_hint=style_hint,
         )
 
+    if verify:
+        from .whisper_backend import transcribe_wav
+        heard = transcribe_wav(str(raw_path), label="TTS verification")
+        def norm(v: str) -> list[str]:
+            # modest number normalization catches 8/eight and 20%/twenty percent
+            v = re.sub(r"20%", "twenty percent", v, flags=re.I)
+            v = re.sub(r"\b8\b", "eight", v)
+            return re.findall(r"[a-z]+", v.lower())
+        wanted, got = norm(text), norm(" ".join(x["word"] for x in heard))
+        score = SequenceMatcher(None, wanted, got).ratio()
+        if score < .85 or len(got) > max(4, len(wanted) * 1.5):
+            keep = Path(os.environ.get("PARALLAX_REJECT_DIR") or dest)
+            keep.mkdir(parents=True, exist_ok=True)
+            rejected = keep / f"{Path(raw_path).stem}.rejected{Path(raw_path).suffix}"
+            shutil.move(str(raw_path), rejected)
+            excerpt = " ".join(x["word"] for x in heard[:30])
+            raise RuntimeError(f"TTS model did not read the script (word similarity {score:.2f}). Transcript: {excerpt!r}. Bad audio kept at {rejected}. Try dropping --style or another voice model; use --no-verify to override.")
     import shutil as _shutil
     raw_suffix = Path(raw_path).suffix or ".mp3"
     audio_path = dest / f"voiceover{raw_suffix}"
@@ -169,6 +195,7 @@ def generate_voiceover(
     voice_model: str = "tts-mini",
     pronunciations: dict[str, str] | None = None,
     trim_pauses: bool | float = True,
+    voice_prompt: str | None = None,
 ) -> str:
     """JSON-string wrapper around generate_voiceover_dict. Kept for CLI/external callers.
 
@@ -183,6 +210,8 @@ def generate_voiceover(
         voice_model=voice_model,
         pronunciations=pronunciations,
         trim_pauses=trim_pauses,
+        verify=False,  # legacy programmatic wrapper preserves its historical no-local-model contract
+        voice_prompt=voice_prompt,
     ))
 
 

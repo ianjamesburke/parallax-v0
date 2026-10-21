@@ -2,10 +2,81 @@
 
 Every fact here was checked against the code that enforces it (docs/skill-retirement.md lists
 the sources). Authored as data so an agent reads fields, not prose walls.
+
 """
 from __future__ import annotations
 
+from .models import VIDEO_MODELS
+
+
+def _end_frame_models() -> list[str]:
+    """Read end-frame capability from the catalog; never duplicate aliases here."""
+    return sorted(spec.alias for spec in VIDEO_MODELS.values() if spec.end_frame)
+
 TOPICS: dict[str, dict] = {
+    "brand": {
+        "summary": "For any product or app ad, collect real brand assets before making shots.",
+        "rules": ["First collect the official site, App Store lookup (`https://itunes.apple.com/lookup?id=<id>`) screenshotUrls/artworkUrl512, and an inline SVG logo where available; save each with its source URL.", "Use real app screens composited in local app-screen motion graphics—never AI-generate UI.", "Pass logo/screens as image refs only in shots that show the product, and finish on a brand CTA end card."],
+        "brand_shape": {"name":"RISE","logo":"brand/logo.png","logo_on_dark":"brand/logo-white.png","app_screens":["brand/screen01.jpg"],"colors":["#721CFF"],"font":"Montserrat","cta":"Try RISE free","sources":["https://example.com"]},
+        "commands": ["parallax video app-screen --screen brand/screen01.jpg --title 'Track the sleep you owe' --duration 4 --out app.mp4", "parallax video end-card --logo brand/logo-white.png --headline 'Become a morning person' --cta 'Try RISE free' --duration 3 --out end.mp4"],
+        "next": "assemble",
+    },
+    "motion_graphic": {
+        "summary": "Zero-spend, safe-area-aware local motion graphics. Use real product screens and brand colors.",
+        "commands": ["parallax video app-screen --screen shot.jpg --callout '6.3 HRS SLEEP DEBT' --highlight .1,.2,.5,.2 --duration 4 --out app.mp4", "parallax video diagram --preset clock-window --duration 3 --out clock.mp4", "parallax video end-card --logo logo.png --duration 3 --out end.mp4", "parallax video text-overlay --bg-color '#14102A' --text 'SLEEP DEBT' --duration 2 --out type.mp4"],
+        "brand_note": "For product shots use actual screenshots, never generated UI; complete the sequence with a branded CTA end card.", "next":"assemble",
+    },
+    "mock": {"summary":"Iterate structure, timing, and captions in PARALLAX_TEST_MODE=1, then rerun the same commands for real.", "next":"produce_loop"},
+    "voiceover": {"summary":"Seed Audio requires a natural-language voice_prompt. Social default: A fast documentary narrator revealing a secret: fast-paced social-media-ad delivery, rapid with minimal pauses between lines, highly expressive animated storyteller building intrigue, deep, low, warm, slightly gravelly male voice, punchy emphasis on key words.", "next":"assemble"},
+    "single_shot": {
+        "summary": "One camera move, using separate frozen start and end frames when the view, scale, or subject changes.",
+        "separate_stills": {
+            "when": "Make separate start and end stills for any viewpoint, scale, or subject change: overhead to pillow-level macro, pushing into an object, or a reveal.",
+            "commands": [
+                "parallax image generate \"<one frozen start moment>\" --aspect 9:16 --out START.png",
+                "parallax image generate \"<one frozen end moment>\" --aspect 9:16 --out END.png",
+            ],
+            "continuity": "Keep style and palette consistent. Use a character sheet as --ref only in stills where that character appears; drop a reference that carries the wrong material (for example papercraft when the shot needs a realistic human).",
+        },
+        "still_prompt_rule": "NEVER put a multi-step camera move in a still prompt: image models turn it into a comic/panel grid. Describe ONE frozen moment; put motion in the video prompt.",
+        "animate": {
+            "command": "parallax video animate --start START.png --end END.png --model <tier> --duration N --prompt \"<move>\" --out shot.mp4",
+            "end_frame_models": _end_frame_models(),
+            "default_note": "The default video model may not support end frames. With --end, Parallax fails before spending and names the supported models above.",
+        },
+        "video_prompt_layout": [
+            "Named move.", "Start state.", "Continuous motion.", "Settled end state.", "Tone, lighting, texture."
+        ],
+        "clip_scope": "One move per clip. Give a complex move more duration or split it into two clips.",
+        "audio": "Model-generated clip audio is stripped before assembly; do not depend on it.",
+        "wait": "animate can block for minutes with no output. Do not kill or retry a paid call; rerun the same command to resume/reuse saved work.",
+        "privacy_rejection": "If Seedance rejects an input image as a possible real person, hide faces or stylize it, or explicitly choose another model such as `--model kling` (pricier).",
+        "next": "asset_locking",
+    },
+    "assemble": {
+        "summary": "Zero-spend local finishing: concatenate clips/stills, voiceover, and safe captions without raw ffmpeg.",
+        "commands": [
+            "parallax video ken-burns --image still.png --duration 3 --move in --out clip.mp4",
+            "parallax video text-overlay --in still.png --text '+20%' --preset count-up --y .50 --size 96 --color '#ffffff' --resolution 1080x1920 --duration 3 --out graphic.mp4",
+            "parallax video assemble --shots shots.json --voice vo.wav --voice-offset 1 --words words.json --captions --caption-y .72 --report caption-boxes.json --resolution 1080x1920 --out final.mp4",
+            "# --shots shots.json also accepts clip {\"path\": \"clip.mp4\", \"trim_start\": 1.5, \"duration\": 2.0, \"speed\": 1.25}",
+            "parallax video captions --video final.mp4 --words words.json --report boxes.json --out captioned.mp4",
+        ],
+        "contract": "All commands use local ffmpeg only. text-overlay outputs a silent clip appropriate for scene_type: motion_graphic clip_path. Caption reports expose actual safe-area boxes.",
+        "social_ad_example": "9:16 social ad: shots.json starts with animated clips using trim_start and speed; after about 15 seconds use stills with move: pan-left/pan-right; insert the count-up graphic as a motion_graphic clip; then assemble at 1080x1920 with the delayed VO, --caption-y .72, and --report.",
+    },
+    "character_first": {
+        "summary": "For a new character-driven ad, lock an approved character sheet before storyboarding or generating production shots.",
+        "steps": [
+            {"step": 1, "do": "Get the user's character and style description."},
+            {"step": 2, "do": "Generate one 2x4 or 4x2 grid with eight clearly numbered, different character options.", "template": "An 8-panel 2x4 character design grid for <CHARACTER DESCRIPTION>, eight distinct <STYLE> designs. Print a clear number 1–8 inside each panel; no extra panels."},
+            {"step": 3, "do": "User picks one number; do not choose for them."},
+            {"step": 4, "do": "Crop the selection, then use it as --ref for a sheet.", "crop": "parallax image crop-grid options.png --rows 2 --cols 4 --pick N --out selected.png", "sheet_template": "Character sheet for the selected character: front, 3/4, side, back, a few action poses, scale reference, and color palette. Preserve the selected design, materials, and style."},
+            {"step": 5, "do": "Lock the approved sheet as brief character_image, then storyboard (plan --stills-only / produce)."},
+        ],
+        "asset_locking": "Do not regenerate approved grid picks or character sheets. Keep and lock the approved assets; use the sheet as the character reference for applicable shots.",
+        "next": "produce_loop",
+    },
     "produce_loop": {
         "summary": "brief.yaml (human spec) -> `parallax plan` -> plan.yaml (engine spec) -> `parallax produce` -> <folder>/parallax/output/vN/.",
         "paths": {
@@ -108,7 +179,14 @@ TOPICS: dict[str, dict] = {
         "next": "produce",
     },
     "motion_graphic": {
-        "summary": "scene_type: motion_graphic is a locally rendered clip. Parallax never AI-generates it and does not render it for you.",
+        "summary": "scene_type: motion_graphic is a locally rendered clip. Parallax never AI-generates it; render it with the zero-spend `parallax video` primitives below (or your own tool) and set clip_path.",
+        "local_primitives": {
+            "app_screen": "`parallax video app-screen --screen shot.png --full-bleed --highlight x,y,w,h --callout TEXT [--callout-y 0.6] --duration S --out c.mp4`. --full-bleed for App Store screenshots that already include a device frame + headline (fills 9:16, push-in, glowing highlight, pop callout; pixels as-is). Without it the screenshot sits in a drawn phone frame. Crop marketing text off the bottom first if captions would sit on it.",
+            "diagram": "`parallax video diagram --preset clock-window --label .. --sub ..` | `--preset meter --value 6.3 --max 10 --unit \" HRS\" --label ..` | `--preset curve --label .. --peak PEAK --dip DIP`. Brand colors via --colors hex,hex,...",
+            "end_card": "`parallax video end-card --logo wordmark.png --icon icon.png --headline .. --cta .. --sub .. --duration 3`: icon pop, wordmark, headline slide-up, pulsing CTA pill.",
+            "kinetic_text": "`parallax video text-overlay --bg-color '#14102A' --text .. --preset pop|count-up|slide-up|typewriter --duration S --out c.mp4` (or --in still/clip).",
+            "layout": "Graphics stay above y=0.70 of the frame, so captions at `--caption-y 0.78` never collide. For 1080x1920 social ads use `--caption-style clean --caption-size 78 --words-per-chunk 3` (55 px single words read small).",
+        },
         "contract": {
             "brief_scene": "scene_type: motion_graphic plus clip_path (a rendered MP4 under the project folder). Optional still_path for the poster. `prompt` and `motion_prompt` describe the graphic for review.",
             "storyboard": "A scene with no existing clip file is storyboarded with advisory `motion_graphic_clip_missing`, and `produce` stays blocked (`blocked_by`) until the clip exists.",

@@ -274,7 +274,18 @@ def _run_produce(
             debug_level=debug,
         )
     except Exception as e:
-        print(f"\nError: {type(e).__name__}: {e}\n", file=sys.stderr)
+        message = str(e) or "no message"
+        assets_dir = Path(folder).expanduser() / "parallax" / "assets"
+        saved = [p for p in assets_dir.rglob("*") if p.is_file()] if assets_dir.is_dir() else []
+        run_id = getattr(e, "parallax_run_id", None)
+        if saved:
+            print(
+                f"Paid assets are saved at {assets_dir}. Rerunning the same command resumes and reuses them; do not regenerate them.",
+                file=sys.stderr,
+            )
+        if run_id:
+            print(f"See: parallax log {run_id}", file=sys.stderr)
+        print(f"\nError: {type(e).__name__}: {message}\n", file=sys.stderr)
         return 1
     if result.status != "ok":
         print(f"\nError: {result.error}\n", file=sys.stderr)
@@ -336,6 +347,14 @@ def _run_plan_command(
         _inject_resolution(str(result.plan_path), resolution)
 
     print(f"✓ Wrote plan.yaml ({result.scene_count} scenes) → {result.plan_path}")
+    try:
+        import yaml
+        planned = yaml.safe_load(Path(result.plan_path).read_text()) or {}
+        count = sum(1 for s in planned.get("scenes", []) if s.get("animate") and s.get("scene_type") == "animation")
+        if count:
+            print(f"note: auto-animated {count} opening social scene(s); set animate: false in the brief to opt out.")
+    except Exception:
+        pass
     return 0
 
 

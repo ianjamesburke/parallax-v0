@@ -146,3 +146,15 @@
     - Algenib
     - Gacrux
     - Pulcherrima
+
+- alias: seed-audio
+  model_id: bytedance-seed/seed-audio-1-0
+  tts_backend: speech
+  tier: default
+  cost: 0.1667
+  unit: 1k_chars
+  description: Seed Audio via /audio/speech. Requires voice_prompt; it is embedded in input and is not spoken. Estimated at $0.15/min ($0.0025/s, approximately $0.1667/1k chars at ~900 chars/min; observed $0.07195 for 28.8s).
+  fallback: null
+  capabilities:
+    aspect_ratios: []
+  voices: []
