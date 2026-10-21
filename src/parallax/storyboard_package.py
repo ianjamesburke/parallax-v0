@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import hashlib
 import re
+import shlex
 from datetime import date
 
 import yaml
@@ -428,7 +429,10 @@ def write_package_from_video(video: str | Path, scenes_path: str | Path, folder:
          "frame": relative}
         for item, (start, end), (relative, _) in zip(entries, intervals, sources)
     ]
-    rerun = f"parallax storyboard --folder {root} --from-video {video_path} --scenes {Path(scenes_path).expanduser().resolve()} --cut-threshold {cut_threshold} --pdf"
+    rerun = shlex.join([
+        "parallax", "storyboard", "--folder", str(root), "--from-video", str(video_path),
+        "--scenes", str(Path(scenes_path).expanduser().resolve()), "--cut-threshold", str(cut_threshold), "--pdf",
+    ])
     try:
         return write_package(video_path, root, package, timing_file, pdf=pdf, brief_override=brief, frame_sources=sources,
                              video_metadata=meta, standalone_scenes=normalized, finished_cut=True, rerun_command=rerun)

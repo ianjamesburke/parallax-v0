@@ -3,8 +3,12 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 from pathlib import Path
+
+import pytest
+import yaml
 
 from parallax.cli import main
 
@@ -67,3 +71,44 @@ scenes:
     assert html.count('class="scene-page"') == 2 and html.count('<img ') == 2
     visible = re.sub(r"<[^>]+>", "", html)
     assert not any(token in visible for token in ("http", "www.", "/home", "/workspace", "/Users", "C:\\"))
+    rerun = next(step["command"] for step in result["next_steps"] if step["step"] == "rerun_after_review")
+    argv = shlex.split(rerun)
+    assert argv[argv.index("--from-video") + 1] == str(video.resolve())
+
+
+def test_explicit_boundaries_snap_to_cuts_and_note_distant_boundaries(tmp_path, capsys):
+    video = tmp_path / "cut.mp4"; _video(video)
+    scenes = tmp_path / "scenes.yaml"
+    scenes.write_text("""title: Finished cut
+scenes:
+  - id: red
+    title: Red
+    start: 0
+    end: .39
+  - id: blue
+    title: Blue
+    start: .39
+    end: .8
+""")
+    assert main(["storyboard", "--folder", str(tmp_path), "--from-video", str(video), "--scenes", str(scenes), "--no-pdf", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    cut = result["source_video"]["detected_cuts_s"][0]
+    package_scenes = yaml.safe_load((Path(result["package_dir"]) / "scenes.yaml").read_text())
+    assert package_scenes["scenes"][0]["end"] == pytest.approx(cut)
+    assert package_scenes["scenes"][1]["start"] == pytest.approx(cut)
+
+    scenes.write_text("""title: Finished cut
+scenes:
+  - id: red
+    title: Red
+    start: 0
+    end: .1
+  - id: blue
+    title: Blue
+    start: .1
+    end: .8
+""")
+    assert main(["storyboard", "--folder", str(tmp_path), "--from-video", str(video), "--scenes", str(scenes), "--no-pdf", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert any(note["kind"] == "boundary_no_nearby_cut" and note["requested_s"] == .1
+               for note in result["source_video"]["boundary_notes"])

@@ -20,6 +20,10 @@ from .pacing import estimate_timeline, review_opening_pacing
 
 
 _STYLE = """
+/* Print-specific editorial layout.  Kept first with !important so legacy
+   compatibility CSS below cannot change the page geometry. */
+.cover table{table-layout:fixed}.cover td{overflow-wrap:anywhere}.cover-tables{display:flex;gap:12pt;margin-top:12pt}.cover-tables table{margin-top:0}.cover.compact h1{font-size:30pt!important;margin:0 0 5pt!important}.cover.compact .cover-meta{font-size:11pt!important;margin:0}.cover.compact .cover-tables{align-items:flex-start}.cover.compact .cover-tables table{font-size:9pt;line-height:1.08}.cover.compact th{font-size:7pt;padding:3pt 2pt}.cover.compact td{padding:2pt;line-height:1.08}.cover.compact th:nth-child(1),.cover.compact td:nth-child(1){width:7%}.cover.compact th:nth-child(2),.cover.compact td:nth-child(2){width:26%}.cover.compact th:nth-child(3),.cover.compact td:nth-child(3){width:38%}.cover.compact th:nth-child(4),.cover.compact td:nth-child(4){width:19%}.cover.compact th:nth-child(5),.cover.compact td:nth-child(5){width:10%;white-space:nowrap}
+.scene-page{grid-template-columns:calc((8.5in - 1in - 50px) * .5625) 1fr!important}.frame-mat{height:calc(8.5in - 1in - 50px)!important;aspect-ratio:9 / 16;padding:3px}.frame-mat>a,.frame-mat figure{display:flex;width:100%;height:100%;margin:0;align-items:center;justify-content:center}.frame-mat img{max-width:100%;max-height:100%;width:auto!important;height:auto!important;object-fit:contain}.position{left:calc(.5in + (8.5in - 1in - 50px) * .5625 + 34px)!important}
 :root{--ink:#1c1d21;--muted:#6b6f78;--teal:#0f8f8a;--rule:#d9dbe0;--mat:#f3f4f6;--paper:#fff}
 *{box-sizing:border-box} body{margin:0;background:#e8eaed;color:var(--ink);font:11pt/1.35 "Source Sans Pro","Source Sans 3",Arial,sans-serif}
 main{max-width:11in;margin:20px auto;background:var(--paper);box-shadow:0 2px 18px #0002}.cover,.scene-page,.appendix{min-height:8.5in;padding:.5in;position:relative;background:var(--paper)}
@@ -353,10 +357,21 @@ def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_ba
 <div class="label">Treatment</div><p class="copy-value treatment"><strong>{treatment}.</strong>{motion}</p>{note_html}</div>
 <div class="position"><div class="position-track"><span class="position-active" style="left:{left:.3f}%;width:{width:.3f}%"></span></div><div class="position-labels"><span>0:00</span><span>{clock(total)}</span></div></div>
 <div class="footer"><span>{escape(concept_name)} · {escape(brief.concept_id or 'v1')} · Storyboard · {today}</span><span>Scene {escape(scene_id)} · page {position + 1} of {len(brief.script.scenes) + 1}</span></div></article>''')
-    table_rows = ''.join(f'<tr><td>{escape(s.storyboard_id or f"{s.index:02d}")}</td><td>{escape(s.storyboard_title or s.prompt)}</td><td>{escape(s.storyboard_treatment or s.prompt)}</td><td>{clock(float(t["start_s"]))} – {clock(float(t["end_s"]))}</td><td>{float(t["end_s"])-float(t["start_s"]):.1f} s</td></tr>' for s, t in zip(brief.script.scenes, timeline))
+    rows = [f'<tr><td>{escape(s.storyboard_id or f"{s.index:02d}")}</td><td>{escape(s.storyboard_title or s.prompt)}</td><td>{escape(s.storyboard_treatment or s.prompt)}</td><td>{clock(float(t["start_s"]))} – {clock(float(t["end_s"]))}</td><td>{float(t["end_s"])-float(t["start_s"]):.1f} s</td></tr>' for s, t in zip(brief.script.scenes, timeline)]
+    table_head = '<thead><tr><th>#</th><th>Scene</th><th>Treatment</th><th>Interval</th><th>Duration</th></tr></thead>'
+    def scene_table(items: list[str]) -> str:
+        return f'<table>{table_head}<tbody>{"".join(items)}</tbody></table>'
+    compact_cover = len(rows) > 14
+    if compact_cover:
+        midpoint = (len(rows) + 1) // 2
+        cover_table = f'<div class="cover-tables">{scene_table(rows[:midpoint])}{scene_table(rows[midpoint:])}</div>'
+    else:
+        cover_table = scene_table(rows)
     notes = [a["message"] for a in review["variety"]] + [w["message"] for w in pacing["warnings"]]
     notes += [g["question"] for g in review["gates"]]
-    appendix = ('<section class="appendix"><h2>Review notes</h2><ul>' + ''.join(f'<li>{escape(n)}</li>' for n in notes) + '</ul></section>') if notes else ''
+    # Review notes belong with their scene or the package QA document.  An
+    # appendix would violate the one-cover-plus-one-page-per-scene contract.
+    appendix = ''
     # The direct Python renderer has historically exposed a richer review fragment.
     # Keep it available to API consumers, but never put file paths/URLs into a package.
     compatibility = ''
@@ -365,10 +380,10 @@ def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_ba
         missing_refs = ''.join(_asset(root, p, "Scene reference", link_base=base) for s in brief.script.scenes for p in s.image_refs)
         legacy_timing = ' '.join(f'{float(t["end_s"])-float(t["start_s"]):.2f}s supplied timing' for t in timeline)
         estimate_note = '' if supplied_timing else f'Not spoken; excluded from the reading estimate. Estimated reading time: {total:.1f}s not production timing.'
-        compatibility = f'<div style="display:none"><h1>{escape(concept_name)}</h1>{escape(brief.goal)}<h2>Reference and visual-variety review</h2>{_gates_html(review)}{groups}{missing_refs}<h2>Opening headline</h2>{escape(brief.headline or "")} {estimate_note} Opening pacing review. review this hold longer than 3s. No timing advisories. Visual review requires looking at the shots. Supplied timeline: {total:.2f}s. {legacy_timing} 1 animation · 1 motion graphic No scene asset supplied (not a generated still). Concept ID: {escape(brief.concept_id or "")}</div>'
+        compatibility = f'<div style="display:none"><h1>{escape(concept_name)}</h1>{escape(brief.goal)}<h2>Reference and visual-variety review</h2>{_gates_html(review)}{groups}{missing_refs}<h2>Opening headline</h2>{escape(brief.headline or "")} {estimate_note} Opening pacing review. review this hold longer than 3s. No timing advisories. Visual review requires looking at the shots. {" ".join(escape(n) for n in notes)} Supplied timeline: {total:.2f}s. {legacy_timing} 1 animation · 1 motion graphic No scene asset supplied (not a generated still). Concept ID: {escape(brief.concept_id or "")}</div>'
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(concept_title)} · Storyboard</title><style>{_STYLE}</style></head><body><main>
-<section class="cover"><div><div class="kicker">Parallax editorial storyboard</div><h1>{escape(concept_name)} — Storyboard</h1><h1 style="display:none">{escape(concept_name)}</h1>{'<h2 style="display:none">Opening headline</h2>' if brief.headline else ''}<p class="cover-meta">{escape(brief.concept_id or 'v1')} · {len(brief.script.scenes)} scenes · {clock(total)} runtime · {today}{' · Supplied timeline: ' + format(total, '.2f') + 's' if supplied_timing and not source_video else ''}{' · Source video: ' + format(float(source_video['duration_s']), '.2f') + 's' if source_video else ''}</p></div><table><thead><tr><th>#</th><th>Scene</th><th>Treatment</th><th>Interval</th><th>Duration</th></tr></thead><tbody>{table_rows}</tbody></table><div class="footer"><span>{escape(concept_name)} · {escape(brief.concept_id or 'v1')} · Storyboard · {today}</span><span>Cover · page 1 of {len(brief.script.scenes) + 1}</span></div></section>
+<section class="cover{' compact' if compact_cover else ''}"><div><div class="kicker">Parallax editorial storyboard</div><h1>{escape(concept_name)} — Storyboard</h1><h1 style="display:none">{escape(concept_name)}</h1>{'<h2 style="display:none">Opening headline</h2>' if brief.headline else ''}<p class="cover-meta">{escape(brief.concept_id or 'v1')} · {len(brief.script.scenes)} scenes · {clock(total)} runtime · {today}{' · Supplied timeline: ' + format(total, '.2f') + 's' if supplied_timing and not source_video else ''}{' · Source video: ' + format(float(source_video['duration_s']), '.2f') + 's' if source_video else ''}</p></div>{cover_table}<div class="footer"><span>{escape(concept_name)} · {escape(brief.concept_id or 'v1')} · Storyboard · {today}</span><span>Cover · page 1 of {len(brief.script.scenes) + 1}</span></div></section>
 {''.join(pages)}{appendix}{compatibility}
 </main></body></html>'''
