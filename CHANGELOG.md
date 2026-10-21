@@ -4,6 +4,7 @@ Newest releases appear first.
 ## [0.5.50] — 2026-10-16
 
 ### Changes
+- fix: keep caption, headline, and motion-graphic text inside safe bounds during wrapping and animated scaling
 - feat: add printable PDF export to storyboard package (#198)
 - chore(stint): mark 0006 done
 - feat(storyboard): redesign HTML layout with compact references and no opening-shots grid (#197)

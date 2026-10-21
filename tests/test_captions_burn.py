@@ -115,6 +115,86 @@ def test_drawtext_filter_escapes_apostrophe():
     assert "don’t" in f
 
 
+def test_multiline_layout_is_emitted_as_real_per_line_drawtext_filters(tmp_path):
+    """The PA5 regression: a layout newline must never become a literal ``n``.
+
+    ffmpeg's filter parser consumes a backslash before drawtext sees it, so a
+    single multiline text= argument is not a reliable rendering contract.
+    """
+    v = tmp_path / "in.mp4"
+    _make_video_with_audio(v, 0.2, w=1080, h=1920)
+    out = tmp_path / "out.mp4"
+    style = resolve_caption_style("clean")
+    from parallax.captions.layout import layout_caption
+    laid = layout_caption("absolutely exhausted all", 1080, 1920, 78, style, .78)
+    assert "\n" in laid["text"]
+    # A two-line layout must compile to two text= arguments, neither containing
+    # a newline escape. This is also cheap to assert without a fragile OCR test.
+    from unittest.mock import patch
+    with patch("parallax.captions.drawtext.run_ffmpeg") as run:
+        run.return_value = type("Result", (), {"returncode": 0, "stderr": ""})()
+        _burn_captions_drawtext(str(v), [{**laid, "start": 0, "end": .2}], out, 78, style)
+    vf = run.call_args.args[0][run.call_args.args[0].index("-vf") + 1]
+    assert vf.count("drawtext=") == 2
+    assert "\\n" not in vf
+    assert "text='absolutely'" in vf
+    assert "text='exhausted all'" in vf
+
+
+@_requires_drawtext
+def test_clean_multiline_boxes_do_not_cover_preceding_descenders(tmp_path):
+    """Each clean-style line must leave the prior line's descenders visible.
+
+    ``absolutely`` deliberately has a descender.  Compare its white pixels in
+    a single-line render with the same first line in the reported two-line
+    layout: the lower line's background must not paint over any of them.
+    """
+    from PIL import Image
+    from parallax.captions.layout import layout_caption
+
+    source = tmp_path / "solid.mp4"
+    _make_video_with_audio(source, 0.2, w=1080, h=1920)
+    style = resolve_caption_style("clean")
+    one = layout_caption("absolutely", 1080, 1920, 78, style, .78)
+    two = layout_caption("absolutely exhausted all", 1080, 1920, 78, style, .78)
+    assert two["text"] == "absolutely\nexhausted all"
+    # Keep the first line at the same origin so this is a direct pixel test.
+    # The renderer centres each physical line inside the multiline layout's
+    # widest line, so mirror that first-line x origin too.
+    from parallax.captions.layout import _font, _measure
+    font = _font(style, 78)
+    first_width = _measure(font, "absolutely", 0)[0]
+    widest = max(_measure(font, line, 0)[0] for line in two["text"].split("\n"))
+    one["x"], one["y"] = two["x"] + (widest - first_width) // 2, two["y"]
+    single_out, multiline_out = tmp_path / "single.mp4", tmp_path / "multiline.mp4"
+    _burn_captions_drawtext(str(source), [{**one, "start": 0, "end": .2}], single_out, 78, style)
+    _burn_captions_drawtext(str(source), [{**two, "start": 0, "end": .2}], multiline_out, 78, style)
+    single_png, multiline_png = tmp_path / "single.png", tmp_path / "multiline.png"
+    for video, image in ((single_out, single_png), (multiline_out, multiline_png)):
+        subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "0.05", "-i", str(video),
+                        "-frames:v", "1", str(image)], check=True)
+    single = Image.open(single_png).convert("RGB")
+    multiline = Image.open(multiline_png).convert("RGB")
+    # The descender pixels are the bottommost white pixels of the first line.
+    white = lambda pixel: min(pixel) > 220
+    first_line = [(x, y) for y in range(two["y"], two["y"] + 120) for x in range(1080)
+                  if white(single.getpixel((x, y)))]
+    descender_y = max(y for _, y in first_line)
+    descender_pixels = [(x, y) for x, y in first_line if y >= descender_y - 2]
+    assert descender_pixels
+    assert all(white(multiline.getpixel(pixel)) for pixel in descender_pixels)
+
+
+@pytest.mark.parametrize("size", [78, 96, 120])
+def test_large_caption_layout_never_spills_safe_rectangle(size):
+    from parallax.captions.layout import layout_caption
+    laid = layout_caption("SUPERCALIFRAGILISTICEXPIALIDOCIOUS absolutely exhausted all", 1080, 1920,
+                          size, resolve_caption_style("clean"), .78)
+    box, safe = laid["box"], laid["safe"]
+    assert box["left"] >= safe["left"] and box["right"] <= safe["right"]
+    assert box["top"] >= safe["top"] and box["bottom"] <= safe["bottom"]
+
+
 # ─── _probe_fps ─────────────────────────────────────────────────────────
 
 

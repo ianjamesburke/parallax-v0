@@ -797,15 +797,15 @@ def _zoom_filter(
     zexpr = f"1+{zd:.4f}*t/{dur}"  # zoom factor expression: 1.0 → zoom_amount over clip
 
     if direction == "up":
-        cx, cy = "(iw-1080)/2", "0"
+        cx, cy = f"(iw-{wi})/2", "0"
     elif direction == "down":
-        cx, cy = "(iw-1080)/2", f"(ih-{hi})"
+        cx, cy = f"(iw-{wi})/2", f"(ih-{hi})"
     elif direction == "left":
         cx, cy = "0", f"(ih-{hi})/2"
     elif direction == "right":
         cx, cy = f"(iw-{wi})", f"(ih-{hi})/2"
     else:  # "in" — centered
-        cx, cy = "(iw-1080)/2", f"(ih-{hi})/2"
+        cx, cy = f"(iw-{wi})/2", f"(ih-{hi})/2"
 
     # First scale: fit-to-fill (force_original_aspect_ratio=increase) + center-crop
     # so non-9:16 sources don't get stretched into the target frame. The
