@@ -9,6 +9,10 @@
   --ink: __PALETTE_INK__;
   --accent: __PALETTE_ACCENT__;
   --accent2: __PALETTE_ACCENT2__;
+  --on-surface: __PALETTE_ON_SURFACE__;
+  --on-accent: __PALETTE_ON_ACCENT__;
+  --on-accent2: __PALETTE_ON_ACCENT2__;
+  --on-ink: __PALETTE_ON_INK__;
   --font-heading: __FONT_HEADING__;
   --font-body: __FONT_BODY__;
 }
@@ -56,14 +60,14 @@ html, body {
   width: 800px;
   padding: 24px 32px;
   background: var(--accent);
-  color: #ffffff;
+  color: var(--on-accent);
   border-radius: 999px;
   font-family: var(--font-heading);
   font-size: 52px;
   font-weight: 900;
   text-align: center;
   letter-spacing: 0.02em;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 .hero-type {
   width: 820px;
@@ -78,27 +82,29 @@ html, body {
   font-size: 56px;
   font-weight: 900;
   line-height: 1.14;
-  color: var(--ink);
+  color: var(--on-surface);
   margin-bottom: 18px;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 .hero-line2 {
   font-size: 34px;
   font-weight: 700;
   line-height: 1.25;
-  color: var(--accent2);
-  overflow-wrap: break-word;
+  color: var(--on-surface);
+  opacity: 0.86;
+  overflow-wrap: anywhere;
 }
 .cta-block {
   width: 680px;
   padding: 26px 32px;
   background: var(--accent2);
-  color: #ffffff;
+  color: var(--on-accent2);
   border-radius: 24px;
   font-family: var(--font-heading);
   font-size: 44px;
   font-weight: 900;
   text-align: center;
+  overflow-wrap: anywhere;
 }
 </style>
 <script>
@@ -126,6 +132,11 @@ html, body {
 const dur = (window.__TIMING && window.__TIMING.duration) ? window.__TIMING.duration : 3.0;
 const c1 = (window.__TIMING && window.__TIMING.cue) ? window.__TIMING.cue("__CUE_WORD_1__", dur * 0.15) : dur * 0.15;
 const c2 = (window.__TIMING && window.__TIMING.cue) ? window.__TIMING.cue("__CUE_WORD_2__", dur * 0.45) : dur * 0.45;
+if (window.__fitText) {
+  window.__fitText("#word1", 720);
+  window.__fitText(".hero-line1", 740);
+  window.__fitText("#word3", 600);
+}
 const tl = gsap.timeline({paused:true});
 tl.fromTo("#word1", {scale: 0.8, y: -20}, {scale: 1, y: 0, duration: 0.25, ease: "back.out(1.8)"}, 0)
   .fromTo("#word2", {scale: 0.85, y: 24}, {scale: 1, y: 0, duration: 0.28, ease: "expo.out"}, Math.min(c1, dur * 0.45))

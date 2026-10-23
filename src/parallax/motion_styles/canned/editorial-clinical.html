@@ -9,6 +9,10 @@
   --ink: __PALETTE_INK__;
   --accent: __PALETTE_ACCENT__;
   --accent2: __PALETTE_ACCENT2__;
+  --on-surface: __PALETTE_ON_SURFACE__;
+  --on-accent: __PALETTE_ON_ACCENT__;
+  --on-accent2: __PALETTE_ON_ACCENT2__;
+  --on-ink: __PALETTE_ON_INK__;
   --font-heading: __FONT_HEADING__;
   --font-body: __FONT_BODY__;
 }
@@ -72,16 +76,16 @@ html, body {
   font-size: 54px;
   font-weight: 700;
   line-height: 1.15;
-  color: var(--ink);
+  color: var(--on-surface);
   margin-bottom: 18px;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 .subcopy {
   font-size: 30px;
   line-height: 1.35;
-  color: var(--ink);
+  color: var(--on-surface);
   opacity: 0.82;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 .callout-box {
   padding: 28px 32px;
@@ -107,11 +111,12 @@ html, body {
   width: 100%;
   padding: 24px 32px;
   background: var(--accent);
-  color: #ffffff;
+  color: var(--on-accent);
   border-radius: 12px;
   font-size: 34px;
   font-weight: 700;
   text-align: center;
+  overflow-wrap: anywhere;
 }
 </style>
 <script>
@@ -143,6 +148,10 @@ html, body {
 const dur = (window.__TIMING && window.__TIMING.duration) ? window.__TIMING.duration : 3.0;
 const c1 = (window.__TIMING && window.__TIMING.cue) ? window.__TIMING.cue("__CUE_WORD_1__", dur * 0.15) : dur * 0.15;
 const c2 = (window.__TIMING && window.__TIMING.cue) ? window.__TIMING.cue("__CUE_WORD_2__", dur * 0.45) : dur * 0.45;
+if (window.__fitText) {
+  window.__fitText("#headline", 740);
+  window.__fitText("#btn", 700);
+}
 const tl = gsap.timeline({paused:true});
 tl.fromTo("#frame", {y: 20, opacity: 0.4}, {y: 0, opacity: 1, duration: 0.50, ease: "power3.out"}, 0)
   .fromTo("#headline-block", {y: 16}, {y: 0, duration: 0.45, ease: "power3.out"}, 0.08)

@@ -45,23 +45,70 @@ CANONICAL_STYLE_ORDER = (
     "kinetic-type",
 )
 
-# Cheap per-token fallback rates for Gemini 2.5 Flash on OpenRouter ($/token)
-_FLASH_PROMPT_COST_PER_TOKEN = 0.15 / 1_000_000
-_FLASH_COMPLETION_COST_PER_TOKEN = 0.60 / 1_000_000
-DEFAULT_MOTION_GEN_ESTIMATE_USD = 0.002
+# Per-token fallback rates for google/gemini-2.5-flash on OpenRouter ($0.30/M input, $2.50/M output)
+_FLASH_PROMPT_COST_PER_TOKEN = 0.30 / 1_000_000
+_FLASH_COMPLETION_COST_PER_TOKEN = 2.50 / 1_000_000
+_FLASH_ESTIMATED_PROMPT_TOKENS = 6_000
+_FLASH_ESTIMATED_COMPLETION_TOKENS = 6_000
+DEFAULT_MOTION_GEN_ESTIMATE_USD = round(
+    _FLASH_ESTIMATED_PROMPT_TOKENS * _FLASH_PROMPT_COST_PER_TOKEN
+    + _FLASH_ESTIMATED_COMPLETION_TOKENS * _FLASH_COMPLETION_COST_PER_TOKEN,
+    4,
+)  # $0.0168 for ~6k prompt + ~6k completion tokens
+
+MAX_LAYOUT_REPAIRS = 2
+
+
+def resolve_max_layout_repairs(max_repairs: int | None = None) -> int:
+    """Resolve the maximum number of LLM layout repair passes (default `MAX_LAYOUT_REPAIRS=2`)."""
+    if max_repairs is not None:
+        return max(0, int(max_repairs))
+    env_val = os.environ.get("PARALLAX_MOTION_MAX_REPAIRS", "").strip()
+    if env_val:
+        try:
+            return max(0, int(env_val))
+        except ValueError:
+            pass
+    return MAX_LAYOUT_REPAIRS
+
+
+def estimate_motion_cost_usd(
+    max_repairs: int | None = None,
+    *,
+    include_repairs: bool = True,
+) -> float:
+    """Estimate realistic per-scene LLM cost (~6k prompt + ~6k completion tokens plus repair allowance)."""
+    base_call = (
+        _FLASH_ESTIMATED_PROMPT_TOKENS * _FLASH_PROMPT_COST_PER_TOKEN
+        + _FLASH_ESTIMATED_COMPLETION_TOKENS * _FLASH_COMPLETION_COST_PER_TOKEN
+    )
+    if not include_repairs:
+        return round(base_call, 4)
+    repairs = resolve_max_layout_repairs(max_repairs)
+    # Account for expected repair passes (~8% per allowed repair pass, keeping estimate in ~$0.005-$0.02)
+    return round(base_call * (1.0 + 0.08 * min(repairs, 2)), 4)
 
 
 class LayoutViolationError(RuntimeError):
     """Raised when an HTML motion graphic fails layout safety checks after repair."""
 
-    def __init__(self, violations: list[dict[str, Any]], message: str | None = None) -> None:
+    def __init__(
+        self,
+        violations: list[dict[str, Any]],
+        message: str | None = None,
+        *,
+        rejected_html_path: str | Path | None = None,
+    ) -> None:
         self.violations = violations
+        self.rejected_html_path = Path(rejected_html_path) if rejected_html_path is not None else None
         summary = "; ".join(
             f"[{v.get('type')} @ t={v.get('time_s')}s] {v.get('detail', '')}"
             for v in violations[:5]
         )
-        msg = message or f"HTML motion layout failed audit ({len(violations)} violation(s)): {summary}"
-        super().__init__(msg)
+        base_msg = message or f"HTML motion layout failed audit ({len(violations)} violation(s)): {summary}"
+        if self.rejected_html_path is not None and str(self.rejected_html_path) not in base_msg:
+            base_msg = f"{base_msg} (rejected HTML saved at {self.rejected_html_path})"
+        super().__init__(base_msg)
 
 
 @dataclass
@@ -178,11 +225,62 @@ def load_style_preset(style: str, styles_dir: Path | None = None) -> dict[str, A
     return presets[clean]
 
 
+def _parse_hex_rgb(hex_color: str, fallback: tuple[int, int, int] = (0, 0, 0)) -> tuple[int, int, int]:
+    """Parse `#RGB` or `#RRGGBB` into `(r, g, b)` 0..255."""
+    s = (hex_color or "").strip().lstrip("#")
+    if len(s) == 3 and all(c in "0123456789abcdefABCDEF" for c in s):
+        s = "".join(c * 2 for c in s)
+    if len(s) >= 6 and all(c in "0123456789abcdefABCDEF" for c in s[:6]):
+        return int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
+    return fallback
+
+
+def _relative_luminance(hex_color: str) -> float:
+    """Compute WCAG 2.1 relative luminance for a hex color."""
+    r, g, b = _parse_hex_rgb(hex_color)
+
+    def _lin(channel_8bit: int) -> float:
+        c = channel_8bit / 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
+
+
+def wcag_contrast_ratio(fg_hex: str, bg_hex: str) -> float:
+    """Return the WCAG 2.1 contrast ratio (1.0..21.0) between two hex colors."""
+    l1 = _relative_luminance(fg_hex)
+    l2 = _relative_luminance(bg_hex)
+    bright, dark = (l1, l2) if l1 >= l2 else (l2, l1)
+    return (bright + 0.05) / (dark + 0.05)
+
+
+def pick_contrasting_text(
+    preferred_hex: str,
+    bg_hex: str,
+    *,
+    min_ratio: float = 4.5,
+) -> str:
+    """Return `preferred_hex` if its WCAG contrast against `bg_hex` is >= `min_ratio`,
+    otherwise whichever of `(preferred_hex, '#FFFFFF', '#0A0A0A')` has the best contrast.
+    """
+    if wcag_contrast_ratio(preferred_hex, bg_hex) >= min_ratio:
+        return preferred_hex
+    candidates = (preferred_hex, "#FFFFFF", "#0A0A0A")
+    return max(candidates, key=lambda c: wcag_contrast_ratio(c, bg_hex))
+
+
 def load_brand_file(path: str | Path) -> dict[str, Any]:
-    """Load a brand YAML or JSON file from disk."""
-    brand_path = Path(path)
+    """Load a brand YAML or JSON file from disk.
+
+    Relative `path` is resolved relative to current working directory, and a relative
+    `brand.logo` path inside the file is resolved relative to the brand file's directory.
+    """
+    brand_path = Path(path).expanduser()
+    if not brand_path.is_absolute():
+        brand_path = Path.cwd() / brand_path
     if not brand_path.is_file():
         raise FileNotFoundError(f"Brand file not found: {brand_path}")
+    brand_path = brand_path.resolve()
     raw = brand_path.read_text(encoding="utf-8")
     if brand_path.suffix.lower() == ".json":
         data = json.loads(raw)
@@ -191,9 +289,11 @@ def load_brand_file(path: str | Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"Brand file {brand_path} must contain a YAML/JSON mapping (got {type(data).__name__}).")
     result = dict(data)
+    result["_brand_dir"] = str(brand_path.parent)
     logo = result.get("logo")
-    if isinstance(logo, str) and logo.strip() and not logo.strip().startswith("data:"):
-        candidate = (brand_path.parent / logo).resolve()
+    if isinstance(logo, str) and logo.strip() and not logo.strip().startswith("data:") and not logo.strip().startswith("<svg"):
+        logo_p = Path(logo.strip()).expanduser()
+        candidate = logo_p if logo_p.is_absolute() else (brand_path.parent / logo_p).resolve()
         if candidate.is_file():
             result["logo"] = str(candidate)
     return result
@@ -210,11 +310,12 @@ def _default_logo_svg_data_uri(brand_name: str, accent_hex: str, ink_hex: str) -
         .replace(">", "&gt;")
         .replace('"', "&quot;")
     )
+    badge_fg = pick_contrasting_text("#FFFFFF", accent_hex)
     svg = (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 72" width="280" height="72">'
         f'<rect x="2" y="4" width="64" height="64" rx="16" fill="{accent_hex}"/>'
         f'<text x="34" y="46" text-anchor="middle" font-family="Inter, system-ui, sans-serif" '
-        f'font-size="28" font-weight="800" fill="#FFFFFF">{initials}</text>'
+        f'font-size="28" font-weight="800" fill="{badge_fg}">{initials}</text>'
         f'<text x="82" y="46" font-family="Inter, system-ui, sans-serif" '
         f'font-size="28" font-weight="800" fill="{ink_hex}">{safe_label}</text>'
         f"</svg>"
@@ -267,7 +368,14 @@ def normalize_brand(
     *,
     base_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Normalize a brand dict/file and merge its palette and fonts over a style preset."""
+    """Normalize a brand dict/file and merge its palette and fonts over a style preset.
+
+    Performs WCAG 4.5 contrast-aware role mapping:
+    - If `contrast(ink, bg) < 4.5`, picks whichever of `(brand_ink, '#FFFFFF', '#0A0A0A')`
+      has the best contrast against `bg`.
+    - Computes `on_accent`, `on_accent2`, `on_surface`, and `on_ink` using the same rule
+      so button/pill/card text is always legible.
+    """
     if isinstance(brand, (str, Path)):
         raw_brand = load_brand_file(brand)
     elif isinstance(brand, dict):
@@ -275,8 +383,11 @@ def normalize_brand(
     else:
         raw_brand = {}
 
+    if base_dir is None and isinstance(raw_brand.get("_brand_dir"), str):
+        base_dir = Path(raw_brand["_brand_dir"])
+
     preset_palette = dict((preset or {}).get("palette") or {})
-    palette = {
+    palette: dict[str, str] = {
         "bg": preset_palette.get("bg", BRAND_DEFAULT.get("bg", "#14102A")),
         "surface": preset_palette.get("surface", BRAND_DEFAULT.get("bg2", "#FFFFFF")),
         "ink": preset_palette.get("ink", BRAND_DEFAULT.get("text", "#0B162C")),
@@ -284,6 +395,7 @@ def normalize_brand(
         "accent2": preset_palette.get("accent2", BRAND_DEFAULT.get("good", "#0E9F6E")),
     }
 
+    explicit_surface = False
     brand_palette = raw_brand.get("palette")
     if isinstance(brand_palette, dict):
         # Map common brand palette names to preset role names first, then direct role overrides.
@@ -299,10 +411,14 @@ def normalize_brand(
             val = brand_palette.get(src_key)
             if isinstance(val, str) and val.strip():
                 palette[dst_key] = val.strip()
+                if dst_key == "surface":
+                    explicit_surface = True
         for role_key in ("bg", "surface", "ink", "accent", "accent2"):
             val = brand_palette.get(role_key)
             if isinstance(val, str) and val.strip():
                 palette[role_key] = val.strip()
+                if role_key == "surface":
+                    explicit_surface = True
         # Preserve any extra custom keys from brand.palette as well
         for k, v in brand_palette.items():
             if isinstance(v, str) and v.strip() and k not in palette:
@@ -321,6 +437,27 @@ def normalize_brand(
         val = raw_brand.get(top_key)
         if isinstance(val, str) and val.strip():
             palette[dst_key] = val.strip()
+            if dst_key == "surface":
+                explicit_surface = True
+
+    brand_ink = palette["ink"]
+    # Contrast-aware role mapping: ensure ink on bg has WCAG contrast >= 4.5
+    palette["ink"] = pick_contrasting_text(brand_ink, palette["bg"], min_ratio=4.5)
+
+    # If the brand overrode bg/ink without specifying surface, and the preset's surface
+    # clashes with the resolved ink (e.g. dark preset surface #1E293B with dark brand ink #001A4D),
+    # align surface with the background polarity so cards using var(--surface) + var(--ink) stay readable.
+    if not explicit_surface and wcag_contrast_ratio(palette["ink"], palette["surface"]) < 4.5:
+        if _relative_luminance(palette["bg"]) > 0.4:
+            palette["surface"] = "#F1F5F9" if palette["bg"].upper() == "#FFFFFF" else "#FFFFFF"
+        else:
+            palette["surface"] = "#1E293B"
+
+    palette["on_bg"] = palette["ink"]
+    palette["on_surface"] = pick_contrasting_text(palette["ink"], palette["surface"], min_ratio=4.5)
+    palette["on_accent"] = pick_contrasting_text(brand_ink, palette["accent"], min_ratio=4.5)
+    palette["on_accent2"] = pick_contrasting_text(brand_ink, palette["accent2"], min_ratio=4.5)
+    palette["on_ink"] = pick_contrasting_text("#FFFFFF", palette["ink"], min_ratio=4.5)
 
     preset_fonts = dict((preset or {}).get("fonts") or {})
     fonts = {
@@ -405,7 +542,7 @@ def normalize_words(words: Any) -> list[dict[str, Any]]:
 
 
 def _build_timing_js(duration: float, fps: int = 30, words: list[dict[str, Any]] | None = None) -> str:
-    """Build the JavaScript snippet that defines `window.__TIMING`."""
+    """Build the JavaScript snippet that defines `window.__TIMING` and `window.__fitText`."""
     norm_words = normalize_words(words)
     words_json = json.dumps(norm_words, ensure_ascii=False)
     dur_val = round(float(duration), 4)
@@ -430,6 +567,32 @@ def _build_timing_js(duration: float, fps: int = 30, words: list[dict[str, Any]]
         "    }\n"
         "    return fb;\n"
         "  }\n"
+        "};\n"
+        "window.__fitText = function(el, maxWidth) {\n"
+        "  var maxW = (typeof maxWidth === 'number' && maxWidth > 0) ? maxWidth : 940;\n"
+        "  if (!el) return;\n"
+        "  var targets = [];\n"
+        "  if (typeof el === 'string') {\n"
+        "    try { targets = Array.prototype.slice.call(document.querySelectorAll(el)); } catch (e) { return; }\n"
+        "  } else if (el.nodeType === 1) {\n"
+        "    targets = [el];\n"
+        "  } else if (el.length !== undefined) {\n"
+        "    targets = Array.prototype.slice.call(el);\n"
+        "  }\n"
+        "  for (var i = 0; i < targets.length; i++) {\n"
+        "    var node = targets[i];\n"
+        "    if (!node || node.nodeType !== 1) continue;\n"
+        "    var limit = maxW;\n"
+        "    if (node.clientWidth && node.clientWidth > 0 && node.clientWidth < limit) {\n"
+        "      limit = node.clientWidth;\n"
+        "    }\n"
+        "    var size = parseFloat(window.getComputedStyle(node).fontSize) || 64;\n"
+        "    var minSize = 16;\n"
+        "    while (size > minSize && (node.scrollWidth > limit + 1 || node.getBoundingClientRect().width > maxW + 1)) {\n"
+        "      size = Math.max(minSize, Math.floor(size * 0.92));\n"
+        "      node.style.fontSize = size + 'px';\n"
+        "    }\n"
+        "  }\n"
         "};"
     )
 
@@ -439,7 +602,7 @@ _TIMING_SCRIPT_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 _WINDOW_TIMING_RE = re.compile(
-    r"window\.__TIMING\s*=\s*\{.*?\}\s*;",
+    r"window\.__TIMING\s*=\s*\{.*?\}\s*;(?:\s*window\.__fitText\s*=\s*function\s*\(.*?\}\s*;)?",
     re.DOTALL,
 )
 
@@ -603,6 +766,11 @@ def _render_canned_html(
         "__PALETTE_INK__": palette["ink"],
         "__PALETTE_ACCENT__": palette["accent"],
         "__PALETTE_ACCENT2__": palette["accent2"],
+        "__PALETTE_ON_BG__": palette.get("on_bg", palette["ink"]),
+        "__PALETTE_ON_SURFACE__": palette.get("on_surface", palette["ink"]),
+        "__PALETTE_ON_ACCENT__": palette.get("on_accent", "#FFFFFF"),
+        "__PALETTE_ON_ACCENT2__": palette.get("on_accent2", "#FFFFFF"),
+        "__PALETTE_ON_INK__": palette.get("on_ink", "#FFFFFF"),
         "__FONT_HEADING__": fonts["heading"],
         "__FONT_BODY__": fonts["body"],
         "__BRAND_LOGO_DATA_URI__": norm_brand["logo_data_uri"],
@@ -625,7 +793,8 @@ def _render_canned_html(
 def build_motion_system_prompt(
     preset: dict[str, Any],
     norm_brand: dict[str, Any],
-    duration_s: float,
+    duration_s: float = 5.0,
+    words: Any = None,
 ) -> str:
     """Build the system prompt for HTML/SVG + GSAP scene generation."""
     palette = norm_brand["palette"]
@@ -636,31 +805,35 @@ def build_motion_system_prompt(
 
     return f"""You are an expert motion designer building a single self-contained HTML5/SVG + GSAP vertical video scene.
 
-1. CANVAS & SAFE ZONES (MANDATORY):
+1. CANVAS, SAFE ZONES & TYPOGRAPHY FIT (MANDATORY):
 - Viewport / canvas size is strictly {CANVAS_WIDTH}x{CANVAS_HEIGHT} pixels (`width: 1080px; height: 1920px; overflow: hidden; position: relative;`).
 - Safe box for ALL on-screen text and cards: `left >= {SAFE_LEFT}px`, `right <= {SAFE_RIGHT}px`, `top >= {SAFE_TOP}px`.
-- Caption-safe zone: the bottom band from `y = {CAPTION_TOP_PX:.0f}px` to `1920px` (`CAPTION_TOP = {CAPTION_TOP}`) is reserved for burned-in captions. No text element may extend below `y = {CAPTION_TOP_PX:.0f}px`.
+- Maximum text width is strictly `940px` (`max-width: 940px; box-sizing: border-box;`).
+- Caption-safe zone: keep ALL text, cards, and CTA buttons strictly above `y = {CAPTION_TOP_PX:.0f}px` (`CAPTION_TOP = {CAPTION_TOP}`). The bottom band `y = {CAPTION_TOP_PX:.0f}..1920` is reserved for burned-in captions; never place CTAs or labels there.
+- Text wrapping & sizing: apply `overflow-wrap: anywhere;` and `font-size: clamp(...)` on headlines and word blocks. Before creating your GSAP timeline, call the host-injected helper `window.__fitText(el, maxWidth)` (e.g. `window.__fitText('.headline', 940)` or `window.__fitText('.word', 900)`) on all headlines and display words so font-size automatically shrinks until `scrollWidth <= clientWidth` and width <= `maxWidth`.
+- Icons: AVOID emoji glyphs as icons (never use 🛡️, 📞, ⚠️, ✅, etc., which have unpredictable metrics and overlap text). Always use crisp inline `<svg>` with explicit `width` and `height`.
+- Final visibility: NEVER leave final-state text at `opacity: 0` and NEVER fade out scene copy at the end of the timeline. All primary scene copy must be visible (`opacity: 1`) across the 50%, 75%, and 100% marks of the scene. Do NOT set `opacity: 0` in CSS when using `tl.from(el, {{ opacity: 0 }})` (use `tl.fromTo(el, {{ opacity: 0, y: 20 }}, {{ opacity: 1, y: 0 }})` instead).
 - HARD RULE: On-screen text is NEVER cropped (`scrollWidth <= clientWidth`, `scrollHeight <= clientHeight`, never outside the safe box, never overlapping other text, and never intruding into the caption-safe zone).
 
 2. STYLE PRESET: {preset.get("name")} — {preset.get("description")}
 Design Rules:
 {preset.get("design_rules", "").strip()}
 Motion Vocabulary:
-- Eases: {", ".join(vocab.get("eases") or ["power3.out"])}
-- Durations: {", ".join(vocab.get("durations") or ["0.45s"])}
-- Entrances: {", ".join(vocab.get("entrances") or ["fade-up"])}
+- Eases: {", ".join(str(x) for x in (vocab.get("eases") or ["power3.out"]))}
+- Durations: {json.dumps(vocab.get("durations") or "0.45s")}
+- Entrances: {", ".join(str(x) for x in (vocab.get("entrance_types") or vocab.get("entrances") or ["fade-up"]))}
 Style Guidelines:
 {do_list}
 {dont_list}
 
-3. BRAND PALETTE, FONTS & LOGO:
+3. BRAND PALETTE (CONTRAST-CHECKED), FONTS & LOGO:
 - Brand Name: {norm_brand["name"]}
-- Palette Roles:
-  - bg: {palette["bg"]}
-  - surface: {palette["surface"]}
-  - ink: {palette["ink"]}
-  - accent: {palette["accent"]}
-  - accent2: {palette["accent2"]}
+- Palette Roles (WCAG contrast >= 4.5 verified):
+  - bg (`--bg: {palette["bg"]}`), text on bg (`--on-bg: {palette.get("on_bg", palette["ink"])}`)
+  - surface (`--surface: {palette["surface"]}`), text on surface (`--on-surface: {palette.get("on_surface", palette["ink"])}`)
+  - ink (`--ink: {palette["ink"]}`), text on ink fill (`--on-ink: {palette.get("on_ink", "#FFFFFF")}`)
+  - accent (`--accent: {palette["accent"]}`), button/badge text on accent (`--on-accent: {palette.get("on_accent", "#FFFFFF")}`)
+  - accent2 (`--accent2: {palette["accent2"]}`), badge text on accent2 (`--on-accent2: {palette.get("on_accent2", "#FFFFFF")}`)
 - Font Stack:
   - heading: {fonts["heading"]}
   - body: {fonts["body"]}
@@ -669,12 +842,14 @@ Style Guidelines:
 4. TIMING CONTRACT (GSAP):
 - Duration: {duration_s:.2f} seconds.
 - GSAP is injected inline by the host renderer before your script runs. Do NOT include any `<script src="https://...">` or CDN links.
-- Before your script runs, `window.__TIMING = {{ duration, fps, words: [{{word, start, end}}], cue(word, fallback) }}` is injected.
+- Before your script runs, `window.__TIMING = {{ duration, fps, words: [{{word, start, end}}], cue(word, fallback) }}` and `window.__fitText(el, maxWidth)` are injected.
 - `window.__TIMING.cue('scam', 0.5)` returns the start timestamp (seconds) of the first matching voiceover word (case-insensitive, punctuation-stripped), or `fallback` if not found. Use `window.__TIMING.cue(...)` to key animation beats to voiceover words.
-- Your script MUST create a paused master timeline and expose `window.__seek(t)`:
+- Never put punctuation (such as `.` or `,`) in HTML `id` attributes when targeting elements with GSAP selectors (use `id="word-0"`, `id="word-1"`, etc.).
+- Your script MUST call `window.__fitText(...)` on headlines, create a paused master timeline, keep final text at `opacity: 1`, and expose `window.__seek(t)`:
   ```js
+  window.__fitText('.headline', 940);
   const tl = gsap.timeline({{ paused: true }});
-  // build tweens on tl ...
+  // build tweens on tl using tl.fromTo(..., {{ opacity: 0 }}, {{ opacity: 1 }}) ...
   window.__seek = (t) => {{ tl.seek(t, false); }};
   window.__seek(0);
   ```
@@ -904,13 +1079,27 @@ def repair_scene_html_with_llm(
         compact_html,
     )
 
+    js_errors = [
+        str(v.get("detail") or v.get("text") or "")
+        for v in violations
+        if v.get("type") in ("js_error", "js_exception")
+    ]
+    js_error_section = ""
+    if js_errors:
+        joined_js_errors = "\n".join(f"- {err}" for err in js_errors if err)
+        js_error_section = (
+            f"JavaScript Errors Thrown During Execution (MUST FIX):\n{joined_js_errors}\n\n"
+        )
+
     repair_prompt = (
         "The HTML scene below failed the layout safety audit with the following violations:\n"
         f"{json.dumps(violations, indent=2)}\n\n"
-        "Fix ALL layout violations so that:\n"
-        f"1. Every visible text element stays strictly inside safe bounds: left >= {SAFE_LEFT}, right <= {SAFE_RIGHT}, top >= {SAFE_TOP}, bottom <= {CAPTION_TOP_PX:.0f}.\n"
-        "2. No text element is clipped (`scrollWidth <= clientWidth` and `scrollHeight <= clientHeight`).\n"
-        "3. No two visible text elements overlap.\n"
+        f"{js_error_section}"
+        "Fix ALL layout and runtime violations so that:\n"
+        f"1. Every visible text element stays strictly inside safe bounds: left >= {SAFE_LEFT}, right <= {SAFE_RIGHT}, top >= {SAFE_TOP}, bottom <= {CAPTION_TOP_PX:.0f} (max text width 940px).\n"
+        "2. No text element is clipped (`scrollWidth <= clientWidth` and `scrollHeight <= clientHeight`); use `overflow-wrap: anywhere` and call `window.__fitText(el, 940)` on headlines.\n"
+        "3. No two visible text elements overlap (replace any emoji icons with inline `<svg>`).\n"
+        "4. There are zero JavaScript exceptions or console errors, and the scene copy is visible (`opacity: 1`, never left at `opacity: 0` or faded out at the end) across 50%, 75%, and 100% of the timeline.\n"
         "Return ONLY the complete corrected `<!DOCTYPE html><html>...</html>` document.\n\n"
         f"Current HTML:\n{compact_html}"
     )
@@ -941,6 +1130,33 @@ def repair_scene_html_with_llm(
     )
 
 
+def _format_cdp_exception_details(details: dict[str, Any], time_s: float = 0.0) -> dict[str, Any]:
+    """Convert a CDP `exceptionDetails` payload into a violation dict."""
+    exc = details.get("exception") if isinstance(details.get("exception"), dict) else {}
+    desc = str(
+        exc.get("description")
+        or exc.get("value")
+        or details.get("text")
+        or "Uncaught JS exception"
+    ).strip()
+    text = str(details.get("text") or "Uncaught").strip()
+    line_no = details.get("lineNumber")
+    col_no = details.get("columnNumber")
+    loc = f" (line {line_no}:{col_no})" if line_no is not None else ""
+    detail_msg = (
+        f"Runtime.exceptionThrown: {text}: {desc}{loc}"
+        if text and not desc.startswith(text)
+        else f"Runtime.exceptionThrown: {desc}{loc}"
+    )
+    return {
+        "type": "js_error",
+        "source": "Runtime.exceptionThrown",
+        "time_s": time_s,
+        "text": desc,
+        "detail": detail_msg,
+    }
+
+
 class _CDPPipeSession:
     """Lightweight Chrome DevTools Protocol client over `--remote-debugging-pipe` (fds 3 & 4).
 
@@ -957,6 +1173,7 @@ class _CDPPipeSession:
         self._buf = b""
         self._msg_id = 0
         self._session_id: str | None = None
+        self.js_errors: list[dict[str, Any]] = []
 
     def __enter__(self) -> _CDPPipeSession:
         c2b_r, c2b_w = os.pipe()
@@ -1019,6 +1236,54 @@ class _CDPPipeSession:
                     self._proc.wait()
             self._proc = None
 
+    def _record_event(self, msg: dict[str, Any]) -> None:
+        method = msg.get("method")
+        params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+        if method == "Runtime.exceptionThrown":
+            details = params.get("exceptionDetails")
+            if isinstance(details, dict):
+                self.js_errors.append(_format_cdp_exception_details(details, time_s=0.0))
+        elif method == "Runtime.consoleAPICalled":
+            call_type = str(params.get("type") or "").lower()
+            if call_type in ("error", "assert"):
+                args = params.get("args") or []
+                rendered: list[str] = []
+                for arg in args:
+                    if isinstance(arg, dict):
+                        val = arg.get("description") or arg.get("value") or arg.get("unserializableValue")
+                        if val is not None:
+                            rendered.append(str(val).strip())
+                err_text = " ".join(s for s in rendered if s).strip() or f"console.{call_type}"
+                self.js_errors.append(
+                    {
+                        "type": "js_error",
+                        "source": "Runtime.consoleAPICalled",
+                        "time_s": 0.0,
+                        "text": err_text,
+                        "detail": f"Runtime.consoleAPICalled ({call_type}): {err_text}",
+                    }
+                )
+
+    def drain_events(self) -> None:
+        """Non-blockingly read and record any pending CDP events from the pipe."""
+        if self._b2c_r is None:
+            return
+        while True:
+            ready, _, _ = select.select([self._b2c_r], [], [], 0.0)
+            if not ready:
+                break
+            chunk = os.read(self._b2c_r, 65536)
+            if not chunk:
+                break
+            self._buf += chunk
+        while b"\x00" in self._buf:
+            part, self._buf = self._buf.split(b"\x00", 1)
+            if not part:
+                continue
+            msg = json.loads(part.decode("utf-8"))
+            if "method" in msg:
+                self._record_event(msg)
+
     def send(
         self,
         method: str,
@@ -1044,6 +1309,8 @@ class _CDPPipeSession:
                 if not part:
                     continue
                 msg = json.loads(part.decode("utf-8"))
+                if "method" in msg:
+                    self._record_event(msg)
                 if msg.get("id") == req_id:
                     if "error" in msg:
                         raise RuntimeError(f"CDP {method} failed: {msg['error']}")
@@ -1106,13 +1373,26 @@ class _CDPPipeSession:
                 "returnByValue": True,
             },
         )
+        self.drain_events()
 
 
 _AUDIT_JS_TEMPLATE = """
 (() => {
   const t = __SAMPLE_TIME__;
+  const REQUIRE_VISIBLE_TEXT = __REQUIRE_VISIBLE_TEXT__;
+  const violations = [];
   if (typeof window.__seek === 'function') {
-    window.__seek(t);
+    try {
+      window.__seek(t);
+    } catch (err) {
+      violations.push({
+        type: 'js_error',
+        source: 'window.__seek',
+        time_s: t,
+        text: String((err && err.message) || err),
+        detail: `Uncaught error in window.__seek(${t}): ${String((err && err.stack) || err)}`
+      });
+    }
   }
   const W = __WIDTH__;
   const H = __HEIGHT__;
@@ -1152,7 +1432,7 @@ _AUDIT_JS_TEMPLATE = """
 
   const all = Array.from(document.querySelectorAll('body *'));
   const textEntries = [];
-  const violations = [];
+  let visibleOnScreenCount = 0;
 
   for (const el of all) {
     if (!hasDirectText(el)) continue;
@@ -1162,6 +1442,10 @@ _AUDIT_JS_TEMPLATE = """
 
     const textSample = (el.textContent || '').trim().slice(0, 60);
     const isSvg = el instanceof SVGElement;
+
+    if (rect.right > 0 && rect.left < W && rect.bottom > 0 && rect.top < H) {
+      visibleOnScreenCount += 1;
+    }
 
     // 1. Internal overflow / clipping check (scrollWidth > clientWidth)
     if (!isSvg && el.clientWidth > 0 && el.scrollWidth > el.clientWidth + EPS) {
@@ -1267,6 +1551,18 @@ _AUDIT_JS_TEMPLATE = """
     }
   }
 
+  // 6. Blank frame / no visible text check at 50%/75%/100% samples
+  if (REQUIRE_VISIBLE_TEXT && visibleOnScreenCount === 0) {
+    violations.push({
+      type: 'no_visible_text',
+      kind: 'blank_frame',
+      blank_frame: true,
+      time_s: t,
+      text: '',
+      detail: `blank_frame / no_visible_text: no visible text element with opacity > 0.05 on screen at t=${t}s`
+    });
+  }
+
   return violations;
 })()
 """
@@ -1287,7 +1583,8 @@ def audit_layout(
     """Inspect an HTML motion graphic at sample timestamps in headless Chrome and flag layout violations."""
     chrome_bin = find_chrome_binary()
     dur = max(0.2, float(duration_s or 5.0))
-    sample_times = [round(dur * float(frac), 4) for frac in sample_fractions]
+    frac_list = [float(frac) for frac in sample_fractions]
+    sample_times = [round(dur * frac, 4) for frac in frac_list]
 
     temp_file: tempfile.NamedTemporaryFile[str] | None = None
     try:
@@ -1309,9 +1606,11 @@ def audit_layout(
         all_violations: list[dict[str, Any]] = []
         with _CDPPipeSession(chrome_bin, width=width, height=height) as cdp:
             cdp.open_page(target_path)
-            for t in sample_times:
+            for frac, t in zip(frac_list, sample_times):
+                require_visible = "true" if frac >= 0.5 - 1e-6 else "false"
                 expr = (
                     _AUDIT_JS_TEMPLATE.replace("__SAMPLE_TIME__", repr(float(t)))
+                    .replace("__REQUIRE_VISIBLE_TEXT__", require_visible)
                     .replace("__WIDTH__", str(int(width)))
                     .replace("__HEIGHT__", str(int(height)))
                     .replace("__SAFE_LEFT__", str(int(safe_left)))
@@ -1323,9 +1622,14 @@ def audit_layout(
                     "Runtime.evaluate",
                     {"expression": expr, "returnByValue": True, "awaitPromise": True},
                 )
+                if isinstance(res.get("exceptionDetails"), dict):
+                    all_violations.append(_format_cdp_exception_details(res["exceptionDetails"], time_s=t))
                 value = (res.get("result") or {}).get("value")
                 if isinstance(value, list):
                     all_violations.extend(value)
+            cdp.drain_events()
+            if cdp.js_errors:
+                all_violations = list(cdp.js_errors) + all_violations
 
         return AuditResult(
             passed=(len(all_violations) == 0),
@@ -1340,6 +1644,28 @@ def audit_layout(
                 pass
 
 
+def _save_rejected_html(
+    html: str,
+    out_path: str | Path | None = None,
+    *,
+    rejected_html_path: str | Path | None = None,
+    style: str = "scene",
+) -> Path:
+    """Save the rejected HTML next to the output as `<name>.rejected.html`."""
+    if rejected_html_path is not None:
+        p = Path(rejected_html_path)
+        target = p if p.name.endswith(".rejected.html") else p.with_suffix(".rejected.html")
+    elif out_path is not None:
+        p = Path(out_path)
+        target = p if p.name.endswith(".rejected.html") else p.with_suffix(".rejected.html")
+    else:
+        safe_style = re.sub(r"[^a-zA-Z0-9_-]+", "-", style or "scene").strip("-") or "scene"
+        target = Path(tempfile.gettempdir()) / f"{safe_style}.rejected.html"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(html, encoding="utf-8")
+    return target
+
+
 def audit_and_repair_html(
     html: str,
     *,
@@ -1348,32 +1674,53 @@ def audit_and_repair_html(
     brand: dict[str, Any] | str | Path | None = None,
     words: Any = None,
     model: str | None = None,
+    max_repairs: int | None = None,
+    out_path: str | Path | None = None,
+    rejected_html_path: str | Path | None = None,
 ) -> tuple[str, AuditResult]:
-    """Run `audit_layout` on `html`; on violations in real mode, do ONE LLM repair pass and re-audit.
+    """Run `audit_layout` on `html`; on violations in real mode, run up to `MAX_LAYOUT_REPAIRS`
+    (default 2, overridable via `PARALLAX_MOTION_MAX_REPAIRS`) LLM repair passes and re-audit.
 
-    Raises `LayoutViolationError` if layout audit still fails (never silently ships cropped text).
+    On final failure, saves the last HTML next to the output as `<name>.rejected.html`
+    and raises `LayoutViolationError` with that path in the error message.
     """
-    audit = audit_layout(html, duration_s=duration_s)
+    current_html = html
+    audit = audit_layout(current_html, duration_s=duration_s)
     if audit.passed:
-        return html, audit
+        return current_html, audit
 
     if is_test_mode():
-        raise LayoutViolationError(audit.violations)
+        rejected = _save_rejected_html(
+            current_html,
+            out_path=out_path,
+            rejected_html_path=rejected_html_path,
+            style=style,
+        )
+        raise LayoutViolationError(audit.violations, rejected_html_path=rejected)
 
-    repaired_html = repair_scene_html_with_llm(
-        html,
-        audit.violations,
+    repair_limit = resolve_max_layout_repairs(max_repairs)
+    for _attempt in range(repair_limit):
+        current_html = repair_scene_html_with_llm(
+            current_html,
+            audit.violations,
+            style=style,
+            brand=brand,
+            duration_s=duration_s,
+            words=words,
+            model=model,
+        )
+        audit = audit_layout(current_html, duration_s=duration_s)
+        audit.repaired = True
+        if audit.passed:
+            return current_html, audit
+
+    rejected = _save_rejected_html(
+        current_html,
+        out_path=out_path,
+        rejected_html_path=rejected_html_path,
         style=style,
-        brand=brand,
-        duration_s=duration_s,
-        words=words,
-        model=model,
     )
-    second_audit = audit_layout(repaired_html, duration_s=duration_s)
-    second_audit.repaired = True
-    if not second_audit.passed:
-        raise LayoutViolationError(second_audit.violations)
-    return repaired_html, second_audit
+    raise LayoutViolationError(audit.violations, rejected_html_path=rejected)
 
 
 def render_html_to_mp4(

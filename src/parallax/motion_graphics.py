@@ -243,6 +243,14 @@ def merge_brand_palette(brand: Optional[dict] = None, base: Optional[dict] = Non
         if isinstance(raw_palette.get("secondary"), str) and len(pal["sunrise"]) > 1:
             pal["sunrise"][1] = raw_palette["secondary"].strip()
 
+    from .html_motion import pick_contrasting_text
+
+    if "bg" in pal and "text" in pal:
+        pal["text"] = pick_contrasting_text(pal["text"], pal["bg"])
+        pal["ink"] = pal["text"]
+    if "accent" in pal:
+        pal["on_accent"] = pick_contrasting_text(pal.get("text", "#FFFFFF"), pal["accent"])
+
     return pal
 
 

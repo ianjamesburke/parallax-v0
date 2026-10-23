@@ -16,18 +16,30 @@ from parallax import cli, guide_topics
 from parallax.brief import Brief
 from parallax.html_motion import (
     CANONICAL_STYLE_ORDER,
+    DEFAULT_MOTION_GEN_ESTIMATE_USD,
     DEFAULT_MOTION_MODEL,
+    MAX_LAYOUT_REPAIRS,
     LayoutViolationError,
+    _FLASH_COMPLETION_COST_PER_TOKEN,
+    _FLASH_PROMPT_COST_PER_TOKEN,
     audit_and_repair_html,
     audit_layout,
     available_style_names,
+    build_motion_system_prompt,
+    estimate_motion_cost_usd,
     find_chrome_binary,
     generate_scene_html,
+    inline_gsap_script,
     list_style_presets,
+    load_brand_file,
     load_style_preset,
+    normalize_brand,
     patch_html_timing,
+    pick_contrasting_text,
     render_html_to_mp4,
+    resolve_max_layout_repairs,
     resolve_motion_model,
+    wcag_contrast_ratio,
 )
 from parallax.motion_graphics import BRAND_DEFAULT, _colors, merge_brand_palette
 from parallax.openrouter import client as openrouter_client
@@ -340,39 +352,233 @@ def test_layout_guard_flags_bad_html_and_passes_good_html() -> None:
 
 
 @requires_chrome
-def test_layout_guard_real_mode_one_repair_pass(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PARALLAX_TEST_MODE", "0")
-    good_html = generate_scene_html.__wrapped__ if hasattr(generate_scene_html, "__wrapped__") else None
-    # Build a known-good HTML in test mode first for the mocked repair response
+def test_layout_guard_catches_js_errors_blank_frames_and_sample_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 1a. Uncaught JS exception + console.error + blank frame (all text opacity 0)
+    js_err_and_blank_html = inline_gsap_script(
+        patch_html_timing(
+            """<!DOCTYPE html>
+<html>
+<head>
+<style>
+  html, body { margin: 0; width: 1080px; height: 1920px; background: #fff; font-family: sans-serif; }
+  .headline { position: absolute; left: 120px; top: 300px; font-size: 60px; opacity: 0; }
+</style>
+<script>/* __PARALLAX_GSAP_SCRIPT__ */</script>
+<script>/* __PARALLAX_TIMING_BLOCK__ */</script>
+</head>
+<body>
+  <div id="root">
+    <div class="headline" id="word-answer.">Hidden forever due to bad selector &amp; opacity:0</div>
+  </div>
+  <script>
+    console.error("custom_console_error_marker");
+    const tl = gsap.timeline({paused: true});
+    // Invalid CSS selector throws SyntaxError inside GSAP querySelectorAll
+    tl.from("#word-answer.", { opacity: 0, duration: 0.4 }, 0);
+    window.__seek = (t) => tl.seek(t, false);
+  </script>
+</body>
+</html>""",
+            duration=2.0,
+            fps=30,
+            words=[],
+        )
+    )
+    audit = audit_layout(js_err_and_blank_html, duration_s=2.0)
+    assert not audit.passed
+    vtypes = {v["type"] for v in audit.violations}
+    assert "js_error" in vtypes
+    assert "no_visible_text" in vtypes
+    assert any(v.get("blank_frame") is True for v in audit.violations if v["type"] == "no_visible_text")
+    js_messages = " ".join(
+        f"{v.get('detail', '')} {v.get('text', '')}"
+        for v in audit.violations
+        if v["type"] == "js_error"
+    )
+    assert "word-answer." in js_messages or "SyntaxError" in js_messages
+    assert "custom_console_error_marker" in js_messages
+
+    # 1b. CSS opacity:0 paired with tl.from({opacity:0}) (the editorial-clinical-s2 bug)
+    opacity_zero_bug_html = inline_gsap_script(
+        patch_html_timing(
+            """<!DOCTYPE html>
+<html>
+<head>
+<style>
+  html, body { margin: 0; width: 1080px; height: 1920px; background: #FAF8F5; font-family: sans-serif; }
+  .headline { position: absolute; left: 140px; top: 300px; width: 800px; font-size: 56px; opacity: 0; }
+</style>
+<script>/* __PARALLAX_GSAP_SCRIPT__ */</script>
+<script>/* __PARALLAX_TIMING_BLOCK__ */</script>
+</head>
+<body>
+  <div id="root"><div class="headline" id="main-headline">One text could drain your savings.</div></div>
+  <script>
+    const tl = gsap.timeline({paused: true});
+    tl.from("#main-headline", { opacity: 0, y: 20, duration: 0.5 }, 0);
+    window.__seek = (t) => tl.seek(t, false);
+    window.__seek(0);
+  </script>
+</body>
+</html>""",
+            duration=2.5,
+            fps=30,
+            words=[],
+        )
+    )
+    audit_op0 = audit_layout(opacity_zero_bug_html, duration_s=2.5)
+    assert not audit_op0.passed
+    assert any(v["type"] == "no_visible_text" for v in audit_op0.violations)
+
+    # 1c. Verify real sample files if present in /workspace/francisco-recordings
+    real_dir = Path("/workspace/francisco-recordings/motion-styles-v1/real")
+    for fname, expected_vtype in (
+        ("editorial-clinical-s2.html", "no_visible_text"),
+        ("kinetic-type-s2.html", "js_error"),
+    ):
+        fpath = real_dir / fname
+        if fpath.is_file():
+            real_audit = audit_layout(fpath, duration_s=4.5)
+            assert not real_audit.passed, f"{fname} should fail layout audit"
+            assert any(v["type"] == expected_vtype for v in real_audit.violations)
+
+    # 1d. Repair prompt receives the JS error text
     monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
-    valid_html = generate_scene_html("Safe layout after repair", "glass-ui", duration_s=1.0)
+    valid_html = generate_scene_html("Fixed scene", "kinetic-type", duration_s=2.0)
     monkeypatch.setenv("PARALLAX_TEST_MODE", "0")
 
-    bad_html = """<!DOCTYPE html><html><body style="margin:0;width:1080px;height:1920px;position:relative;">
-      <div style="position:absolute;left:10px;top:1700px;font-size:42px;">Cropped and in caption zone</div>
-    </body></html>"""
-
-    calls: list[dict[str, Any]] = []
+    repair_Bodies: list[dict[str, Any]] = []
 
     def _mock_post(path: str, body: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
-        calls.append({"path": path, "body": body})
+        repair_Bodies.append(body)
         return {
-            "id": "gen-mock-repair-1",
+            "id": "gen-mock-js-repair",
             "choices": [{"message": {"content": valid_html}}],
-            "usage": {"prompt_tokens": 120, "completion_tokens": 240, "total_tokens": 360, "cost": 0.0002},
+            "usage": {"prompt_tokens": 1000, "completion_tokens": 1000, "cost": 0.0028},
         }
 
     monkeypatch.setattr(openrouter_client, "_post", _mock_post)
-    repaired_html, result = audit_and_repair_html(
-        bad_html,
-        duration_s=1.0,
-        style="glass-ui",
+    repaired_html, res = audit_and_repair_html(
+        js_err_and_blank_html,
+        duration_s=2.0,
+        style="kinetic-type",
     )
-    assert len(calls) == 1
-    assert calls[0]["path"] == "/chat/completions"
-    assert result.passed
-    assert result.repaired
-    assert "gsap.timeline" in repaired_html
+    assert res.passed and res.repaired
+    assert len(repair_Bodies) == 1
+    user_prompt = repair_Bodies[0]["messages"][1]["content"]
+    assert "JavaScript Errors Thrown During Execution" in user_prompt
+    assert "word-answer." in user_prompt
+
+
+@requires_chrome
+def test_repair_two_passes_rejected_html_fittext_and_overlap_rules(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    assert MAX_LAYOUT_REPAIRS == 2
+    monkeypatch.delenv("PARALLAX_MOTION_MAX_REPAIRS", raising=False)
+    assert resolve_max_layout_repairs() == 2
+    monkeypatch.setenv("PARALLAX_MOTION_MAX_REPAIRS", "3")
+    assert resolve_max_layout_repairs() == 3
+    monkeypatch.delenv("PARALLAX_MOTION_MAX_REPAIRS", raising=False)
+
+    monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
+    valid_html = generate_scene_html("Clean repaired headline", "neo-brutal", duration_s=1.5)
+    monkeypatch.setenv("PARALLAX_TEST_MODE", "0")
+
+    bad_html_1 = """<!DOCTYPE html><html><body style="margin:0;width:1080px;height:1920px;position:relative;">
+      <div style="position:absolute;left:10px;top:1700px;font-size:42px;">First broken attempt</div>
+    </body></html>"""
+    bad_html_2 = """<!DOCTYPE html><html><body style="margin:0;width:1080px;height:1920px;position:relative;">
+      <div style="position:absolute;left:200px;top:1600px;font-size:42px;">Second broken attempt in caption zone</div>
+    </body></html>"""
+
+    # 2a. Succeeds on the 2nd repair pass
+    seq = iter([bad_html_2, valid_html])
+    call_count = 0
+
+    def _mock_two_repairs(path: str, body: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        nonlocal call_count
+        call_count += 1
+        return {
+            "id": f"gen-repair-{call_count}",
+            "choices": [{"message": {"content": next(seq)}}],
+            "usage": {"prompt_tokens": 500, "completion_tokens": 500, "cost": 0.0014},
+        }
+
+    monkeypatch.setattr(openrouter_client, "_post", _mock_two_repairs)
+    repaired, audit_ok = audit_and_repair_html(
+        bad_html_1,
+        duration_s=1.5,
+        style="neo-brutal",
+        out_path=tmp_path / "scene_ok.mp4",
+    )
+    assert call_count == 2
+    assert audit_ok.passed and audit_ok.repaired
+    assert "gsap.timeline" in repaired
+
+    # 2b. When all repair passes fail, saves <name>.rejected.html and includes path in error
+    def _mock_always_bad(path: str, body: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        return {
+            "id": "gen-repair-bad",
+            "choices": [{"message": {"content": bad_html_2}}],
+            "usage": {"prompt_tokens": 500, "completion_tokens": 500, "cost": 0.0014},
+        }
+
+    monkeypatch.setattr(openrouter_client, "_post", _mock_always_bad)
+    out_mp4 = tmp_path / "failing_scene.mp4"
+    expected_rejected = tmp_path / "failing_scene.rejected.html"
+    with pytest.raises(LayoutViolationError) as exc_info:
+        audit_and_repair_html(
+            bad_html_1,
+            duration_s=1.5,
+            style="neo-brutal",
+            out_path=out_mp4,
+        )
+    assert expected_rejected.is_file()
+    assert str(expected_rejected) in str(exc_info.value)
+    assert exc_info.value.rejected_html_path == expected_rejected
+    assert "Second broken attempt" in expected_rejected.read_text(encoding="utf-8")
+
+    # 2c. window.__fitText shrinks oversized headline & ancestor/descendant + opacity<0.05 overlap ignored
+    fit_and_overlap_html = inline_gsap_script(
+        patch_html_timing(
+            """<!DOCTYPE html>
+<html>
+<head>
+<style>
+  html, body { margin: 0; width: 1080px; height: 1920px; background: #FFFDF7; font-family: sans-serif; }
+  .card { position: absolute; left: 110px; top: 200px; width: 860px; padding: 24px; background: #fff; }
+  .headline { font-size: 130px; font-weight: 900; width: 800px; }
+  .ghost { position: absolute; left: 130px; top: 220px; font-size: 60px; opacity: 0.02; }
+</style>
+<script>/* __PARALLAX_GSAP_SCRIPT__ */</script>
+<script>/* __PARALLAX_TIMING_BLOCK__ */</script>
+</head>
+<body>
+  <div id="root">
+    <div class="card">
+      <div class="headline" id="hl">SUPERLONGUNBROKENHEADLINEWORDTHATMUSTSHRINKTOFIT</div>
+    </div>
+    <div class="ghost">Invisible ghost text overlapping headline at opacity 0.02</div>
+  </div>
+  <script>
+    window.__fitText("#hl", 780);
+    const tl = gsap.timeline({paused: true});
+    tl.fromTo("#hl", {y: 10}, {y: 0, duration: 0.3}, 0);
+    window.__seek = (t) => tl.seek(t, false);
+    window.__seek(0);
+  </script>
+</body>
+</html>""",
+            duration=1.5,
+            fps=30,
+            words=[],
+        )
+    )
+    fit_audit = audit_layout(fit_and_overlap_html, duration_s=1.5, sample_fractions=(0.5, 1.0))
+    assert fit_audit.passed, f"Expected fitText + ghost/ancestor scene to pass, got {fit_audit.violations}"
 
 
 # ---------------------------------------------------------------------------
@@ -467,17 +673,30 @@ def test_produce_integration_motion_graphic_with_motion_style_writes_clip_and_ht
     assert loaded_plan.scenes[0].motion_style == "kinetic-type"
     assert loaded_plan.scenes[0].clip_path is None
 
+    plan_before = plan_path.read_text(encoding="utf-8")
     res = run_plan(folder=tmp_path, plan_path=plan_path, mode=ProductionMode.TEST)
     assert res.status == "ok", f"produce failed: {res.error}"
     assert res.final_video is not None and res.final_video.is_file()
 
-    updated_plan = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
-    scene0 = updated_plan["scenes"][0]
-    assert scene0.get("html_path"), f"Expected html_path in plan.yaml scene 0, got {scene0}"
-    assert scene0.get("clip_path"), f"Expected clip_path in plan.yaml scene 0, got {scene0}"
+    # In test mode, dry-run stubs must NOT be locked into plan.yaml on disk
+    plan_after = plan_path.read_text(encoding="utf-8")
+    assert plan_after == plan_before
+    disk_plan_scene0 = yaml.safe_load(plan_after)["scenes"][0]
+    assert not disk_plan_scene0.get("clip_path")
+    assert not disk_plan_scene0.get("html_path")
 
-    resolved_html = tmp_path / scene0["html_path"]
-    resolved_clip = tmp_path / scene0["clip_path"]
+    # However, state.scenes / state.aligned / manifest.yaml and assembly DID receive the clip and HTML
+    manifest_file = res.final_video.parent / "manifest.yaml"
+    if not manifest_file.is_file():
+        manifest_file = res.final_video.parent.parent / "manifest.yaml"
+    assert manifest_file.is_file()
+    manifest_data = yaml.safe_load(manifest_file.read_text(encoding="utf-8"))
+    m_scene0 = manifest_data["scenes"][0]
+    assert m_scene0.get("html_path"), f"Expected html_path in state.aligned/manifest scene 0, got {m_scene0}"
+    assert m_scene0.get("clip_path"), f"Expected clip_path in state.aligned/manifest scene 0, got {m_scene0}"
+
+    resolved_html = Path(m_scene0["html_path"])
+    resolved_clip = Path(m_scene0["clip_path"])
     assert resolved_html.is_file()
     assert resolved_clip.is_file()
 
@@ -485,6 +704,139 @@ def test_produce_integration_motion_graphic_with_motion_style_writes_clip_and_ht
     assert "#E11D48" in html_content
     assert "PulseShield" in html_content
     assert "data:image/svg+xml;base64," in html_content
+
+
+# ---------------------------------------------------------------------------
+# 7b. Cost estimate, contrast-aware brand role mapping, and relative paths
+# ---------------------------------------------------------------------------
+
+
+def test_flash_cost_constants_and_realistic_scene_estimate() -> None:
+    assert _FLASH_PROMPT_COST_PER_TOKEN == pytest.approx(0.30 / 1_000_000)
+    assert _FLASH_COMPLETION_COST_PER_TOKEN == pytest.approx(2.50 / 1_000_000)
+    single_call = estimate_motion_cost_usd(include_repairs=False)
+    with_repairs = estimate_motion_cost_usd(include_repairs=True)
+    assert 0.005 <= single_call <= 0.02
+    assert 0.005 <= DEFAULT_MOTION_GEN_ESTIMATE_USD <= 0.025
+    assert with_repairs >= single_call
+
+
+def test_brand_contrast_role_mapping_canned_and_llm_prompt() -> None:
+    # Dark navy ink (#001A4D) on dark slate bg (#0F172A) has contrast < 4.5 -> remapped to #FFFFFF
+    assert wcag_contrast_ratio("#001A4D", "#0F172A") < 4.5
+    assert pick_contrasting_text("#001A4D", "#0F172A") == "#FFFFFF"
+    # Light cyan accent2 (#D4EEFF) with white text has contrast < 4.5 -> remapped to brand ink (#001A4D) or #0A0A0A
+    assert wcag_contrast_ratio("#FFFFFF", "#D4EEFF") < 4.5
+    assert pick_contrasting_text("#001A4D", "#D4EEFF") == "#001A4D"
+
+    # Case A: Brand only overrides ink: #001A4D on dark-bg kinetic-type preset (#0F172A)
+    preset_kt = load_style_preset("kinetic-type")
+    norm_dark = normalize_brand({"palette": {"ink": "#001A4D"}}, preset_kt)
+    assert wcag_contrast_ratio(norm_dark["palette"]["ink"], norm_dark["palette"]["bg"]) >= 4.5
+    assert norm_dark["palette"]["ink"] == "#FFFFFF"
+
+    # Case B: Malwarebytes sample brand (ink #001A4D, bg #FFFFFF, primary #0059FF, secondary #D4EEFF, no surface)
+    mb_brand = {
+        "name": "Malwarebytes",
+        "palette": {
+            "primary": "#0059FF",
+            "secondary": "#D4EEFF",
+            "bg": "#FFFFFF",
+            "ink": "#001A4D",
+        },
+    }
+    norm_mb = normalize_brand(mb_brand, preset_kt)
+    pal = norm_mb["palette"]
+    assert wcag_contrast_ratio(pal["ink"], pal["bg"]) >= 4.5
+    assert wcag_contrast_ratio(pal["on_surface"], pal["surface"]) >= 4.5
+    assert wcag_contrast_ratio(pal["on_accent"], pal["accent"]) >= 4.5
+    assert wcag_contrast_ratio(pal["on_accent2"], pal["accent2"]) >= 4.5
+    assert pal["on_accent2"] in ("#001A4D", "#0A0A0A")
+
+    # Verify canned kinetic-type HTML and LLM system prompt receive contrast-safe tokens
+    canned_html = generate_scene_html(
+        "Scam call blocked immediately.",
+        "kinetic-type",
+        brand=mb_brand,
+        duration_s=2.0,
+    )
+    assert f"--on-surface: {pal['on_surface']};" in canned_html
+    assert f"--on-accent2: {pal['on_accent2']};" in canned_html
+    assert "#1E293B" not in canned_html  # dark preset surface was aligned with light brand bg
+
+    sys_prompt = build_motion_system_prompt(preset_kt, norm_mb, duration_s=3.0, words=[])
+    assert f"--on-accent: {pal['on_accent']}" in sys_prompt
+    assert f"--on-accent2: {pal['on_accent2']}" in sys_prompt
+    assert "window.__fitText" in sys_prompt
+    assert "940px" in sys_prompt
+
+
+@requires_chrome
+def test_relative_paths_brand_logo_and_cli_words_brand_from_cwd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Create a nested brand dir with a relative logo path (`assets/logo.svg`)
+    brand_dir = tmp_path / "configs" / "brand_pack"
+    (brand_dir / "assets").mkdir(parents=True, exist_ok=True)
+    logo_svg = brand_dir / "assets" / "logo.svg"
+    logo_svg.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60"><rect width="60" height="60" fill="#0059FF"/></svg>',
+        encoding="utf-8",
+    )
+    brand_yaml = brand_dir / "brand.yaml"
+    brand_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "name": "RelBrand",
+                "logo": "assets/logo.svg",
+                "palette": {"primary": "#0059FF", "bg": "#FFFFFF", "ink": "#001A4D"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Also create a workdir from which we pass relative --brand and --words
+    work_dir = tmp_path / "workdir"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    words_file = work_dir / "rel_words.json"
+    words_file.write_text(
+        json.dumps([{"word": "Relative", "start": 0.1, "end": 0.5}]),
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(work_dir)
+    rel_brand_arg = "../configs/brand_pack/brand.yaml"
+    rel_words_arg = "rel_words.json"
+    rel_out_arg = "out/rel_motion.mp4"
+
+    rc = cli.main(
+        [
+            "video",
+            "motion",
+            "--style",
+            "flat-explainer",
+            "--brand",
+            rel_brand_arg,
+            "--words",
+            rel_words_arg,
+            "--text",
+            "Relative paths work cleanly.",
+            "--duration",
+            "1.0",
+            "--fps",
+            "6",
+            "--out",
+            rel_out_arg,
+        ]
+    )
+    assert rc == 0
+    out_mp4 = work_dir / "out" / "rel_motion.mp4"
+    out_html = work_dir / "out" / "rel_motion.html"
+    assert out_mp4.is_file()
+    assert out_html.is_file()
+    rendered_html = out_html.read_text(encoding="utf-8")
+    assert "data:image/svg+xml;base64," in rendered_html
+    assert "RelBrand" in rendered_html
 
 
 # ---------------------------------------------------------------------------

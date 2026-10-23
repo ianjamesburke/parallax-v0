@@ -231,10 +231,11 @@ def video_motion(
     """Render a styled HTML/SVG + GSAP motion graphic scene to MP4 (or list styles / re-time existing HTML)."""
     from pathlib import Path
     from ..html_motion import (
-        DEFAULT_MOTION_GEN_ESTIMATE_USD,
         LayoutViolationError,
+        _save_rejected_html,
         audit_and_repair_html,
         audit_layout,
+        estimate_motion_cost_usd,
         generate_scene_html,
         inline_gsap_script,
         list_style_presets,
@@ -265,7 +266,9 @@ def video_motion(
     words_list = []
     inferred_dur: float | None = None
     if words:
-        words_path = Path(words)
+        words_path = Path(words).expanduser()
+        if not words_path.is_absolute():
+            words_path = Path.cwd() / words_path
         if not words_path.is_file():
             raise typer.BadParameter(f"words file not found: {words}")
         raw_words_data = json.loads(words_path.read_text(encoding="utf-8"))
@@ -276,13 +279,22 @@ def video_motion(
             inferred_dur = float(words_list[-1]["end"])
 
     duration_s = float(duration) if duration is not None else (inferred_dur if inferred_dur and inferred_dur > 0 else 5.0)
-    out_mp4 = Path(out)
+    out_mp4 = Path(out).expanduser()
+    if not out_mp4.is_absolute():
+        out_mp4 = Path.cwd() / out_mp4
     out_mp4.parent.mkdir(parents=True, exist_ok=True)
-    target_html = Path(html_out) if html_out else out_mp4.with_suffix(".html")
+    if html_out:
+        target_html = Path(html_out).expanduser()
+        if not target_html.is_absolute():
+            target_html = Path.cwd() / target_html
+    else:
+        target_html = out_mp4.with_suffix(".html")
     target_html.parent.mkdir(parents=True, exist_ok=True)
 
     if from_html:
-        src_html_path = Path(from_html)
+        src_html_path = Path(from_html).expanduser()
+        if not src_html_path.is_absolute():
+            src_html_path = Path.cwd() / src_html_path
         if not src_html_path.is_file():
             raise typer.BadParameter(f"--from-html file not found: {from_html}")
         raw_html = src_html_path.read_text(encoding="utf-8")
@@ -292,7 +304,8 @@ def video_motion(
         target_html.write_text(patched_html, encoding="utf-8")
         audit = audit_layout(target_html, duration_s=duration_s)
         if not audit.passed:
-            raise LayoutViolationError(audit.violations)
+            rejected_path = _save_rejected_html(patched_html, out_mp4)
+            raise LayoutViolationError(audit.violations, rejected_html_path=rejected_path)
         render_html_to_mp4(target_html, out_mp4, duration_s=duration_s, fps=fps)
         if json_output:
             print(
@@ -322,8 +335,11 @@ def video_motion(
 
     brand_dict = None
     if brand:
+        brand_path = Path(brand).expanduser()
+        if not brand_path.is_absolute():
+            brand_path = Path.cwd() / brand_path
         try:
-            brand_dict = load_brand_file(brand)
+            brand_dict = load_brand_file(brand_path)
         except (FileNotFoundError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
 
@@ -331,7 +347,7 @@ def video_motion(
     if not is_test_mode():
         print_estimate(
             f"video motion --style {style} --model {resolved_model}",
-            DEFAULT_MOTION_GEN_ESTIMATE_USD,
+            estimate_motion_cost_usd(),
         )
 
     html = generate_scene_html(
@@ -349,6 +365,7 @@ def video_motion(
         brand=brand_dict,
         words=words_list,
         model=resolved_model,
+        out_path=out_mp4,
     )
     target_html.write_text(html, encoding="utf-8")
     render_html_to_mp4(target_html, out_mp4, duration_s=duration_s, fps=fps)

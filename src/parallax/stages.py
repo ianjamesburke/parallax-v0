@@ -181,8 +181,6 @@ def _lock_field_in_plan(
     field_name: str,
     value: str,
     folder: Path,
-    *,
-    allow_in_test_mode: bool = False,
 ) -> None:
     """Write an asset path back into the plan YAML so the scene is locked on future runs.
 
@@ -207,7 +205,7 @@ def _lock_field_in_plan(
                 break
 
         # A dry run's stubs must never become locks in the real plan: later real runs and cost estimates would treat them as approved assets.
-        if is_test_mode() and not allow_in_test_mode:
+        if is_test_mode():
             return
 
         # Read current on-disk state to avoid overwriting concurrent user edits.
@@ -1148,13 +1146,14 @@ def stage_motion_graphics(plan: dict[str, Any], settings: Settings, state: Pipel
     """
     from .ffmpeg_utils import parse_resolution
     from .html_motion import (
+        LayoutViolationError,
+        _save_rejected_html,
         audit_and_repair_html,
         audit_layout,
         generate_scene_html,
         inline_gsap_script,
         patch_html_timing,
         render_html_to_mp4,
-        LayoutViolationError,
     )
 
     scenes = state.scenes
@@ -1240,7 +1239,8 @@ def stage_motion_graphics(plan: dict[str, Any], settings: Settings, state: Pipel
             )
             audit = audit_layout(html_content, duration_s=scene_dur, width=w_out, height=h_out)
             if not audit.passed:
-                raise LayoutViolationError(audit.violations)
+                rejected = _save_rejected_html(html_content, canonical_mp4)
+                raise LayoutViolationError(audit.violations, rejected_html_path=rejected)
             canonical_html.write_text(html_content, encoding="utf-8")
         else:
             style_name = s.motion_style or "flat-explainer"
@@ -1259,6 +1259,7 @@ def stage_motion_graphics(plan: dict[str, Any], settings: Settings, state: Pipel
                 style=style_name,
                 brand=plan_brand,
                 words=scene_words,
+                out_path=canonical_mp4,
             )
             canonical_html.write_text(html_content, encoding="utf-8")
 
@@ -1272,24 +1273,23 @@ def stage_motion_graphics(plan: dict[str, Any], settings: Settings, state: Pipel
         )
         s.html_path = str(canonical_html)
         s.clip_path = str(canonical_mp4)
-        _lock_field_in_plan(
-            settings.plan_path,
-            plan,
-            s.index,
-            "html_path",
-            str(canonical_html),
-            settings.folder,
-            allow_in_test_mode=True,
-        )
-        _lock_field_in_plan(
-            settings.plan_path,
-            plan,
-            s.index,
-            "clip_path",
-            str(canonical_mp4),
-            settings.folder,
-            allow_in_test_mode=True,
-        )
+        if not (is_test_mode() or settings.mode == ProductionMode.TEST):
+            _lock_field_in_plan(
+                settings.plan_path,
+                plan,
+                s.index,
+                "html_path",
+                str(canonical_html),
+                settings.folder,
+            )
+            _lock_field_in_plan(
+                settings.plan_path,
+                plan,
+                s.index,
+                "clip_path",
+                str(canonical_mp4),
+                settings.folder,
+            )
         if aligned_entry:
             aligned_entry["html_path"] = str(canonical_html)
             aligned_entry["clip_path"] = str(canonical_mp4)
