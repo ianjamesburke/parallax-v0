@@ -80,7 +80,7 @@ def _apply_regenerate_flags(plan: dict, plan_path: Path) -> None:
     Only per-scene asset lock fields are cleared: still_path, clip_path, end_frame_path.
     Top-level audio_path/words_path are NOT cleared — those are plan-wide locks.
     """
-    _SCENE_LOCK_FIELDS = ("still_path", "clip_path", "end_frame_path")
+    _SCENE_LOCK_FIELDS = ("still_path", "clip_path", "end_frame_path", "html_path")
     changed = False
     for scene in plan.get("scenes", []):
         if scene.get("regenerate"):

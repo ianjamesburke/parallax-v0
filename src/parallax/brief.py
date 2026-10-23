@@ -139,6 +139,8 @@ class BriefScene(BaseModel):
     image_refs: list[str] = Field(default_factory=list)
     still_path: str | None = None  # approved still from a prior version — skips generation
     clip_path: str | None = None  # reusable locally rendered or previously generated clip
+    motion_style: str | None = None  # HTML/SVG + GSAP motion style preset name (for motion_graphic scenes)
+    html_path: str | None = None  # generated or authored HTML motion scene path
     on_screen_text: str | None = None  # storyboard copy; not automatically burned into video
     regenerate: bool = False  # when true, clears locks on produce and archives the previous version to parallax/assets/versions/
     # Presentation-only fields used by an imported finished-cut storyboard.  They
@@ -182,6 +184,15 @@ class BriefScene(BaseModel):
             raise ValueError(
                 f"scene aspect must be one of {_ALLOWED_ASPECTS}, got {v!r}"
             )
+        return v
+
+    @field_validator("motion_style")
+    @classmethod
+    def _check_motion_style(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        from .html_motion import load_style_preset
+        load_style_preset(v)
         return v
 
 
@@ -257,7 +268,7 @@ class Brief(BaseModel):
             if not full.is_file():
                 missing.append(str(full))
         for scene in self.script.scenes:
-            for asset_path in [scene.still_path, scene.clip_path, *scene.image_refs]:
+            for asset_path in [scene.still_path, scene.clip_path, scene.html_path, *scene.image_refs]:
                 if asset_path:
                     sp = Path(asset_path).expanduser()
                     full = sp if sp.is_absolute() else root / sp
@@ -277,7 +288,12 @@ class Brief(BaseModel):
         """
         if not stills_only:
             for scene in self.script.scenes:
-                if scene.scene_type == "motion_graphic" and not scene.clip_path:
+                if (
+                    scene.scene_type == "motion_graphic"
+                    and not scene.clip_path
+                    and not scene.motion_style
+                    and not scene.html_path
+                ):
                     raise ValueError(
                         f"scene {scene.index}: motion_graphic needs a locally rendered clip_path before planning. "
                         "Review the storyboard, render the graphic, then add its clip_path; AI generation is not supported for this scene type."
@@ -300,6 +316,8 @@ class Brief(BaseModel):
                 **({"aspect": s.aspect} if s.aspect else {}), **({"reference_images": s.image_refs} if s.image_refs else {}),
                 **({"reference": True} if self.character_reference and s.shot_type == "character" else {}),
                 **({"still_path": s.still_path} if s.still_path else {}), **({"clip_path": s.clip_path} if s.clip_path else {}),
+                **({"motion_style": s.motion_style} if s.motion_style else {}),
+                **({"html_path": s.html_path} if s.html_path else {}),
                 **({"regenerate": True} if s.regenerate else {}),
             }
             scenes_out.append(item); cursor += max(.5, len(s.vo_text.split()) / 2.5)

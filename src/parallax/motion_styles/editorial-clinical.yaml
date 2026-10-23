@@ -1,0 +1,37 @@
+name: editorial-clinical
+description: "Editorial clinical authority: generous whitespace, serif/sans pairing, hairline Swiss grid rules, data callouts, and restrained trustworthy motion."
+design_rules: |
+  Design an authoritative, magazine-grade clinical or financial explainer on a warm alabaster or crisp ivory canvas.
+  Pair high-contrast editorial serif headlines with clean sans-serif tabular numerals, separated by 1px hairline dividers (rgba(24, 24, 27, 0.15)).
+  Present clear data callouts, milestone timelines, or ingredient/metric breakdowns with restrained, deliberate motion.
+palette:
+  bg: "#FAF7F2"
+  surface: "#FFFFFF"
+  ink: "#18181B"
+  accent: "#2A5C43"
+  accent2: "#C86D51"
+fonts:
+  heading: "Georgia, 'Instrument Serif', 'Times New Roman', serif"
+  body: "'Inter', 'Montserrat', 'DejaVu Sans', Arial, sans-serif"
+motion:
+  eases:
+    - "power3.out"
+    - "expo.out"
+    - "power2.inOut"
+  durations:
+    entrance: 0.55
+    emphasis: 0.45
+    settle: 0.35
+  entrance_types:
+    - "masked-line-reveal"
+    - "hairline-rule-grow"
+    - "metric-fade-up"
+    - "timeline-bar-fill"
+do:
+  - "Maintain generous breathing room, crisp 1px grid rules, and clear typographic hierarchy."
+  - "Highlight one primary clinical metric or milestone beat synced to window.__TIMING.cue()."
+  - "Keep all text strictly inside the safe box above y=1344 with zero text overlap."
+dont:
+  - "Do not use cartoonish bounces, neon glows, or rotated sticker tags."
+  - "Do not crowd cards with long paragraphs; keep labels concise and scannable."
+  - "Do not let serif headlines overflow horizontally (left < 70 or right > 1010)."

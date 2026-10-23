@@ -1,0 +1,37 @@
+name: neo-brutal
+description: "Neo-brutalist pop punch: thick black borders, hard zero-blur offset shadows, saturated flat fills, chunky type, and snappy stepped motion."
+design_rules: |
+  Build high-impact neo-brutalist compositions with bold geometric blocks, thick solid ink borders (6px-10px solid #001A4D or #111111), and hard zero-blur offset shadows (12px 12px 0px #111111).
+  Pair a warm or high-contrast pastel canvas with hyper-saturated flat fill cards, slightly tilted sticker tags (-3deg to +3deg), and heavy display typography.
+  Choreograph entrances with snappy overshoot pops, stamp slams, and brief horizontal shake beats on emphasis words.
+palette:
+  bg: "#D4EEFF"
+  surface: "#FFFFFF"
+  ink: "#001A4D"
+  accent: "#0059FF"
+  accent2: "#FFDE3A"
+fonts:
+  heading: "'Anton', 'Montserrat', 'DejaVu Sans', Impact, sans-serif"
+  body: "'Space Grotesk', 'DejaVu Sans', Arial, sans-serif"
+motion:
+  eases:
+    - "back.out(2.2)"
+    - "steps(4)"
+    - "expo.out"
+  durations:
+    entrance: 0.28
+    emphasis: 0.22
+    settle: 0.20
+  entrance_types:
+    - "stamp-slam"
+    - "stepped-slide-up"
+    - "sticker-tilt-pop"
+    - "alert-shake"
+do:
+  - "Use 6px-10px solid dark borders and hard offset shadows (e.g. 14px 14px 0 #001A4D) with zero blur."
+  - "Use chunky uppercase headlines and high-contrast sticker tags."
+  - "Sync slam and shake beats to spoken emphasis words via window.__TIMING.cue()."
+dont:
+  - "Do not use soft blurred shadows, gradients, or low-contrast muted gray text."
+  - "Do not place any text or badge in the bottom caption band (y > 1344)."
+  - "Do not allow tilted stickers to clip outside the horizontal safe margins (x < 70 or x > 1010)."

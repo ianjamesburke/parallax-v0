@@ -1,0 +1,37 @@
+name: kinetic-type
+description: "Type-led kinetic poster: oversized words keyed to VO timestamps, word-by-word reveals, punchy scale/slide transitions, and minimal geometric shapes."
+design_rules: |
+  Build a bold, typography-first vertical composition where oversized words and short phrase blocks are the primary visual hero.
+  Stack 2 to 4 distinct typographic rows in a structured vertical flex/grid container inside the upper safe zone, using pill highlight blocks or accent color fills on the key emphasis words.
+  Choreograph each word or line to pop, slide, or scale in on its exact spoken cue via window.__TIMING.cue().
+palette:
+  bg: "#0F172A"
+  surface: "#1E293B"
+  ink: "#FFFFFF"
+  accent: "#38BDF8"
+  accent2: "#F43F5E"
+fonts:
+  heading: "'Anton', 'Montserrat', 'DejaVu Sans', Impact, sans-serif"
+  body: "'Montserrat', 'DejaVu Sans', Arial, sans-serif"
+motion:
+  eases:
+    - "back.out(1.8)"
+    - "expo.out"
+    - "power4.out"
+  durations:
+    entrance: 0.25
+    emphasis: 0.22
+    settle: 0.20
+  entrance_types:
+    - "word-by-word-pop"
+    - "pill-highlight-wipe"
+    - "slide-up-stagger"
+    - "scale-punch"
+do:
+  - "Key each major word or phrase block directly to window.__TIMING.cue(word, fallback)."
+  - "Use distinct rows with generous vertical spacing so words never collide or overlap."
+  - "Constrain font sizes and container widths so long words never clip outside x=[86, 994] or y=[90, 1320]."
+dont:
+  - "Do not stack multiple words at the same (x, y) coordinates where they can overlap."
+  - "Do not place any kinetic text below y=1344 (the caption-safe zone)."
+  - "Do not use tiny body text; keep all kinetic copy bold and immediately legible."

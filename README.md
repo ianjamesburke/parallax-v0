@@ -104,6 +104,18 @@ parallax image analyze ./stills/frame.png "what is the dominant color palette?"
 
 Other commands: `parallax usage`, `parallax credits`, `parallax log <run|latest|list>`, `parallax verify suite <dir>`, `parallax audio {transcribe,detect-silences,trim,cap-pauses,speed}`, `parallax video {frame,color}`.
 
+### Motion graphics styles
+
+`scene_type: motion_graphic` supports an HTML/SVG + GSAP motion-graphics renderer with five built-in style presets (`flat-explainer`, `neo-brutal`, `glass-ui`, `editorial-clinical`, `kinetic-type`) alongside the zero-spend PIL primitives (`app-screen`, `end-card`, `diagram`, `text-overlay`):
+
+```sh
+parallax video motion --list-styles
+parallax video motion --style flat-explainer --brand brand.yaml --text "Stop phone scams before they reach you" --words words.json --duration 4 --out scene.mp4
+parallax video motion --from-html scene.html --words updated_words.json --duration 4.5 --out scene.mp4
+```
+
+In `brief.yaml` or `plan.yaml`, set `scene_type: motion_graphic` and `motion_style: flat-explainer` (with top-level `brand:`); `parallax produce` generates (or re-times `html_path`), audits layout safety, renders the MP4 clip after voiceover alignment, and writes `html_path` and `clip_path` back into `plan.yaml`.
+
 ## Storyboard package
 
 `parallax guide` prints the whole workflow as JSON (stages, commands, flags, preconditions, review boundaries, what needs a human decision). `parallax guide storyboard` is the concise storyboard-package topic. An agent needs only `--help`, `parallax schema`, and the guide; there is no separate operator skill.

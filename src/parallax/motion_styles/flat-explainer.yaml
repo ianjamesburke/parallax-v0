@@ -1,0 +1,39 @@
+name: flat-explainer
+description: "Flat vector explainer (MWB46 style): rounded cards, phone UI mockups, soft shadows, friendly icons, and clean brand-blue palette."
+design_rules: |
+  Compose clean, friendly flat-vector UI explainers on a light tinted canvas.
+  Center a rounded smartphone frame (border-radius 48px, subtle 2px border or crisp dark bezel) or structured feature cards in the upper 65% of the 1080x1920 stage.
+  Use soft elevated drop shadows (0 16px 40px rgba(10, 22, 40, 0.12)), pill-shaped status tags (border-radius 999px), and clear inline SVG icons (shields, checkmarks, incoming-call badges, sweep/scan props).
+  Keep typography bold and geometric with high contrast against card surfaces.
+palette:
+  bg: "#F0F5FF"
+  surface: "#FFFFFF"
+  ink: "#0A1628"
+  accent: "#0059FF"
+  accent2: "#00C853"
+fonts:
+  heading: "'Plus Jakarta Sans', 'Montserrat', 'DejaVu Sans', Arial, sans-serif"
+  body: "'Inter', 'Montserrat', 'DejaVu Sans', Arial, sans-serif"
+motion:
+  eases:
+    - "back.out(1.6)"
+    - "power3.out"
+    - "power2.inOut"
+    - "sine.inOut"
+  durations:
+    entrance: 0.42
+    emphasis: 0.35
+    settle: 0.30
+  entrance_types:
+    - "slide-up-card"
+    - "scale-pop-badge"
+    - "svg-stroke-draw"
+    - "cta-pill-pulse"
+do:
+  - "Use rounded cards (24px-36px radius) and pill badges (999px radius) with soft layered shadows."
+  - "Anchor card pops, icon reveals, and CTA pulses to window.__TIMING.cue() word timestamps."
+  - "Keep all text and interactive badges strictly inside x=[86, 994] and y=[90, 1320]."
+dont:
+  - "Do not use harsh 1990s bevels, photorealistic textures, or cluttered multi-column small text."
+  - "Do not place any text or logo below y=1344 (the caption-safe zone)."
+  - "Do not let text overflow its container or overlap sibling text."
