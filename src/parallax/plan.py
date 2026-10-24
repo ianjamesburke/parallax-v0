@@ -223,6 +223,8 @@ class Plan(BaseModel):
     headline_font: Literal["bangers", "impact", "bebas", "anton", "clean"] | None = None
     headline_bg: str | None = None
     headline_color: str | None = None
+    # Opening overlays are opaque from frame 0 unless explicitly opted into a fade.
+    headline_fade_in_s: float = Field(default=0.0, ge=0.0)
 
     # Video generation resolution (plan-level default; per-scene overrides allowed)
     animate_resolution: str | None = None

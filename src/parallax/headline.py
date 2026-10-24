@@ -111,11 +111,14 @@ def burn_headline(
     font_name: str = "bangers",
     y_position: str = "h*12/100",
     end_time_s: float | None = None,
+    fade_in_s: float = 0.0,
 ) -> str:
     """Overlay a headline with a solid block background (Instagram/TikTok style).
 
-    end_time_s: if set, headline fades out at this timestamp (use first scene's end_s
+    end_time_s: if set, hide the headline at this timestamp (use first scene's end_s
                 so the headline is only visible during the intro).
+    fade_in_s: optional explicit fade-in duration. Defaults to 0 so the headline is
+               fully opaque on frame 0.
     bg_color / text_color accept any ffmpeg color string (e.g. 'white', 'black', '#FF0000').
     y_position is an ffmpeg expression for the TOP of the text block (default: 12% from top).
     font_name: one of bangers, impact, bebas, anton, clean (uses bundled fonts).
@@ -134,6 +137,10 @@ def burn_headline(
     font_path = str(_FONTS_DIR / fontfile) if fontfile else style.get("system_font", "")
 
     enable_clause = f":enable='lt(t,{end_time_s})'" if end_time_s is not None else ""
+    fade_in_s = max(0.0, float(fade_in_s))
+    # Do not emit alpha at all for the default: this makes the frame-zero
+    # opacity contract easy to audit and avoids an accidental alpha ramp.
+    alpha_clause = f":alpha='min(1,t/{fade_in_s})'" if fade_in_s else ""
     laid = _layout_headline(text, w, h, fontsize, font_name)
 
     # One drawtext per line — each gets its own tight box (TikTok per-line style)
@@ -152,6 +159,7 @@ def burn_headline(
             f":box=1:boxcolor={bg_color}:boxborderw={laid['pad']}"
             f":x=(w-tw)/2"
             f":y={y}"
+            f"{alpha_clause}"
             f"{enable_clause}"
         )
         y += line_h + 2 * laid["pad"]

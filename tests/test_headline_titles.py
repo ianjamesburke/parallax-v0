@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from parallax import headline
 from parallax.ffmpeg_utils import _ffmpeg_has_drawtext
@@ -38,6 +39,16 @@ def _probe_dur(path: Path) -> float:
         capture_output=True, text=True,
     )
     return float(p.stdout.strip())
+
+
+def _frame_at(path: Path, seconds: float, output: Path) -> Image.Image:
+    """Extract one decoded video frame for opacity assertions."""
+    subprocess.run(
+        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", str(seconds),
+         "-i", str(path), "-frames:v", "1", str(output)],
+        check=True, capture_output=True,
+    )
+    return Image.open(output).convert("RGB")
 
 
 # ─── burn_titles ────────────────────────────────────────────────────────
@@ -105,6 +116,44 @@ def test_burn_headline_multiline(tmp_path):
         str(v), "Line one\nLine two", str(out), fontsize=40,
     )
     assert out.exists()
+
+
+def test_burn_headline_default_filter_has_no_alpha_ramp(tmp_path, monkeypatch):
+    """The default must not even emit an alpha expression at t=0."""
+    v = tmp_path / "in.mp4"
+    v.touch()
+    captured = []
+    monkeypatch.setattr(headline, "_ffmpeg_has_drawtext", lambda: True)
+    monkeypatch.setattr(headline, "_get_drawtext_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr("parallax.ffmpeg_utils.probe_resolution", lambda _: (270, 480))
+    monkeypatch.setattr(headline, "run_ffmpeg", lambda args, **_: captured.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
+    headline.burn_headline(str(v), "VISIBLE NOW", str(tmp_path / "out.mp4"), fontsize=32)
+    filtergraph = captured[0][captured[0].index("-vf") + 1]
+    assert ":alpha=" not in filtergraph
+
+
+@pytest.mark.skipif(not _ffmpeg_has_drawtext(),
+                    reason="local ffmpeg lacks drawtext")
+def test_burn_headline_is_full_strength_on_frame_zero_and_fade_is_opt_in(tmp_path):
+    """Render a tiny clip: default text is present on frame 0, opt-in fade is not."""
+    v = tmp_path / "in.mp4"
+    _make_video_with_audio(v, 1.0, w=270, h=480)
+    immediate = tmp_path / "immediate.mp4"
+    fading = tmp_path / "fading.mp4"
+    headline.burn_headline(str(v), "VISIBLE NOW", str(immediate), fontsize=32)
+    headline.burn_headline(str(v), "VISIBLE NOW", str(fading), fontsize=32, fade_in_s=0.4)
+
+    first = _frame_at(immediate, 0.0, tmp_path / "first.png")
+    later = _frame_at(immediate, 0.6, tmp_path / "later.png")
+    fading_first = _frame_at(fading, 0.0, tmp_path / "fading-first.png")
+    fading_later = _frame_at(fading, 0.6, tmp_path / "fading-later.png")
+
+    # The black glyphs sit on a deliberately white headline box. Compression
+    # changes individual pixels slightly, so compare robust dark-pixel counts.
+    dark = lambda image: sum(1 for r, g, b in image.crop((0, 40, 270, 180)).get_flattened_data()
+                              if r < 70 and g < 70 and b < 70)
+    assert dark(first) >= dark(later) * 0.85
+    assert dark(fading_first) < dark(fading_later) * 0.20
 
 
 def test_headline_layout_wraps_and_fits_long_text():

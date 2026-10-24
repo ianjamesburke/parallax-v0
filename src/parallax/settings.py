@@ -209,6 +209,7 @@ class Settings:
     run_id: str | None = None
     headline_y_position: str | None = None
     headline_font: str | None = None
+    headline_fade_in_s: float = 0.0
 
 
 def _infer_project_resolution(plan: dict, folder: Path, aspect: str = "9:16") -> str:
@@ -367,6 +368,7 @@ def _resolve_settings_from_plan(
         headline_font=plan.headline_font,
         headline_bg=plan.headline_bg,
         headline_color=plan.headline_color,
+        headline_fade_in_s=plan.headline_fade_in_s,
         character_image=character_image,
         product_image=product_image,
         avatar_cfg=avatar_cfg,
@@ -433,6 +435,7 @@ def _resolve_settings_from_dict(
     headline_fontsize = plan.get("headline_fontsize")
     headline_bg = plan.get("headline_bg")
     headline_color = plan.get("headline_color")
+    headline_fade_in_s = float(plan.get("headline_fade_in_s", 0.0))
 
     asset_cache_dir = folder / "parallax" / "assets" / "cache"
 
@@ -491,6 +494,7 @@ def _resolve_settings_from_dict(
         headline_font=plan.get("headline_font"),
         headline_bg=headline_bg,
         headline_color=headline_color,
+        headline_fade_in_s=headline_fade_in_s,
         character_image=character_image,
         product_image=product_image,
         avatar_cfg=plan.get("avatar"),
