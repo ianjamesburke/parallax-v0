@@ -861,7 +861,7 @@ Each entry in `"primitives"` has `{{"type": "<PrimitiveName>", "props": {{...}},
 - `IconBadge`:
   - `props`: `{{"name": "<icon_name>", "size": "sm"|"md"|"lg", "tone": "accent"|"accent2"|"ink"|"surface", "draw_stroke": true|false}}`
 - `StatCallout`:
-  - `props`: `{{"value": "<=10 chars", "label": "<=32 chars", "delta": "<=12 chars (optional)", "meter": "none"|"bar"|"arc", "progress": 0.05..1.0}}`
+  - `props`: `{{"value": "<=20 chars", "label": "<=32 chars", "delta": "<=18 chars (optional)", "meter": "none"|"bar"|"arc", "progress": 0.05..1.0}}`
 - `ChecklistStack`:
   - `props`: `{{"items": [ {{"label": "<=38 chars", "state": "check"|"alert"|"bullet"|"x", "cue": "<word>"}}, ... ]}}` (1 to 4 items)
 - `CtaButton`:
@@ -1083,7 +1083,7 @@ def generate_scene_spec_and_html(
     content = _extract_choice_content(resp)
 
     try:
-        spec = parse_llm_scene_spec(content, style=preset["name"])
+        spec = parse_llm_scene_spec(content, style=preset["name"], scene_text=scene_text)
     except SceneSpecValidationError as first_err:
         _log_motion_warning(
             "motion.spec.repair_attempt",
@@ -1110,7 +1110,7 @@ def generate_scene_spec_and_html(
         )
         repair_content = _extract_choice_content(repair_resp)
         try:
-            spec = parse_llm_scene_spec(repair_content, style=preset["name"])
+            spec = parse_llm_scene_spec(repair_content, style=preset["name"], scene_text=scene_text)
         except SceneSpecValidationError as second_err:
             _log_motion_warning(
                 "motion.spec.fallback",
@@ -1235,7 +1235,7 @@ def repair_scene_spec_with_llm(
         raise RuntimeError(f"OpenRouter repair pass returned empty content for model {resolved_model!r}")
 
     try:
-        return parse_llm_scene_spec(content, style=preset["name"])
+        return parse_llm_scene_spec(content, style=preset["name"], scene_text=scene_text)
     except SceneSpecValidationError as err:
         _log_motion_warning(
             "motion.spec.layout_repair_invalid",
@@ -1614,7 +1614,10 @@ _AUDIT_JS_TEMPLATE = """
     }
 
     // 1. Internal overflow / clipping check (scrollWidth > clientWidth)
-    if (!isSvg && el.clientWidth > 0 && el.scrollWidth > el.clientWidth + EPS) {
+    const CLIP_EPS = 1.0;
+    let clippedInternal = false;
+    if (!isSvg && el.clientWidth > 0 && el.scrollWidth > el.clientWidth + CLIP_EPS) {
+      clippedInternal = true;
       violations.push({
         type: 'text_clipped',
         time_s: t,
@@ -1623,9 +1626,10 @@ _AUDIT_JS_TEMPLATE = """
         rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }
       });
     }
-    if (!isSvg && el.clientHeight > 0 && el.scrollHeight > el.clientHeight + EPS) {
+    if (!isSvg && el.clientHeight > 0 && el.scrollHeight > el.clientHeight + CLIP_EPS) {
       const st = window.getComputedStyle(el);
       if (st.overflowY === 'hidden' || st.overflowY === 'clip' || st.overflow === 'hidden' || st.overflow === 'clip') {
+        clippedInternal = true;
         violations.push({
           type: 'text_clipped',
           time_s: t,
@@ -1636,29 +1640,53 @@ _AUDIT_JS_TEMPLATE = """
       }
     }
 
-    // Check if an ancestor with overflow:hidden/clip crops this text element's bounding rect
-    let parent = el.parentElement;
-    while (parent && parent !== document.body && parent !== document.documentElement) {
-      const pst = window.getComputedStyle(parent);
-      if (pst.overflow === 'hidden' || pst.overflow === 'clip' || pst.overflowX === 'hidden' || pst.overflowX === 'clip') {
-        const prect = parent.getBoundingClientRect();
-        if (
-          rect.left < prect.left - EPS ||
-          rect.right > prect.right + EPS ||
-          rect.top < prect.top - EPS ||
-          rect.bottom > prect.bottom + EPS
-        ) {
-          violations.push({
-            type: 'text_clipped_by_container',
-            time_s: t,
-            text: textSample,
-            detail: `Text "${textSample}" extends outside clipping container (${Math.round(rect.left)}..${Math.round(rect.right)} vs ${Math.round(prect.left)}..${Math.round(prect.right)})`,
-            rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }
-          });
+    // Measure actual text glyph range rect in case el or an ancestor clips text
+    let textRect = rect;
+    if (!isSvg && typeof document.createRange === 'function') {
+      try {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const rRect = range.getBoundingClientRect();
+        if (rRect && rRect.width > 0.5 && rRect.height > 0.5) {
+          textRect = rRect;
+        }
+      } catch (e) {}
+    }
+
+    // Check if el itself or an ancestor with overflow:hidden/clip crops this text
+    let clipTarget = el;
+    while (clipTarget && clipTarget !== document.body && clipTarget !== document.documentElement) {
+      const pst = window.getComputedStyle(clipTarget);
+      const clipsX = (pst.overflow === 'hidden' || pst.overflow === 'clip' || pst.overflowX === 'hidden' || pst.overflowX === 'clip');
+      const clipsY = (pst.overflow === 'hidden' || pst.overflow === 'clip' || pst.overflowY === 'hidden' || pst.overflowY === 'clip');
+      if (clipsX || clipsY) {
+        const prect = clipTarget.getBoundingClientRect();
+        const overX = clipsX && (
+          rect.left < prect.left - CLIP_EPS ||
+          rect.right > prect.right + CLIP_EPS ||
+          textRect.left < prect.left - CLIP_EPS ||
+          textRect.right > prect.right + CLIP_EPS
+        );
+        const overY = clipsY && (
+          rect.top < prect.top - CLIP_EPS ||
+          rect.bottom > prect.bottom + CLIP_EPS ||
+          textRect.top < prect.top - CLIP_EPS ||
+          textRect.bottom > prect.bottom + CLIP_EPS
+        );
+        if (overX || overY) {
+          if (!(clipTarget === el && clippedInternal)) {
+            violations.push({
+              type: clipTarget === el ? 'text_clipped' : 'text_clipped_by_container',
+              time_s: t,
+              text: textSample,
+              detail: `Text "${textSample}" extends outside clipping container (${Math.round(Math.min(rect.left, textRect.left))}..${Math.round(Math.max(rect.right, textRect.right))} vs ${Math.round(prect.left)}..${Math.round(prect.right)})`,
+              rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }
+            });
+          }
           break;
         }
       }
-      parent = parent.parentElement;
+      clipTarget = clipTarget.parentElement;
     }
 
     // 2. Viewport bounds check

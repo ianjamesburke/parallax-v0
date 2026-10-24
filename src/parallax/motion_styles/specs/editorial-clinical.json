@@ -57,11 +57,6 @@
             "label": "AI scam pattern verification",
             "state": "check",
             "cue": "__CUE_WORD_2__"
-          },
-          {
-            "label": "Zero ring interruption when blocked",
-            "state": "check",
-            "cue": "__CUE_WORD_2__"
           }
         ]
       },

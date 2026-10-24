@@ -1183,3 +1183,651 @@ def test_recovered_real3_rejected_specs_render_cleanly_and_pass_audit(tmp_path: 
         assert audit.passed, f"{scene_label} failed audit_layout: {audit.violations}"
 
 
+# ---------------------------------------------------------------------------
+# 8. Auto-fit fill ratio [0.55, 0.80], centering, phone width >= 800, font floors, and many-primitive cap
+# ---------------------------------------------------------------------------
+
+_STACK_METRICS_JS = """
+(() => {
+  if (typeof window.__seek === 'function') window.__seek(5.0);
+  const stage = document.getElementById('safe-stage');
+  if (!stage) return { error: 'missing #safe-stage' };
+  const children = Array.from(stage.children);
+  let minT = Infinity, maxB = -Infinity, minL = Infinity, maxR = -Infinity;
+  const cxDiffs = [];
+  for (const c of children) {
+    const r = c.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) continue;
+    minT = Math.min(minT, r.top);
+    maxB = Math.max(maxB, r.bottom);
+    minL = Math.min(minL, r.left);
+    maxR = Math.max(maxR, r.right);
+    cxDiffs.push(Math.abs(((r.left + r.right) / 2.0) - 540.0));
+  }
+  const height = maxB - minT;
+  const fillRatio = height / 1240.0;
+  const stageCenterY = (80.0 + 1320.0) / 2.0;
+  const stackCenterY = (minT + maxB) / 2.0;
+
+  const phone = stage.querySelector('.phone-frame');
+  const phoneRect = phone ? phone.getBoundingClientRect() : null;
+  const zoom = parseFloat(stage.getAttribute('data-auto-fit-zoom') || '1') || 1.0;
+
+  const headlineSizes = Array.from(stage.querySelectorAll('.headline-main')).map(
+    (el) => parseFloat(window.getComputedStyle(el).fontSize) * ( parseFloat(el.closest('#safe-stage > .primitive')?.style.zoom || '1') || 1 )
+  );
+  const cssHeadlineSizes = Array.from(stage.querySelectorAll('.headline-main')).map(
+    (el) => parseFloat(window.getComputedStyle(el).fontSize)
+  );
+  const cssBodySizes = Array.from(
+    stage.querySelectorAll('.card-sub, .headline-sub, .checklist-item, .stat-label, .brand-tag, .phone-header-label')
+  ).map((el) => parseFloat(window.getComputedStyle(el).fontSize));
+
+  return {
+    fillRatio,
+    height,
+    minL,
+    maxR,
+    minT,
+    maxB,
+    maxCxDiff: Math.max(0, ...cxDiffs),
+    centerYDiff: Math.abs(stackCenterY - stageCenterY),
+    phoneWidth: phoneRect ? phoneRect.width : null,
+    zoom,
+    headlineSizes,
+    cssHeadlineSizes,
+    cssBodySizes,
+  };
+})()
+"""
+
+
+@requires_chrome
+def test_auto_fit_fill_ratio_for_non_kinetic_styles_and_many_primitive_spec(tmp_path: Path) -> None:
+    brand = _sample_malwarebytes_brand()
+    scene_text = (
+        "Before you answer a call or click a link, Malwarebytes Scam Guard checks if it is a scam. "
+        "Download Malwarebytes today."
+    )
+    words = [
+        {"word": "Before", "start": 0.1, "end": 0.35},
+        {"word": "answer", "start": 0.6, "end": 0.9},
+        {"word": "Scam", "start": 1.8, "end": 2.2},
+        {"word": "Download", "start": 3.5, "end": 4.0},
+    ]
+    non_kinetic_styles = ["flat-explainer", "neo-brutal", "glass-ui", "editorial-clinical"]
+
+    for style_name in non_kinetic_styles:
+        html = generate_scene_html(
+            scene_text=scene_text,
+            style=style_name,
+            brand=brand,
+            duration_s=5.0,
+            words=words,
+        )
+        m = _evaluate_in_chrome(html, tmp_path, _STACK_METRICS_JS, name=f"fill_tm_{style_name}.html")
+        assert 0.55 <= m["fillRatio"] <= 0.80, (
+            f"{style_name} test-mode fillRatio={m['fillRatio']:.3f} outside [0.55, 0.80]"
+        )
+        assert m["maxCxDiff"] <= 4.0, f"{style_name} off-center horizontally: {m['maxCxDiff']:.2f}px"
+        assert m["centerYDiff"] <= 24.0, f"{style_name} off-center vertically: {m['centerYDiff']:.2f}px"
+        assert m["minL"] >= STAGE_LEFT - 1.0
+        assert m["maxR"] <= STAGE_RIGHT + 1.0
+        assert m["minT"] >= STAGE_TOP - 1.0
+        assert m["maxB"] <= STAGE_BOTTOM + 1.0
+        if m["phoneWidth"] is not None:
+            assert 800.0 <= m["phoneWidth"] <= 900.0, (
+                f"{style_name} phoneWidth={m['phoneWidth']:.1f}px not in [800, 900]"
+            )
+        for hs in m["cssHeadlineSizes"]:
+            assert hs >= 56.0, f"{style_name} headline CSS font-size {hs}px < 56px"
+        for bs in m["cssBodySizes"]:
+            assert bs >= 28.0, f"{style_name} body CSS font-size {bs}px < 28px"
+
+    # Many-primitive spec: 5 stage primitives + 3 phone children + 3 checklist items must scale DOWN <= 0.80
+    many_spec = {
+        "style": "flat-explainer",
+        "layout_slot": "phone-hero",
+        "gap": "lg",
+        "bg_variant": "radial",
+        "primitives": [
+            {"type": "BrandHeader", "props": {"align": "center", "logo_plate": "auto", "tag_text": "SECURITY"}},
+            {
+                "type": "HeadlineBlock",
+                "props": {
+                    "eyebrow": "REAL-TIME AI",
+                    "headline": "Complete Mobile Protection",
+                    "subhead": "Blocks scam calls and phishing links automatically.",
+                    "size": "hero",
+                },
+            },
+            {
+                "type": "PhoneFrame",
+                "props": {
+                    "header_label": "Incoming Call",
+                    "children": [
+                        {"type": "PillBadge", "props": {"label": "Suspicious Caller", "icon": "alert", "tone": "accent2"}},
+                        {
+                            "type": "FeatureCard",
+                            "props": {
+                                "title": "AI Call Screening",
+                                "body": "Analyzes caller behavior before your phone rings.",
+                                "icon": "shield",
+                                "tone": "surface",
+                            },
+                        },
+                        {
+                            "type": "StatCallout",
+                            "props": {
+                                "value": "99.8%",
+                                "label": "THREATS BLOCKED",
+                                "delta": "+32% FASTER",
+                                "meter": "bar",
+                                "progress": 0.95,
+                            },
+                        },
+                    ],
+                },
+            },
+            {
+                "type": "ChecklistStack",
+                "props": {
+                    "items": [
+                        {"label": "Instant caller ID verification", "state": "check"},
+                        {"label": "Zero-day SMS link scanning", "state": "check"},
+                        {"label": "Automatic spam quarantine", "state": "check"},
+                    ]
+                },
+            },
+            {"type": "CtaButton", "props": {"label": "Enable Scam Guard", "icon": "check", "tone": "accent"}},
+        ],
+    }
+    for style_name in non_kinetic_styles:
+        spec_copy = dict(many_spec, style=style_name)
+        html_many = render_scene_spec_html(spec_copy, style=style_name, brand=brand, duration_s=5.0)
+        fname = f"fill_many_{style_name}.html"
+        m_many = _evaluate_in_chrome(html_many, tmp_path, _STACK_METRICS_JS, name=fname)
+        assert 0.55 <= m_many["fillRatio"] <= 0.80, (
+            f"{style_name} many-primitive fillRatio={m_many['fillRatio']:.3f} outside [0.55, 0.80]"
+        )
+        assert m_many["maxCxDiff"] <= 4.0
+        assert m_many["minL"] >= STAGE_LEFT - 1.0
+        assert m_many["maxR"] <= STAGE_RIGHT + 1.0
+        assert m_many["minT"] >= STAGE_TOP - 1.0
+        assert m_many["maxB"] <= STAGE_BOTTOM + 1.0
+        audit = audit_layout(tmp_path / fname, duration_s=5.0)
+        assert audit.passed, f"{style_name} many-primitive failed audit_layout: {audit.violations}"
+
+
+@requires_chrome
+def test_saved_real3_specs_fill_ratio_and_centering(tmp_path: Path) -> None:
+    real3_dir = Path("/workspace/francisco-recordings/motion-styles-v1/real3")
+    if not real3_dir.is_dir():
+        pytest.skip("Saved real3 specs directory not present on this machine.")
+    spec_files = sorted(real3_dir.glob("*.spec.json"))
+    if not spec_files:
+        pytest.skip("No *.spec.json files found in real3 directory.")
+
+    brand = _sample_malwarebytes_brand()
+    for sp_path in spec_files:
+        spec = json.loads(sp_path.read_text(encoding="utf-8"))
+        style_name = str(spec.get("style") or "flat-explainer")
+        html = render_scene_spec_html(spec, style=style_name, brand=brand, duration_s=5.0)
+        fname = f"real3_{sp_path.stem}.html"
+        m = _evaluate_in_chrome(html, tmp_path, _STACK_METRICS_JS, name=fname)
+        assert 0.55 <= m["fillRatio"] <= 0.80, (
+            f"{sp_path.name} ({style_name}) fillRatio={m['fillRatio']:.3f} outside [0.55, 0.80]"
+        )
+        assert m["maxCxDiff"] <= 4.0, f"{sp_path.name} off-center: maxCxDiff={m['maxCxDiff']:.2f}"
+        assert m["minL"] >= STAGE_LEFT - 1.0
+        assert m["maxR"] <= STAGE_RIGHT + 1.0
+        assert m["minT"] >= STAGE_TOP - 1.0
+        assert m["maxB"] <= STAGE_BOTTOM + 1.0
+        audit = audit_layout(tmp_path / fname, duration_s=5.0)
+        assert audit.passed, f"{sp_path.name} failed audit_layout: {audit.violations}"
+
+
+# ---------------------------------------------------------------------------
+# 9. CtaButton guard (never empty or icon-only) & IconBadge never stretches full-width
+# ---------------------------------------------------------------------------
+
+
+@requires_chrome
+def test_cta_button_never_empty_or_icon_only_and_icon_badge_not_stretched(tmp_path: Path) -> None:
+    brand = _sample_malwarebytes_brand()
+
+    # 1. Spec validation fills empty, whitespace, symbol-only, or too-short CtaButton labels
+    for bad_label in ("", "   ", "->", "OK", None):
+        raw_spec = {
+            "style": "glass-ui",
+            "layout_slot": "phone-hero",
+            "gap": "md",
+            "bg_variant": "orb-glow",
+            "primitives": [
+                {"type": "BrandHeader", "props": {"logo_plate": "auto"}},
+                {
+                    "type": "CtaButton",
+                    "props": {"label": bad_label, "icon": "phone-call", "tone": "accent"},
+                },
+            ],
+        }
+        cleaned_with_copy = validate_scene_spec(
+            raw_spec,
+            style="glass-ui",
+            scene_text="Stop scammers fast. Download Malwarebytes today.",
+        )
+        cta_label_copy = cleaned_with_copy["primitives"][1]["props"]["label"]
+        assert len(cta_label_copy.strip()) >= 3
+        assert "Download Malwarebytes" in cta_label_copy or "Learn More" in cta_label_copy
+
+        cleaned_default = validate_scene_spec(raw_spec, style="glass-ui", scene_text="")
+        cta_label_default = cleaned_default["primitives"][1]["props"]["label"]
+        assert cta_label_default == "Learn More"
+
+    # 2. Rendered styles & specs with both IconBadge and empty CtaButton inside PhoneFrame
+    for style_name in CANONICAL_STYLE_ORDER:
+        spec = {
+            "style": style_name,
+            "layout_slot": "phone-hero",
+            "gap": "md",
+            "bg_variant": "solid",
+            "primitives": [
+                {"type": "BrandHeader", "props": {"logo_plate": "auto"}},
+                {
+                    "type": "PhoneFrame",
+                    "props": {
+                        "header_label": "Scam Guard",
+                        "children": [
+                            {"type": "IconBadge", "props": {"name": "phone-call", "size": "lg", "tone": "accent"}},
+                            {"type": "HeadlineBlock", "props": {"headline": "Scam Likely", "size": "md"}},
+                            {"type": "CtaButton", "props": {"label": "   ", "icon": "phone-call", "tone": "accent"}},
+                        ],
+                    },
+                },
+            ],
+        }
+        html = render_scene_spec_html(spec, style=style_name, brand=brand, duration_s=4.0)
+        res = _evaluate_in_chrome(
+            html,
+            tmp_path,
+            """
+            (() => {
+              window.__seek(4.0);
+              const ctas = Array.from(document.querySelectorAll('.cta-button')).map((btn) => {
+                const lbl = btn.querySelector('.cta-label');
+                const st = lbl ? window.getComputedStyle(lbl) : null;
+                const r = lbl ? lbl.getBoundingClientRect() : null;
+                return {
+                  text: lbl ? (lbl.textContent || '').trim() : '',
+                  visible: st ? (st.display !== 'none' && st.visibility !== 'hidden' && parseFloat(st.opacity) > 0.9) : false,
+                  width: r ? r.width : 0,
+                  height: r ? r.height : 0,
+                };
+              });
+              const badges = Array.from(document.querySelectorAll('.icon-badge')).map((b) => {
+                const r = b.getBoundingClientRect();
+                return { width: r.width, height: r.height };
+              });
+              return { ctas, badges };
+            })()
+            """,
+            name=f"cta_guard_{style_name}.html",
+        )
+        assert len(res["ctas"]) == 1
+        cta = res["ctas"][0]
+        assert len(cta["text"]) >= 3, f"{style_name} CtaButton has empty/short label: {cta}"
+        assert cta["visible"] is True
+        assert cta["width"] > 40.0 and cta["height"] > 20.0
+
+        assert len(res["badges"]) == 1
+        badge = res["badges"][0]
+        assert badge["width"] <= 200.0, (
+            f"{style_name} IconBadge stretched across phone width ({badge['width']:.1f}px) looking like an icon-only button!"
+        )
+        assert abs(badge["width"] - badge["height"]) <= 8.0
+
+
+# ---------------------------------------------------------------------------
+# 10. No clipped text (scrollWidth <= clientWidth + 1) & synthetic clipped fixture detection
+# ---------------------------------------------------------------------------
+
+
+@requires_chrome
+def test_no_clipped_text_and_audit_detector_catches_synthetic_clipped_fixture(tmp_path: Path) -> None:
+    brand = _sample_malwarebytes_brand()
+
+    # Check glass-ui-s2 spec specifically ('Scam Likel' -> 'Scam Likely', no scrollWidth > clientWidth + 1)
+    glass_s2_spec = {
+        "style": "glass-ui",
+        "layout_slot": "phone-hero",
+        "gap": "md",
+        "bg_variant": "orb-glow",
+        "primitives": [
+            {"type": "BrandHeader", "props": {"align": "center", "logo_plate": "auto", "tag_text": "Scam Guard"}},
+            {
+                "type": "PhoneFrame",
+                "props": {
+                    "header_label": "Scam Guard",
+                    "children": [
+                        {"type": "IconBadge", "props": {"name": "phone-call", "size": "md", "tone": "accent"}},
+                        {
+                            "type": "StatCallout",
+                            "props": {
+                                "value": "Scam Likel",
+                                "label": "Incoming Call Checked",
+                                "delta": "Suspicious",
+                                "meter": "arc",
+                            },
+                        },
+                        {
+                            "type": "FeatureCard",
+                            "props": {
+                                "title": "Link Verified",
+                                "body": "Safe to click",
+                                "icon": "link",
+                                "tone": "surface",
+                            },
+                        },
+                    ],
+                },
+            },
+        ],
+    }
+    html_s2 = render_scene_spec_html(glass_s2_spec, style="glass-ui", brand=brand, duration_s=4.0)
+    assert "Scam Likely" in html_s2
+    assert "Scam Likel<" not in html_s2
+
+    for style_name in CANONICAL_STYLE_ORDER:
+        html = generate_scene_html(
+            "Before you answer a call or click a link, Malwarebytes Scam Guard checks if it is a scam.",
+            style=style_name,
+            brand=brand,
+            duration_s=4.0,
+        )
+        clipped = _evaluate_in_chrome(
+            html,
+            tmp_path,
+            """
+            (() => {
+              window.__seek(4.0);
+              const bad = [];
+              const ignored = new Set(['SCRIPT', 'STYLE', 'TITLE', 'HEAD', 'META', 'LINK', 'DEFS', 'DESC']);
+              for (const el of document.querySelectorAll('#safe-stage *')) {
+                if (el instanceof SVGElement) continue;
+                if (ignored.has(el.tagName.toUpperCase())) continue;
+                let hasDirectText = false;
+                for (const n of el.childNodes) {
+                  if (n.nodeType === 3 && n.nodeValue && n.nodeValue.trim().length > 0) {
+                    hasDirectText = true;
+                    break;
+                  }
+                }
+                if (!hasDirectText) continue;
+                if (el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 1) {
+                  bad.push({
+                    cls: el.className,
+                    text: (el.textContent || '').trim(),
+                    scrollWidth: el.scrollWidth,
+                    clientWidth: el.clientWidth,
+                  });
+                }
+              }
+              return bad;
+            })()
+            """,
+            name=f"noclip_{style_name}.html",
+        )
+        assert clipped == [], f"{style_name} has clipped text elements: {clipped}"
+
+    # Synthetic clipped fixture: 1) scrollWidth > clientWidth, and 2) clipped by overflow:hidden parent
+    synthetic_clipped_html = """<!DOCTYPE html>
+<html>
+<head>
+<style>
+  html, body { margin: 0; padding: 0; width: 1080px; height: 1920px; background: #111; color: #fff; font-family: sans-serif; }
+  .clip-box { position: absolute; left: 200px; top: 400px; width: 120px; height: 60px; overflow: hidden; }
+  .clip-inner { width: 420px; font-size: 44px; white-space: nowrap; }
+  .direct-clip { position: absolute; left: 200px; top: 600px; width: 100px; overflow: hidden; white-space: nowrap; font-size: 42px; }
+</style>
+</head>
+<body>
+  <div class="clip-box"><div class="clip-inner">This headline is clipped by its overflow hidden parent</div></div>
+  <div class="direct-clip">DirectScrollWidthOverflowText</div>
+  <script>window.__seek = function() {};</script>
+</body>
+</html>"""
+    syn_path = tmp_path / "synthetic_clipped.html"
+    syn_path.write_text(synthetic_clipped_html, encoding="utf-8")
+    syn_audit = audit_layout(syn_path, duration_s=2.0, sample_fractions=(0.5,))
+    assert not syn_audit.passed, "Expected audit_layout to fail on synthetic clipped fixture"
+    violation_types = {v["type"] for v in syn_audit.violations}
+    assert "text_clipped" in violation_types or "text_clipped_by_container" in violation_types
+
+
+# ---------------------------------------------------------------------------
+# 11. StatCallout never renders an empty ring/arc
+# ---------------------------------------------------------------------------
+
+
+@requires_chrome
+def test_stat_callout_never_renders_empty_ring_and_centers_numeric_arc_value(tmp_path: Path) -> None:
+    brand = _sample_malwarebytes_brand()
+
+    # Case A: StatCallout with meter='arc' but non-numeric value ('Scam Likely') or no progress -> ring omitted
+    spec_non_numeric_arc = {
+        "style": "glass-ui",
+        "layout_slot": "phone-hero",
+        "gap": "md",
+        "bg_variant": "orb-glow",
+        "primitives": [
+            {"type": "BrandHeader", "props": {"logo_plate": "auto"}},
+            {
+                "type": "StatCallout",
+                "props": {
+                    "value": "Scam Likely",
+                    "label": "Incoming Call Checked",
+                    "delta": "Suspicious",
+                    "meter": "arc",
+                },
+            },
+        ],
+    }
+    html_no_ring = render_scene_spec_html(spec_non_numeric_arc, style="glass-ui", brand=brand, duration_s=3.0)
+    assert 'class="stat-arc-svg"' not in html_no_ring
+    assert 'class="stat-arc-wrap"' not in html_no_ring
+
+    # Case B: StatCallout with meter='arc', numeric value ('99%'), and progress=0.85 -> ring rendered with centered value
+    spec_numeric_arc = {
+        "style": "glass-ui",
+        "layout_slot": "phone-hero",
+        "gap": "md",
+        "bg_variant": "orb-glow",
+        "primitives": [
+            {"type": "BrandHeader", "props": {"logo_plate": "auto"}},
+            {
+                "type": "StatCallout",
+                "props": {
+                    "value": "99%",
+                    "label": "Scam Calls Blocked",
+                    "delta": "+24%",
+                    "meter": "arc",
+                    "progress": 0.85,
+                },
+            },
+        ],
+    }
+    html_with_ring = render_scene_spec_html(spec_numeric_arc, style="glass-ui", brand=brand, duration_s=3.0)
+    arc_check = _evaluate_in_chrome(
+        html_with_ring,
+        tmp_path,
+        """
+        (() => {
+          window.__seek(3.0);
+          const wrap = document.querySelector('.stat-arc-wrap');
+          const svg = wrap ? wrap.querySelector('.stat-arc-svg') : null;
+          const val = wrap ? wrap.querySelector('.stat-arc-value') : null;
+          const prog = svg ? svg.querySelector('.stat-arc-progress') : null;
+          if (!wrap || !svg || !val || !prog) return { ok: false };
+          const wr = wrap.getBoundingClientRect();
+          const vr = val.getBoundingClientRect();
+          const st = window.getComputedStyle(prog);
+          return {
+            ok: true,
+            text: (val.textContent || '').trim(),
+            centerXDiff: Math.abs(((wr.left + wr.right) / 2) - ((vr.left + vr.right) / 2)),
+            centerYDiff: Math.abs(((wr.top + wr.bottom) / 2) - ((vr.top + vr.bottom) / 2)),
+            dashArray: prog.getAttribute('stroke-dasharray') || st.strokeDasharray,
+          };
+        })()
+        """,
+        name="stat_numeric_arc.html",
+    )
+    assert arc_check["ok"] is True
+    assert arc_check["text"] == "99%"
+    assert arc_check["centerXDiff"] <= 3.0
+    assert arc_check["centerYDiff"] <= 3.0
+
+
+# ---------------------------------------------------------------------------
+# 12. Minimum padding (~1.5x preset tokens, >= ~1.4x old floors), gaps, and text-to-edge inset >= 12px
+# ---------------------------------------------------------------------------
+
+
+@requires_chrome
+def test_minimum_padding_gaps_and_text_inset_across_all_five_presets(tmp_path: Path) -> None:
+    brand = _sample_malwarebytes_brand()
+
+    # Old values -> ~1.4x floor requirements:
+    # .phone-frame: old 22px/28px -> floor >= 32px vertical, >= 40px horizontal
+    # .feature-card: old 22px/26px -> floor >= 31px vertical, >= 36px horizontal
+    # .cta-button: old 18px/36px -> floor >= 25px vertical, >= 50px horizontal
+    # .pill-badge: old 14px/30px -> floor >= 20px vertical, >= 42px horizontal
+    # .stat-callout: old 20px/26px -> floor >= 28px vertical, >= 36px horizontal
+    # .checklist-stack: old 18px/28px -> floor >= 25px vertical, >= 38px horizontal
+    padding_floors = {
+        ".phone-frame": (32.0, 40.0),
+        ".feature-card": (31.0, 36.0),
+        ".cta-button": (25.0, 50.0),
+        ".pill-badge": (20.0, 42.0),
+        ".stat-callout": (28.0, 36.0),
+        ".checklist-stack": (25.0, 38.0),
+    }
+
+    for style_name in CANONICAL_STYLE_ORDER:
+        all_prims_spec = {
+            "style": style_name,
+            "layout_slot": "phone-hero",
+            "gap": "md",
+            "bg_variant": "radial",
+            "primitives": [
+                {"type": "BrandHeader", "props": {"align": "center", "logo_plate": "auto", "tag_text": "PROTECTED"}},
+                {
+                    "type": "PhoneFrame",
+                    "props": {
+                        "header_label": "Scam Guard",
+                        "children": [
+                            {"type": "PillBadge", "props": {"label": "Call Screened", "icon": "shield", "tone": "accent2"}},
+                            {
+                                "type": "FeatureCard",
+                                "props": {
+                                    "title": "Real-Time AI Filter",
+                                    "body": "Detects suspicious callers before your phone rings.",
+                                    "icon": "check",
+                                    "tone": "surface",
+                                },
+                            },
+                            {
+                                "type": "StatCallout",
+                                "props": {"value": "99.4%", "label": "SCAMS BLOCKED", "delta": "+18%", "meter": "bar"},
+                            },
+                        ],
+                    },
+                },
+                {
+                    "type": "ChecklistStack",
+                    "props": {
+                        "items": [
+                            {"label": "Blocks known robocallers", "state": "check"},
+                            {"label": "Flags phishing SMS links", "state": "check"},
+                        ]
+                    },
+                },
+                {"type": "CtaButton", "props": {"label": "Protect My Phone", "icon": "shield", "tone": "accent"}},
+            ],
+        }
+        html = render_scene_spec_html(all_prims_spec, style=style_name, brand=brand, duration_s=4.0)
+        res = _evaluate_in_chrome(
+            html,
+            tmp_path,
+            """
+            (() => {
+              window.__seek(4.0);
+              const stage = document.getElementById('safe-stage');
+              const phoneBody = document.querySelector('.phone-body');
+              const stageGap = parseFloat(window.getComputedStyle(stage).rowGap || window.getComputedStyle(stage).gap || '0');
+              const phoneGap = phoneBody ? parseFloat(window.getComputedStyle(phoneBody).rowGap || window.getComputedStyle(phoneBody).gap || '0') : 0;
+
+              const selectors = ['.phone-frame', '.feature-card', '.cta-button', '.pill-badge', '.stat-callout', '.checklist-stack'];
+              const paddings = {};
+              for (const sel of selectors) {
+                const el = document.querySelector(sel);
+                if (el) {
+                  const st = window.getComputedStyle(el);
+                  paddings[sel] = {
+                    pt: parseFloat(st.paddingTop),
+                    pb: parseFloat(st.paddingBottom),
+                    pl: parseFloat(st.paddingLeft),
+                    pr: parseFloat(st.paddingRight),
+                  };
+                }
+              }
+
+              const insets = [];
+              const containerSels = ['.feature-card', '.cta-button', '.pill-badge', '.stat-callout', '.checklist-stack'];
+              const textSels = '.card-title, .card-sub, .cta-label, .pill-label, .stat-value, .stat-label, .checklist-label';
+              for (const cSel of containerSels) {
+                for (const cEl of document.querySelectorAll(cSel)) {
+                  const cr = cEl.getBoundingClientRect();
+                  for (const tEl of cEl.querySelectorAll(textSels)) {
+                    const tr = tEl.getBoundingClientRect();
+                    if (tr.width <= 0 || tr.height <= 0) continue;
+                    insets.push({
+                      container: cSel,
+                      textCls: tEl.className,
+                      left: tr.left - cr.left,
+                      right: cr.right - tr.right,
+                      top: tr.top - cr.top,
+                      bottom: cr.bottom - tr.bottom,
+                    });
+                  }
+                }
+              }
+              return { stageGap, phoneGap, paddings, insets };
+            })()
+            """,
+            name=f"padding_{style_name}.html",
+        )
+
+        assert res["stageGap"] >= 28.0, f"{style_name} stage gap {res['stageGap']}px < 28px floor"
+        assert res["phoneGap"] >= 20.0, f"{style_name} phone-body gap {res['phoneGap']}px < 20px floor"
+
+        for sel, (min_v, min_h) in padding_floors.items():
+            assert sel in res["paddings"], f"{style_name} missing {sel}"
+            p = res["paddings"][sel]
+            assert p["pt"] >= min_v and p["pb"] >= min_v, (
+                f"{style_name} {sel} vertical padding ({p['pt']}, {p['pb']}) < {min_v}px floor"
+            )
+            assert p["pl"] >= min_h and p["pr"] >= min_h, (
+                f"{style_name} {sel} horizontal padding ({p['pl']}, {p['pr']}) < {min_h}px floor"
+            )
+
+        assert len(res["insets"]) >= 5
+        for ins in res["insets"]:
+            min_side = min(ins["left"], ins["right"], ins["top"], ins["bottom"])
+            assert min_side >= 12.0, (
+                f"{style_name} text {ins['textCls']!r} inside {ins['container']} touches edge "
+                f"(min inset {min_side:.1f}px < 12px): {ins}"
+            )
+
+
+

@@ -36,24 +36,11 @@
         "bezel": "preset",
         "children": [
           {
-            "type": "IconBadge",
-            "props": {
-              "name": "shield",
-              "size": "md",
-              "tone": "accent",
-              "draw_stroke": true
-            },
-            "motion": {
-              "entrance": "draw",
-              "cue": "__CUE_WORD_1__"
-            }
-          },
-          {
             "type": "FeatureCard",
             "props": {
               "title": "__CARD_TITLE__",
               "body": "__CARD_BODY__",
-              "icon": "check",
+              "icon": "shield",
               "tone": "accent",
               "tilt": "none"
             },

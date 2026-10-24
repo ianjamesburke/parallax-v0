@@ -40,9 +40,9 @@ BG_VARIANTS: tuple[str, ...] = (
 )
 
 GAP_TOKENS: dict[str, str] = {
-    "sm": "14px",
-    "md": "20px",
-    "lg": "28px",
+    "sm": "22px",
+    "md": "30px",
+    "lg": "40px",
 }
 
 MOTION_VERBS: tuple[str, ...] = (
@@ -167,7 +167,7 @@ CHAR_LIMITS: dict[str, dict[str, int]] = {
     "PhoneFrame": {"header_label": 20},
     "FeatureCard": {"title": 36, "body": 90},
     "PillBadge": {"label": 22},
-    "StatCallout": {"value": 10, "label": 32, "delta": 12},
+    "StatCallout": {"value": 20, "label": 32, "delta": 18},
     "ChecklistStack": {"item_label": 38},
     "CtaButton": {"label": 24},
 }
@@ -195,20 +195,76 @@ def _escape_html(text: str) -> str:
     )
 
 
+_TRUNCATED_WORD_FIXES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bLikel$", re.IGNORECASE), "Likely"),
+    (re.compile(r"\bLik$", re.IGNORECASE), "Likely"),
+    (re.compile(r"\bBlocke$", re.IGNORECASE), "Blocked"),
+    (re.compile(r"\bProtecte$", re.IGNORECASE), "Protected"),
+    (re.compile(r"\bDetecte$", re.IGNORECASE), "Detected"),
+)
+
+
+def _repair_truncated_words(text: str) -> str:
+    out = text
+    for pattern, repl in _TRUNCATED_WORD_FIXES:
+        out = pattern.sub(
+            lambda m: repl.upper() if m.group(0).isupper() else repl,
+            out,
+        )
+    return out
+
+
 def _clamp_str(val: Any, max_len: int, default: str = "") -> str:
     s = " ".join(str(val if val is not None else default).strip().split())
+    s = _repair_truncated_words(s)
     if not s:
         return default
     if len(s) <= max_len:
         return s
     if max_len <= 3:
         return s[:max_len]
-    # Prefer truncating cleanly at a word boundary when possible so words are not sliced mid-token
+    # Always truncate at a word boundary when multi-word so words are never sliced mid-token
     window = s[: max_len + 1]
     last_space = window.rfind(" ")
-    if last_space >= max(4, max_len // 2):
-        return window[:last_space].rstrip(" ,;:-")
+    if last_space > 0:
+        clipped = window[:last_space].rstrip(" ,;:-")
+        if clipped:
+            return clipped
     return s[:max_len].rstrip()
+
+
+def _resolve_cta_fallback(scene_text: str = "", default: str = "Learn More") -> str:
+    """Derive a concise CTA-ish fallback phrase from `scene_text` or return `default`."""
+    cleaned = " ".join((scene_text or "").strip().split())
+    if cleaned:
+        m = re.search(
+            r"\b((?:try|start|get|download|protect|block|check|scan|learn|claim|activate|join)\b[^.!?,;:]{2,20})",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        if m:
+            candidate = _clamp_str(m.group(1).strip(), CHAR_LIMITS["CtaButton"]["label"])
+            if len(re.sub(r"[^A-Za-z0-9]+", "", candidate)) >= 4:
+                return candidate
+    return default
+
+
+def _clean_cta_label(raw_label: Any, fallback: str = "Learn More") -> str:
+    """Ensure a CtaButton label is never empty, whitespace-only, or too short."""
+    fb = _clamp_str(fallback or "Learn More", CHAR_LIMITS["CtaButton"]["label"], default="Learn More")
+    if len(re.sub(r"[^A-Za-z0-9]+", "", fb)) < 3:
+        fb = "Learn More"
+    if raw_label is None:
+        return fb
+    s = " ".join(str(raw_label).strip().split())
+    s = _repair_truncated_words(s)
+    alnum = re.sub(r"[^A-Za-z0-9]+", "", s)
+    if not s or len(alnum) < 3 or len(s) < 3:
+        return fb
+    clamped = _clamp_str(s, CHAR_LIMITS["CtaButton"]["label"], default=fb)
+    if len(re.sub(r"[^A-Za-z0-9]+", "", clamped)) < 3:
+        return fb
+    return clamped
 
 
 def _clamp_kinetic_row_text(val: Any) -> str:
@@ -273,6 +329,7 @@ def _validate_primitive(
     item: Any,
     *,
     allow_containers: bool = True,
+    cta_fallback: str = "Learn More",
 ) -> dict[str, Any] | None:
     """Validate and clamp a single primitive dict. Returns `None` if primitive type or required icon is unknown."""
     if not isinstance(item, dict):
@@ -394,7 +451,7 @@ def _validate_primitive(
             raw_children = []
         children: list[dict[str, Any]] = []
         for ch in raw_children:
-            v_ch = _validate_primitive(ch, allow_containers=False)
+            v_ch = _validate_primitive(ch, allow_containers=False, cta_fallback=cta_fallback)
             if v_ch is not None:
                 children.append(v_ch)
         _, max_ch = CHILD_CAPS["PhoneFrame"]
@@ -435,7 +492,7 @@ def _validate_primitive(
             raw_children = []
         children = []
         for ch in raw_children:
-            v_ch = _validate_primitive(ch, allow_containers=False)
+            v_ch = _validate_primitive(ch, allow_containers=False, cta_fallback=cta_fallback)
             if v_ch is not None:
                 children.append(v_ch)
         _, max_ch = CHILD_CAPS["LayoutSlot"]
@@ -514,8 +571,10 @@ def _validate_primitive(
         }
 
     if ptype == "StatCallout":
+        raw_val = merged_props.get("value")
+        has_explicit_val = bool(str(raw_val if raw_val is not None else "").strip())
         value = _clamp_str(
-            merged_props.get("value") or "99.9%",
+            raw_val if has_explicit_val else "99.9%",
             CHAR_LIMITS["StatCallout"]["value"],
             default="99.9%",
         )
@@ -528,11 +587,28 @@ def _validate_primitive(
         meter = str(merged_props.get("meter") or "none").strip().lower()
         if meter not in ("none", "bar", "arc"):
             meter = "none"
-        try:
-            progress = float(merged_props.get("progress", 0.88))
-        except (TypeError, ValueError):
-            progress = 0.88
-        progress = max(0.05, min(1.0, progress))
+        raw_prog = merged_props.get("progress")
+        has_valid_progress = False
+        progress = 0.88
+        if raw_prog is not None and raw_prog != "":
+            try:
+                p_val = float(raw_prog)
+                if p_val > 0.0:
+                    has_valid_progress = True
+                    progress = max(0.05, min(1.0, p_val))
+            except (TypeError, ValueError):
+                has_valid_progress = False
+        elif meter == "bar":
+            has_valid_progress = True
+
+        # Guard against empty/non-numeric arc ring: only draw arc gauge when value is a compact
+        # numeric metric (has at least one digit, <= 8 chars) and valid positive progress was supplied.
+        is_numeric_stat = bool(has_explicit_val and re.search(r"\d", value) and len(value) <= 8)
+        if meter == "arc" and (not has_valid_progress or not is_numeric_stat):
+            meter = "none"
+        elif meter == "bar" and not has_valid_progress:
+            meter = "none"
+
         props = {
             "value": value,
             "label": label,
@@ -574,10 +650,9 @@ def _validate_primitive(
         return {"type": "ChecklistStack", "props": {"items": items}, "motion": motion}
 
     if ptype == "CtaButton":
-        label = _clamp_str(
-            merged_props.get("label") or merged_props.get("text") or "Try Free Today",
-            CHAR_LIMITS["CtaButton"]["label"],
-            default="Try Free Today",
+        label = _clean_cta_label(
+            merged_props.get("label") if "label" in merged_props else merged_props.get("text"),
+            fallback=cta_fallback,
         )
         icon = _validate_icon_name(merged_props.get("icon"))
         tone = str(merged_props.get("tone") or "ink").strip().lower()
@@ -603,6 +678,7 @@ def validate_scene_spec(
     style: str = "flat-explainer",
     strict: bool = False,
     ensure_brand_header: bool = False,
+    scene_text: str = "",
 ) -> dict[str, Any]:
     """Validate, clamp lengths, enforce child caps, and drop unknown primitives/icons on a `SceneSpec`."""
     if not isinstance(raw_spec, dict):
@@ -662,9 +738,10 @@ def validate_scene_spec(
     if bg_variant not in BG_VARIANTS:
         bg_variant = default_bg_by_style.get(resolved_style, "solid")
 
+    cta_fallback = _resolve_cta_fallback(scene_text, default="Learn More")
     validated_primitives: list[dict[str, Any]] = []
     for item in raw_primitives:
-        v_item = _validate_primitive(item, allow_containers=True)
+        v_item = _validate_primitive(item, allow_containers=True, cta_fallback=cta_fallback)
         if v_item is not None:
             validated_primitives.append(v_item)
 
@@ -724,6 +801,7 @@ def parse_llm_scene_spec(
     raw_content: str,
     *,
     style: str = "flat-explainer",
+    scene_text: str = "",
 ) -> dict[str, Any]:
     """Parse and strictly validate an LLM JSON `SceneSpec` string or raise `SceneSpecValidationError`."""
     cleaned = extract_json_object(raw_content)
@@ -733,7 +811,13 @@ def parse_llm_scene_spec(
         parsed = json.loads(cleaned)
     except json.JSONDecodeError as exc:
         raise SceneSpecValidationError(f"Invalid JSON in SceneSpec response: {exc}") from exc
-    return validate_scene_spec(parsed, style=style, strict=True, ensure_brand_header=True)
+    return validate_scene_spec(
+        parsed,
+        style=style,
+        strict=True,
+        ensure_brand_header=True,
+        scene_text=scene_text,
+    )
 
 
 def _derive_scene_copy_parts(
@@ -905,7 +989,13 @@ def build_default_scene_spec(
     }
     populated = _replace_placeholders_in_obj(copy.deepcopy(template_spec), replacements)
     populated["style"] = clean_style
-    return validate_scene_spec(populated, style=clean_style, strict=False, ensure_brand_header=True)
+    return validate_scene_spec(
+        populated,
+        style=clean_style,
+        strict=False,
+        ensure_brand_header=True,
+        scene_text=scene_text,
+    )
 
 
 def resolve_brand_header_contrast(
@@ -987,7 +1077,11 @@ def resolve_preset_tokens(
         surface_css = palette["surface"]
 
     header_contrast = resolve_brand_header_contrast(norm_brand, logo_plate="auto")
-    slot_gap = GAP_TOKENS.get(gap, str(raw_tokens.get("slot_gap", "20px")))
+    if gap == "md" and raw_tokens.get("slot_gap"):
+        slot_gap = str(raw_tokens["slot_gap"])
+    else:
+        slot_gap = GAP_TOKENS.get(gap, str(raw_tokens.get("slot_gap", "30px")))
+    inner_gap = str(raw_tokens.get("inner_gap", "22px"))
 
     return {
         "--bg": palette["bg"],
@@ -1018,6 +1112,16 @@ def resolve_preset_tokens(
         "--headline-case": str(raw_tokens.get("headline_case", "none")),
         "--headline-letter-spacing": str(raw_tokens.get("headline_letter_spacing", "-0.02em")),
         "--stage-gap": slot_gap,
+        "--inner-gap": inner_gap,
+        "--pad-card": str(raw_tokens.get("pad_card", "34px 40px")),
+        "--pad-phone": str(raw_tokens.get("pad_phone", "36px 44px")),
+        "--pad-button": str(raw_tokens.get("pad_button", "28px 54px")),
+        "--pad-pill": str(raw_tokens.get("pad_pill", "22px 44px")),
+        "--pad-stat": str(raw_tokens.get("pad_stat", "30px 40px")),
+        "--pad-checklist": str(raw_tokens.get("pad_checklist", "28px 42px")),
+        "--pad-badge": str(raw_tokens.get("pad_badge", "24px")),
+        "--pad-brand-plate": str(raw_tokens.get("pad_brand_plate", "16px 38px")),
+        "--pad-kinetic-row": str(raw_tokens.get("pad_kinetic_row", "22px 50px")),
         "--ease-enter": ease_enter,
         "--ease-pop": ease_pop,
         "--dur-enter": dur_enter,
@@ -1074,17 +1178,21 @@ def _render_primitive_html(
     props = prim.get("props") or {}
     motion = normalize_motion_spec(prim.get("motion"))
     dom_id = f"prim-{idx_prefix}"
-    fit_max_headline = 580 if in_phone else 860
-    fit_max_card = 550 if in_phone else 760
-    fit_max_pill = 520 if in_phone else 760
-    fit_max_cta = 520 if in_phone else 720
+    fit_max_headline = 710 if in_phone else 840
+    fit_max_card = 660 if in_phone else 760
+    fit_max_pill = 620 if in_phone else 740
+    fit_max_cta = 620 if in_phone else 700
 
     if ptype == "BrandHeader":
         logo_plate_mode = str(props.get("logo_plate") or "auto")
         hc = resolve_brand_header_contrast(norm_brand, logo_plate=logo_plate_mode)
         raw_brand_name = norm_brand["name"]
-        display_wordmark = props.get("wordmark") or _clean_display_brand_name(raw_brand_name)
-        tag_text = props.get("tag_text") or ""
+        display_wordmark = _clamp_str(
+            props.get("wordmark") or _clean_display_brand_name(raw_brand_name),
+            CHAR_LIMITS["BrandHeader"]["wordmark"],
+            default=_clean_display_brand_name(raw_brand_name),
+        )
+        tag_text = _clamp_str(props.get("tag_text") or "", CHAR_LIMITS["BrandHeader"]["tag_text"])
         plate_class = "brand-plate is-pill" if hc["has_plate"] else "brand-plate is-flat"
 
         anim_Collector.append(
@@ -1119,9 +1227,13 @@ def _render_primitive_html(
 
     if ptype == "HeadlineBlock":
         size = props.get("size") or "lg"
-        eyebrow = props.get("eyebrow") or ""
-        headline = props.get("headline") or ""
-        subhead = props.get("subhead") or ""
+        eyebrow = _clamp_str(props.get("eyebrow") or "", CHAR_LIMITS["HeadlineBlock"]["eyebrow"])
+        headline = _clamp_str(
+            props.get("headline") or "",
+            CHAR_LIMITS["HeadlineBlock"]["headline"],
+            default="Real-Time Protection",
+        )
+        subhead = _clamp_str(props.get("subhead") or "", CHAR_LIMITS["HeadlineBlock"]["subhead"])
         anim_Collector.append(
             {
                 "id": dom_id,
@@ -1137,7 +1249,7 @@ def _render_primitive_html(
         return (
             f'<section id="{dom_id}" class="primitive headline-block size-{size}" data-primitive="HeadlineBlock">'
             f"{eyebrow_html}"
-            f'<h1 class="headline headline-main fit-text" data-max-width="{fit_max_headline}">{_escape_html(headline)}</h1>'
+            f'<h1 class="headline headline-main fit-text" data-max-width="{fit_max_headline}" data-min-size="56">{_escape_html(headline)}</h1>'
             f"{sub_html}"
             f"</section>"
         )
@@ -1173,7 +1285,11 @@ def _render_primitive_html(
         )
 
     if ptype == "PhoneFrame":
-        header_label = props.get("header_label") or "LIVE PROTECTION"
+        header_label = _clamp_str(
+            props.get("header_label") or "LIVE PROTECTION",
+            CHAR_LIMITS["PhoneFrame"]["header_label"],
+            default="LIVE PROTECTION",
+        )
         children = props.get("children") or []
         anim_Collector.append(
             {
@@ -1227,8 +1343,12 @@ def _render_primitive_html(
         )
 
     if ptype == "FeatureCard":
-        title = props.get("title") or ""
-        body = props.get("body") or ""
+        title = _clamp_str(
+            props.get("title") or "",
+            CHAR_LIMITS["FeatureCard"]["title"],
+            default="Verified Protection",
+        )
+        body = _clamp_str(props.get("body") or "", CHAR_LIMITS["FeatureCard"]["body"])
         icon = props.get("icon")
         tone = props.get("tone") or "surface"
         tilt = props.get("tilt") or "none"
@@ -1245,19 +1365,23 @@ def _render_primitive_html(
                 "is_headline": True,
             }
         )
-        icon_html = f'<div class="card-icon-wrap">{_render_svg_icon(icon, 42)}</div>' if icon else ""
+        icon_html = f'<div class="card-icon-wrap">{_render_svg_icon(icon, 52)}</div>' if icon else ""
         body_html = f'<div class="card-sub">{_escape_html(body)}</div>' if body else ""
         return (
             f'<article id="{dom_id}" class="primitive feature-card tone-{tone}{tilt_cls}" '
             f'data-primitive="FeatureCard" style="background-color: {bg_var}; color: {fg_var};">'
             f"{icon_html}"
-            f'<div class="card-title fit-text" data-max-width="{fit_max_card}">{_escape_html(title)}</div>'
+            f'<div class="card-title fit-text" data-max-width="{fit_max_card}" data-min-size="34">{_escape_html(title)}</div>'
             f"{body_html}"
             f"</article>"
         )
 
     if ptype == "PillBadge":
-        label = props.get("label") or ""
+        label = _clamp_str(
+            props.get("label") or "",
+            CHAR_LIMITS["PillBadge"]["label"],
+            default="LIVE SHIELD",
+        )
         icon = props.get("icon")
         tone = props.get("tone") or "accent"
         pulse = bool(props.get("pulse", False))
@@ -1271,12 +1395,12 @@ def _render_primitive_html(
                 "cue": motion["cue"],
             }
         )
-        icon_html = _render_svg_icon(icon, 30) if icon else ""
+        icon_html = _render_svg_icon(icon, 36) if icon else ""
         return (
             f'<div id="{dom_id}" class="primitive pill-badge tone-{tone}" '
             f'data-primitive="PillBadge" style="background-color: {bg_var}; color: {fg_var};">'
             f"{icon_html}"
-            f'<span class="pill-label fit-text" data-max-width="{fit_max_pill}">{_escape_html(label)}</span>'
+            f'<span class="pill-label fit-text" data-max-width="{fit_max_pill}" data-min-size="30">{_escape_html(label)}</span>'
             f"</div>"
         )
 
@@ -1285,7 +1409,7 @@ def _render_primitive_html(
         size = props.get("size") or "md"
         tone = props.get("tone") or "accent"
         draw_stroke = bool(props.get("draw_stroke", False))
-        size_px = {"sm": 56, "md": 76, "lg": 100}.get(size, 76)
+        size_px = {"sm": 64, "md": 84, "lg": 108}.get(size, 84)
         bg_var, fg_var = _tone_style_vars(tone)
         anim_Collector.append(
             {
@@ -1306,11 +1430,38 @@ def _render_primitive_html(
         )
 
     if ptype == "StatCallout":
-        value = props.get("value") or "99.9%"
-        label = props.get("label") or "VERIFIED"
-        delta = props.get("delta") or ""
-        meter = props.get("meter") or "none"
-        progress = float(props.get("progress", 0.9))
+        raw_val = props.get("value")
+        has_explicit_val = bool(str(raw_val if raw_val is not None else "").strip())
+        value = _clamp_str(
+            raw_val if has_explicit_val else "99.9%",
+            CHAR_LIMITS["StatCallout"]["value"],
+            default="99.9%",
+        )
+        label = _clamp_str(
+            props.get("label") or "VERIFIED",
+            CHAR_LIMITS["StatCallout"]["label"],
+            default="VERIFIED",
+        )
+        delta = _clamp_str(props.get("delta") or "", CHAR_LIMITS["StatCallout"]["delta"])
+        meter = str(props.get("meter") or "none").strip().lower()
+        raw_prog = props.get("progress")
+        has_valid_progress = False
+        progress = 0.0
+        if raw_prog is not None and raw_prog != "":
+            try:
+                p_val = float(raw_prog)
+                if p_val > 0.0:
+                    has_valid_progress = True
+                    progress = max(0.05, min(1.0, p_val))
+            except (TypeError, ValueError):
+                has_valid_progress = False
+
+        is_numeric_stat = bool(has_explicit_val and re.search(r"\d", value) and len(value) <= 8)
+        if meter == "arc" and (not has_valid_progress or not is_numeric_stat):
+            meter = "none"
+        elif meter == "bar" and not has_valid_progress:
+            meter = "none"
+
         anim_Collector.append(
             {
                 "id": dom_id,
@@ -1322,6 +1473,28 @@ def _render_primitive_html(
             }
         )
         delta_html = f'<span class="stat-delta">{_escape_html(delta)}</span>' if delta else ""
+        if meter == "arc":
+            circumference = 427
+            dash = int(round(min(0.92, max(0.12, progress)) * circumference))
+            return (
+                f'<div id="{dom_id}" class="primitive stat-callout meter-arc" data-primitive="StatCallout" '
+                f'style="background-color: var(--surface); color: var(--on-surface);">'
+                f'<div class="stat-arc-wrap">'
+                f'<svg class="stat-arc-svg" width="168" height="168" viewBox="0 0 168 168" fill="none" aria-hidden="true">'
+                f'<circle class="stat-arc-track" cx="84" cy="84" r="68" stroke="currentColor" stroke-opacity="0.18" stroke-width="12" fill="none"/>'
+                f'<circle class="stat-arc-progress svg-draw-path" cx="84" cy="84" r="68" stroke="var(--accent2)" '
+                f'stroke-width="12" style="stroke-dasharray: {dash}px {circumference}px; stroke-dashoffset: 0;" '
+                f'stroke-linecap="round" transform="rotate(-90 84 84)" fill="none"/>'
+                f"</svg>"
+                f'<span class="stat-value stat-arc-value fit-text" data-max-width="112" data-min-size="30">{_escape_html(value)}</span>'
+                f"</div>"
+                f'<div class="stat-main">'
+                f"{delta_html}"
+                f'<div class="stat-label">{_escape_html(label)}</div>'
+                f"</div>"
+                f"</div>"
+            )
+
         meter_html = ""
         if meter == "bar":
             pct = int(round(progress * 100))
@@ -1330,23 +1503,13 @@ def _render_primitive_html(
                 f'<div class="stat-bar-fill" style="width: {pct}%;"></div>'
                 "</div>"
             )
-        elif meter == "arc":
-            dash = int(round(progress * 226))
-            meter_html = (
-                '<svg class="stat-arc-svg" width="88" height="88" viewBox="0 0 88 88" fill="none">'
-                '<circle cx="44" cy="44" r="36" stroke="currentColor" stroke-opacity="0.2" stroke-width="8"/>'
-                f'<circle class="svg-draw-path" cx="44" cy="44" r="36" stroke="var(--accent2)" '
-                f'stroke-width="8" stroke-dasharray="{dash} 240" stroke-linecap="round" '
-                'transform="rotate(-90 44 44)"/>'
-                "</svg>"
-            )
         return (
             f'<div id="{dom_id}" class="primitive stat-callout" data-primitive="StatCallout" '
             f'style="background-color: var(--surface); color: var(--on-surface);">'
             f"{meter_html}"
             f'<div class="stat-main">'
             f'<div class="stat-value-row">'
-            f'<span class="stat-value">{_escape_html(value)}</span>'
+            f'<span class="stat-value fit-text" data-max-width="{fit_max_card}" data-min-size="38">{_escape_html(value)}</span>'
             f"{delta_html}"
             f"</div>"
             f'<div class="stat-label">{_escape_html(label)}</div>'
@@ -1371,7 +1534,7 @@ def _render_primitive_html(
             icon_key = {"check": "check", "alert": "alert", "x": "x", "bullet": "spark"}.get(state, "check")
             rows_html.append(
                 f'<div class="checklist-item" id="{dom_id}-item-{i_idx}">'
-                f'<span class="checklist-icon">{_render_svg_icon(icon_key, 28)}</span>'
+                f'<span class="checklist-icon">{_render_svg_icon(icon_key, 34)}</span>'
                 f'<span class="checklist-label">{_escape_html(item.get("label") or "")}</span>'
                 f"</div>"
             )
@@ -1383,7 +1546,7 @@ def _render_primitive_html(
         )
 
     if ptype == "CtaButton":
-        label = props.get("label") or "Learn More"
+        label = _clean_cta_label(props.get("label"), fallback="Learn More")
         icon = props.get("icon")
         tone = props.get("tone") or "ink"
         emphasis = props.get("emphasis") or motion["emphasis"] or "pulse"
@@ -1397,12 +1560,12 @@ def _render_primitive_html(
                 "cue": motion["cue"],
             }
         )
-        icon_html = _render_svg_icon(icon, 32) if icon else ""
+        icon_html = _render_svg_icon(icon, 38) if icon else ""
         return (
             f'<div id="{dom_id}" class="primitive cta-button btn tone-{tone}" '
             f'data-primitive="CtaButton" style="background-color: {bg_var}; color: {fg_var};">'
             f"{icon_html}"
-            f'<span class="cta-label fit-text" data-max-width="{fit_max_cta}">{_escape_html(label)}</span>'
+            f'<span class="cta-label fit-text" data-max-width="{fit_max_cta}" data-min-size="32">{_escape_html(label)}</span>'
             f"</div>"
         )
 
@@ -1425,60 +1588,267 @@ def _build_motion_runtime_js(anim_items: list[dict[str, Any]]) -> str:
     specs_json = json.dumps(anim_items, ensure_ascii=False)
     return f"""
 (function() {{
+  var rootEl = document.getElementById('root');
+  var styleName = (rootEl && rootEl.getAttribute('data-style')) || '';
   var stage = document.getElementById('safe-stage');
-  if (window.__fitText) {{
-    window.__fitText('.fit-text', 860, 22);
-    var phoneBodies = document.querySelectorAll('.phone-body');
-    for (var pb = 0; pb < phoneBodies.length; pb++) {{
-      var pbWidth = Math.max(240, (phoneBodies[pb].clientWidth || 624) - 24);
-      window.__fitText(phoneBodies[pb].querySelectorAll('.fit-text'), pbWidth, 20);
+  var SAFE_H = {STAGE_HEIGHT};
+  var SAFE_W = {STAGE_WIDTH};
+
+  // 1. Guard CtaButton labels: never allow an empty or icon-only button
+  function guardCtaButtons() {{
+    var ctas = document.querySelectorAll('.cta-button');
+    for (var i = 0; i < ctas.length; i++) {{
+      var btn = ctas[i];
+      var lbl = btn.querySelector('.cta-label');
+      if (!lbl) {{
+        lbl = document.createElement('span');
+        lbl.className = 'cta-label fit-text';
+        btn.appendChild(lbl);
+      }}
+      var rawTxt = (lbl.textContent || '').replace(/\\s+/g, ' ').trim();
+      var alnum = rawTxt.replace(/[^A-Za-z0-9]+/g, '');
+      if (!rawTxt || alnum.length < 3 || rawTxt.length < 3) {{
+        lbl.textContent = 'Learn More';
+      }}
+      lbl.style.display = 'inline-block';
+      lbl.style.visibility = 'visible';
+      lbl.style.opacity = '1';
     }}
-    window.__fitText('.kinetic-row', 900, 96);
   }}
-  // Ensure vertical stack fits comfortably inside #safe-stage (1240px height) with breathing room for y-entrances
-  if (stage) {{
-    function stageOverflows() {{
-      if (stage.scrollHeight > stage.clientHeight - 48) return true;
-      var sRect = stage.getBoundingClientRect();
-      var ch = stage.children;
-      if (ch.length > 0) {{
-        var firstRect = ch[0].getBoundingClientRect();
-        var lastRect = ch[ch.length - 1].getBoundingClientRect();
-        if (firstRect.top < sRect.top + 12 || lastRect.bottom > sRect.bottom - 28) return true;
-      }}
-      return false;
-    }}
-    var guard = 0;
-    while (stageOverflows() && guard < 12) {{
-      guard++;
-      var curGap = parseFloat(window.getComputedStyle(stage).rowGap || window.getComputedStyle(stage).gap) || 20;
-      if (curGap > 8) {{
-        stage.style.gap = Math.max(8, curGap - 4) + 'px';
-      }}
-      var phones = stage.querySelectorAll('.phone-frame, .phone-body');
-      for (var p = 0; p < phones.length; p++) {{
-        phones[p].style.paddingTop = '12px';
-        phones[p].style.paddingBottom = '12px';
-        phones[p].style.gap = '10px';
-      }}
-      var cards = stage.querySelectorAll('.feature-card, .stat-callout, .checklist-stack');
-      for (var c = 0; c < cards.length; c++) {{
-        cards[c].style.paddingTop = '14px';
-        cards[c].style.paddingBottom = '14px';
-      }}
-      if (guard >= 4) {{
-        var ctas = stage.querySelectorAll('.cta-button');
-        for (var b = 0; b < ctas.length; b++) {{
-          ctas[b].style.minHeight = '68px';
-          ctas[b].style.paddingTop = '12px';
-          ctas[b].style.paddingBottom = '12px';
+
+  // 2. Fit text while respecting per-element minimum font-size floors (headline >= 56, kinetic >= 96, body >= 28)
+  function fitAllText() {{
+    guardCtaButtons();
+    if (window.__fitText) {{
+      var fitNodes = document.querySelectorAll('.fit-text');
+      for (var i = 0; i < fitNodes.length; i++) {{
+        var node = fitNodes[i];
+        var maxW = parseFloat(node.getAttribute('data-max-width')) || 840;
+        var minS = parseFloat(node.getAttribute('data-min-size')) || 30;
+        var parentPhone = node.closest('.phone-body');
+        if (parentPhone && parentPhone.clientWidth > 0) {{
+          maxW = Math.min(maxW, Math.max(260, parentPhone.clientWidth - 24));
         }}
-        var heads = stage.querySelectorAll('.headline-main');
-        for (var h = 0; h < heads.length; h++) {{
-          var hSize = parseFloat(window.getComputedStyle(heads[h]).fontSize) || 48;
-          if (hSize > 30) {{
-            heads[h].style.fontSize = Math.max(30, hSize - 4) + 'px';
+        window.__fitText(node, maxW, minS);
+      }}
+      window.__fitText('.kinetic-row', 900, 96);
+    }}
+    if (!stage) return;
+    var allNodes = stage.querySelectorAll('*');
+    for (var j = 0; j < allNodes.length; j++) {{
+      var tel = allNodes[j];
+      if (tel.clientWidth > 0 && tel.scrollWidth > tel.clientWidth + 1) {{
+        tel.style.whiteSpace = 'normal';
+        var curSize = parseFloat(window.getComputedStyle(tel).fontSize) || 32;
+        var floor = tel.classList.contains('kinetic-row')
+          ? 96
+          : (tel.classList.contains('headline-main') ? 56 : 28);
+        while (tel.scrollWidth > tel.clientWidth + 1 && curSize > floor) {{
+          curSize = Math.max(floor, curSize - 2);
+          tel.style.fontSize = curSize + 'px';
+        }}
+      }}
+    }}
+  }}
+
+  // 3. Measure natural/current stack bounding box inside #safe-stage
+  function measureStack() {{
+    if (!stage || !stage.children || stage.children.length === 0) {{
+      return {{ height: 0, width: 0, top: 0, bottom: 0, left: 0, right: 0 }};
+    }}
+    var ch = stage.children;
+    var minT = Infinity, maxB = -Infinity, minL = Infinity, maxR = -Infinity;
+    for (var i = 0; i < ch.length; i++) {{
+      var r = ch[i].getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) continue;
+      if (r.top < minT) minT = r.top;
+      if (r.bottom > maxB) maxB = r.bottom;
+      if (r.left < minL) minL = r.left;
+      if (r.right > maxR) maxR = r.right;
+    }}
+    if (minT === Infinity) {{
+      return {{ height: 0, width: 0, top: 0, bottom: 0, left: 0, right: 0 }};
+    }}
+    return {{
+      height: maxB - minT,
+      width: maxR - minL,
+      top: minT,
+      bottom: maxB,
+      left: minL,
+      right: maxR
+    }};
+  }}
+
+  function applyStageZoom(z, baseStageGap) {{
+    if (!stage) return;
+    var ch = stage.children;
+    var maxScreenW = styleName === 'neo-brutal' ? 868 : 884;
+    for (var i = 0; i < ch.length; i++) {{
+      var el = ch[i];
+      el.style.zoom = String(roundZoom(z));
+      if (el.classList.contains('phone-frame')) {{
+        var targetPhoneW = Math.min(maxScreenW, Math.max(812, Math.round(840 * z)));
+        el.style.width = (targetPhoneW / z).toFixed(2) + 'px';
+        el.style.maxWidth = (maxScreenW / z).toFixed(2) + 'px';
+      }} else if (!el.classList.contains('icon-badge') && !el.classList.contains('pill-badge') && !el.classList.contains('kinetic-stack')) {{
+        el.style.maxWidth = (maxScreenW / z).toFixed(2) + 'px';
+        var baseW = parseFloat(el.getAttribute('data-base-width')) || 840;
+        var minScreenW = Math.min(baseW, 760);
+        var targetW = Math.min(maxScreenW, Math.max(minScreenW, Math.round(baseW * z)));
+        el.style.width = (targetW / z).toFixed(2) + 'px';
+      }}
+    }}
+    var scaledGap = z >= 1.0
+      ? Math.max(baseStageGap, Math.min(56, Math.round(baseStageGap * Math.min(z, 1.3))))
+      : Math.max(28, Math.round(baseStageGap * Math.max(0.72, z)));
+    stage.style.gap = scaledGap + 'px';
+    stage.setAttribute('data-auto-fit-zoom', String(roundZoom(z)));
+  }}
+
+  function roundZoom(v) {{
+    return Math.round(v * 1000) / 1000;
+  }}
+
+  fitAllText();
+
+  // 4. Auto-fit content block height to ~60-75% of SAFE_H (1240px)
+  if (stage && stage.children.length > 0) {{
+    var baseStageGap = parseFloat(window.getComputedStyle(stage).rowGap || window.getComputedStyle(stage).gap) || 30;
+    for (var ci = 0; ci < stage.children.length; ci++) {{
+      var cel = stage.children[ci];
+      cel.setAttribute('data-base-width', String(cel.getBoundingClientRect().width || 840));
+    }}
+
+    var m0 = measureStack();
+    var ratio0 = m0.height / SAFE_H;
+    var currentZoom = 1.0;
+    stage.setAttribute('data-auto-fit-zoom', '1');
+
+    var isKineticScene = (styleName === 'kinetic-type' && !!stage.querySelector('.kinetic-stack'));
+    if (isKineticScene) {{
+      // Keep kinetic-type as it looks unless it overflows > 0.78 or underflows < 0.56
+      if (ratio0 > 0.78 || m0.width > 900) {{
+        var targetHK = 0.73 * SAFE_H;
+        for (var kStep = 0; kStep < 5 && (measureStack().height > 0.78 * SAFE_H || measureStack().width > 900); kStep++) {{
+          var mk = measureStack();
+          var zk = Math.min(targetHK / Math.max(1, mk.height), 892 / Math.max(1, mk.width));
+          currentZoom = Math.max(0.55, Math.min(1.0, currentZoom * zk));
+          for (var ki = 0; ki < stage.children.length; ki++) {{
+            stage.children[ki].style.zoom = String(roundZoom(currentZoom));
           }}
+          stage.setAttribute('data-auto-fit-zoom', String(roundZoom(currentZoom)));
+          fitAllText();
+        }}
+      }} else if (ratio0 < 0.56) {{
+        var extraK = (0.64 * SAFE_H) - m0.height;
+        var kStack = stage.querySelector('.kinetic-stack');
+        if (kStack && extraK > 0) {{
+          var kRows = kStack.querySelectorAll('.kinetic-row');
+          var curKGap = parseFloat(window.getComputedStyle(kStack).rowGap || window.getComputedStyle(kStack).gap) || 22;
+          var addGap = Math.min(36, Math.round(extraK / Math.max(1, kRows.length)));
+          kStack.style.gap = (curKGap + addGap) + 'px';
+        }}
+      }}
+    }} else {{
+      var minTargetRatio = 0.65;
+      var maxTargetRatio = 0.75;
+      var idealGrowH = 0.69 * SAFE_H;   // ~856px
+      var idealShrinkH = 0.70 * SAFE_H; // ~868px
+
+      if (ratio0 < minTargetRatio) {{
+        // Sparse spec: scale UP via CSS zoom first (capped at 1.26x so width stays <= 884px)
+        currentZoom = Math.min(1.26, Math.max(1.02, idealGrowH / Math.max(1, m0.height)));
+        applyStageZoom(currentZoom, baseStageGap);
+        fitAllText();
+
+        var mGrow = measureStack();
+        if (mGrow.height > maxTargetRatio * SAFE_H) {{
+          // If text line-wrapping during zoom pushed height past 0.75, step zoom back to fit
+          for (var gBack = 0; gBack < 4 && measureStack().height > maxTargetRatio * SAFE_H; gBack++) {{
+            var mgb = measureStack();
+            currentZoom = Math.max(0.65, currentZoom * (idealShrinkH / Math.max(1, mgb.height)));
+            applyStageZoom(currentZoom, baseStageGap);
+            fitAllText();
+          }}
+        }} else if (mGrow.height < minTargetRatio * SAFE_H) {{
+          // Still below 61% after max zoom: expand vertical breathing room (stage gap + phone/card vertical padding & body gap)
+          var remH = idealGrowH - mGrow.height;
+          var numStageGaps = Math.max(1, stage.children.length - 1);
+          var curStGap = parseFloat(window.getComputedStyle(stage).rowGap || window.getComputedStyle(stage).gap) || baseStageGap;
+          var stGapAdd = Math.min(28, Math.round((remH * 0.25) / numStageGaps));
+          stage.style.gap = (curStGap + stGapAdd) + 'px';
+
+          mGrow = measureStack();
+          remH = Math.max(0, idealGrowH - mGrow.height);
+          if (remH > 4) {{
+            var phone = stage.querySelector('.phone-frame');
+            var phoneBody = stage.querySelector('.phone-body');
+            if (phone && phoneBody) {{
+              var localRem = remH / currentZoom;
+              var pChildren = phoneBody.children.length;
+              var pGaps = Math.max(1, pChildren - 1);
+              var curPhonePadT = parseFloat(window.getComputedStyle(phone).paddingTop) || 36;
+              var curPhonePadB = parseFloat(window.getComputedStyle(phone).paddingBottom) || 36;
+              var curBodyGap = parseFloat(window.getComputedStyle(phoneBody).rowGap || window.getComputedStyle(phoneBody).gap) || 22;
+
+              var bodyGapAdd = Math.min(36, Math.round((localRem * 0.35) / pGaps));
+              phoneBody.style.gap = (curBodyGap + bodyGapAdd) + 'px';
+              var usedByGap = bodyGapAdd * (pChildren > 1 ? pGaps : 0);
+              var padEach = Math.max(0, Math.round((localRem - usedByGap) / 2));
+              phone.style.paddingTop = (curPhonePadT + padEach) + 'px';
+              phone.style.paddingBottom = (curPhonePadB + padEach) + 'px';
+            }} else {{
+              var blocks = stage.querySelectorAll('.feature-card, .stat-callout, .checklist-stack, .headline-block, .kinetic-stack');
+              if (blocks.length > 0) {{
+                var localPerBlock = (remH / currentZoom) / (blocks.length * 2);
+                for (var bi = 0; bi < blocks.length; bi++) {{
+                  var bpt = parseFloat(window.getComputedStyle(blocks[bi]).paddingTop) || 24;
+                  var bpb = parseFloat(window.getComputedStyle(blocks[bi]).paddingBottom) || 24;
+                  blocks[bi].style.paddingTop = Math.round(bpt + localPerBlock) + 'px';
+                  blocks[bi].style.paddingBottom = Math.round(bpb + localPerBlock) + 'px';
+                }}
+              }}
+            }}
+          }}
+          fitAllText();
+        }}
+      }} else if (ratio0 > maxTargetRatio) {{
+        // Dense / many-primitive spec: scale DOWN via CSS zoom so stack lands at ~70% of SAFE_H
+        for (var sStep = 0; sStep < 5 && measureStack().height > maxTargetRatio * SAFE_H; sStep++) {{
+          var ms = measureStack();
+          currentZoom = Math.max(0.45, Math.min(1.0, currentZoom * (idealShrinkH / Math.max(1, ms.height))));
+          applyStageZoom(currentZoom, baseStageGap);
+          fitAllText();
+        }}
+      }}
+
+      // Final clamp pass in case post-zoom text wrapping shifted stack height outside [0.58, 0.77]
+      for (var fStep = 0; fStep < 4; fStep++) {{
+        var mf = measureStack();
+        var rf = mf.height / SAFE_H;
+        if (rf > 0.77) {{
+          currentZoom = Math.max(0.45, currentZoom * ((0.70 * SAFE_H) / Math.max(1, mf.height)));
+          applyStageZoom(currentZoom, baseStageGap);
+          fitAllText();
+        }} else if (rf < 0.58) {{
+          currentZoom = Math.min(1.28, currentZoom * ((0.65 * SAFE_H) / Math.max(1, mf.height)));
+          applyStageZoom(currentZoom, baseStageGap);
+          fitAllText();
+        }} else {{
+          break;
+        }}
+      }}
+
+      if (currentZoom < 0.95) {{
+        var minLocalPad = Math.ceil(16 / currentZoom);
+        var padContainers = stage.querySelectorAll('.feature-card, .cta-button, .pill-badge, .stat-callout, .checklist-stack');
+        for (var pi = 0; pi < padContainers.length; pi++) {{
+          var pc = padContainers[pi];
+          var pst = window.getComputedStyle(pc);
+          if ((parseFloat(pst.paddingTop) || 0) < minLocalPad) pc.style.paddingTop = minLocalPad + 'px';
+          if ((parseFloat(pst.paddingBottom) || 0) < minLocalPad) pc.style.paddingBottom = minLocalPad + 'px';
+          if ((parseFloat(pst.paddingLeft) || 0) < minLocalPad) pc.style.paddingLeft = minLocalPad + 'px';
+          if ((parseFloat(pst.paddingRight) || 0) < minLocalPad) pc.style.paddingRight = minLocalPad + 'px';
         }}
       }}
     }}
@@ -1716,12 +2086,12 @@ html, body {{
   top: {STAGE_TOP}px;
   width: {STAGE_WIDTH}px;
   height: {STAGE_HEIGHT}px;
-  padding: 18px 24px;
+  padding: 20px 24px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--stage-gap, 20px);
+  gap: var(--stage-gap, 30px);
   overflow: hidden;
 }}
 #safe-stage.slot-editorial-grid {{
@@ -1730,7 +2100,7 @@ html, body {{
   border: var(--border-card);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);
-  padding: 28px 36px;
+  padding: 36px 42px;
 }}
 .primitive {{
   margin-left: auto;
@@ -1748,7 +2118,8 @@ html, body {{
   width: 860px;
   max-width: 100%;
   box-sizing: border-box;
-  gap: 10px;
+  gap: 14px;
+  padding: 8px 16px;
   flex-shrink: 0;
 }}
 .brand-plate {{
@@ -1756,8 +2127,8 @@ html, body {{
   flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 14px;
-  padding: 10px 26px;
+  gap: 18px;
+  padding: var(--pad-brand-plate, 16px 38px);
   border-radius: 999px;
   margin: 0 auto;
   max-width: 100%;
@@ -1768,61 +2139,61 @@ html, body {{
   border: 2px solid rgba(128, 128, 128, 0.16);
 }}
 .brand-logo-wrap {{
-  width: 44px;
-  height: 44px;
+  width: 52px;
+  height: 52px;
   overflow: hidden;
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
   flex-shrink: 0;
-  border-radius: 10px;
+  border-radius: 12px;
 }}
 #brand-logo {{
-  height: 44px;
+  height: 52px;
   width: auto;
   max-width: none;
   display: block;
 }}
 .brand-wordmark {{
   font-family: var(--font-heading);
-  font-size: 32px;
+  font-size: 38px;
   font-weight: 800;
   letter-spacing: -0.01em;
-  line-height: 1.1;
+  line-height: 1.12;
   white-space: nowrap;
   max-width: 100%;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }}
 .brand-tag {{
   display: inline-block;
-  padding: 6px 20px;
+  padding: 14px 30px;
   border-radius: 999px;
   background-color: var(--accent2);
   color: var(--on-accent2);
   font-family: var(--font-heading);
-  font-size: 22px;
+  font-size: 28px;
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   margin: 0 auto;
   max-width: 100%;
   box-sizing: border-box;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }}
 /* HeadlineBlock */
 .headline-block {{
   width: 860px;
   max-width: 100%;
   box-sizing: border-box;
-  gap: 10px;
-  padding: 6px 12px;
+  gap: 14px;
+  padding: 16px 24px;
 }}
 #safe-stage.slot-editorial-grid .headline-block {{
   border-bottom: 1.5px solid rgba(128, 128, 128, 0.22);
-  padding-bottom: 16px;
+  padding-bottom: 22px;
 }}
 .headline-eyebrow {{
-  font-size: 22px;
+  font-size: 28px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1830,7 +2201,7 @@ html, body {{
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }}
 .headline-main {{
   font-family: var(--font-heading);
@@ -1843,32 +2214,34 @@ html, body {{
   max-width: 100%;
   box-sizing: border-box;
   margin: 0 auto;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }}
-.headline-block.size-md .headline-main {{ font-size: 44px; }}
-.headline-block.size-lg .headline-main {{ font-size: 52px; }}
-.headline-block.size-hero .headline-main {{ font-size: 62px; }}
-.phone-body .headline-block.size-md .headline-main {{ font-size: 38px; }}
-.phone-body .headline-block.size-lg .headline-main {{ font-size: 44px; }}
-.phone-body .headline-block.size-hero .headline-main {{ font-size: 48px; }}
+.headline-block.size-md .headline-main {{ font-size: 58px; }}
+.headline-block.size-lg .headline-main {{ font-size: 66px; }}
+.headline-block.size-hero .headline-main {{ font-size: 74px; }}
+.phone-body .headline-block.size-md .headline-main {{ font-size: 56px; }}
+.phone-body .headline-block.size-lg .headline-main {{ font-size: 60px; }}
+.phone-body .headline-block.size-hero .headline-main {{ font-size: 66px; }}
 .headline-sub {{
-  font-size: 26px;
+  font-size: 32px;
   font-weight: 600;
   line-height: 1.28;
-  opacity: 0.90;
+  opacity: 0.92;
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
   margin: 0 auto;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }}
 /* KineticWordStack */
 .kinetic-stack {{
   width: 900px;
   max-width: 100%;
   box-sizing: border-box;
-  gap: 16px;
-  padding: 8px 0;
+  gap: 22px;
+  padding: 12px 0;
 }}
 .kinetic-row {{
   font-family: var(--font-heading);
@@ -1878,8 +2251,8 @@ html, body {{
   letter-spacing: -0.02em;
   text-transform: uppercase;
   text-align: center;
-  padding: 14px 36px;
-  border-radius: 28px;
+  padding: var(--pad-kinetic-row, 22px 50px);
+  border-radius: 32px;
   max-width: 100%;
   width: fit-content;
   box-sizing: border-box;
@@ -1907,11 +2280,11 @@ html, body {{
   background-color: var(--surface);
   color: var(--on-surface);
   border: 5px solid var(--accent);
-  border-radius: 26px;
+  border-radius: 28px;
 }}
 /* PhoneFrame */
 .phone-frame {{
-  width: 680px;
+  width: 840px;
   max-width: 100%;
   box-sizing: border-box;
   background-color: var(--surface);
@@ -1920,12 +2293,12 @@ html, body {{
   border-radius: var(--radius-phone);
   box-shadow: var(--shadow-phone);
   backdrop-filter: blur(var(--glass-blur, 0px));
-  padding: 22px 28px;
-  gap: 14px;
+  padding: var(--pad-phone, 36px 44px);
+  gap: var(--inner-gap, 22px);
 }}
 .phone-speaker {{
-  width: 120px;
-  height: 10px;
+  width: 140px;
+  height: 12px;
   border-radius: 999px;
   background-color: currentColor;
   opacity: 0.22;
@@ -1933,13 +2306,13 @@ html, body {{
 }}
 .phone-header-label {{
   font-family: var(--font-heading);
-  font-size: 22px;
+  font-size: 28px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  opacity: 0.85;
+  opacity: 0.88;
   max-width: 100%;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }}
 .phone-body {{
   width: 100%;
@@ -1949,22 +2322,22 @@ html, body {{
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: var(--inner-gap, 22px);
 }}
 /* FeatureCard */
 .feature-card {{
-  width: 600px;
+  width: 840px;
   max-width: 100%;
   box-sizing: border-box;
-  padding: 22px 26px;
+  padding: var(--pad-card, 34px 40px);
   border: var(--border-card);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);
   backdrop-filter: blur(var(--glass-blur, 0px));
-  gap: 14px;
+  gap: 20px;
 }}
 #safe-stage > .feature-card {{
-  width: 780px;
+  width: 840px;
   max-width: 100%;
 }}
 .feature-card.tilt-left,
@@ -1975,29 +2348,31 @@ html, body {{
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 2px;
+  margin-bottom: 4px;
 }}
 .card-title {{
   font-family: var(--font-heading);
-  font-size: 36px;
+  font-size: 42px;
   font-weight: var(--headline-weight, 800);
   line-height: 1.15;
   text-align: center;
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }}
 .card-sub {{
-  font-size: 24px;
+  font-size: 30px;
   font-weight: 600;
-  line-height: 1.26;
+  line-height: 1.28;
   opacity: 0.92;
   text-align: center;
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }}
 /* PillBadge */
 .pill-badge {{
@@ -2005,29 +2380,34 @@ html, body {{
   flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  padding: 14px 30px;
+  gap: 18px;
+  padding: var(--pad-pill, 22px 44px);
   border-radius: var(--radius-pill, 999px);
   border: var(--border-card);
   box-shadow: var(--shadow-card);
   font-family: var(--font-heading);
-  font-size: 30px;
+  font-size: 34px;
   font-weight: 800;
+  width: fit-content;
   max-width: 100%;
   box-sizing: border-box;
 }}
 .pill-label {{
   min-width: 0;
   max-width: 100%;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }}
 /* IconBadge */
 .icon-badge {{
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
-  border-radius: 28px;
+  width: fit-content !important;
+  align-self: center;
+  aspect-ratio: 1 / 1;
+  padding: var(--pad-badge, 24px);
+  border-radius: 32px;
   border: var(--border-card);
   box-shadow: var(--shadow-card);
   max-width: 100%;
@@ -2035,24 +2415,51 @@ html, body {{
 }}
 /* StatCallout */
 .stat-callout {{
-  width: 600px;
+  width: 840px;
   max-width: 100%;
   box-sizing: border-box;
-  padding: 20px 26px;
+  padding: var(--pad-stat, 30px 40px);
   border: var(--border-card);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);
-  gap: 12px;
+  gap: 18px;
 }}
 #safe-stage > .stat-callout {{
-  width: 780px;
+  width: 840px;
   max-width: 100%;
+}}
+.stat-arc-wrap {{
+  position: relative;
+  width: 148px;
+  height: 148px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
+}}
+.stat-arc-svg {{
+  width: 148px;
+  height: 148px;
+  display: block;
+}}
+.stat-arc-value {{
+  position: absolute;
+  inset: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-heading);
+  font-size: 34px;
+  font-weight: 900;
+  line-height: 1.05;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }}
 .stat-main {{
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 12px;
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
@@ -2062,44 +2469,48 @@ html, body {{
   flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: 18px;
   flex-wrap: wrap;
+  width: 100%;
   max-width: 100%;
 }}
 .stat-value {{
   font-family: var(--font-heading);
-  font-size: 52px;
+  font-size: 60px;
   font-weight: 900;
-  line-height: 1.05;
+  line-height: 1.08;
   font-variant-numeric: tabular-nums;
   max-width: 100%;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }}
 .stat-delta {{
-  padding: 6px 14px;
+  padding: 14px 26px;
   border-radius: 999px;
   background-color: var(--accent);
   color: var(--on-accent);
-  font-size: 20px;
+  font-size: 28px;
   font-weight: 800;
   text-transform: uppercase;
   max-width: 100%;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }}
 .stat-label {{
-  font-size: 22px;
+  font-size: 28px;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  opacity: 0.88;
+  opacity: 0.90;
   width: 100%;
   max-width: 100%;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }}
 .stat-bar-track {{
   width: 100%;
   max-width: 100%;
-  height: 14px;
+  height: 16px;
   border-radius: 999px;
   background-color: rgba(128, 128, 128, 0.22);
   overflow: hidden;
@@ -2111,14 +2522,14 @@ html, body {{
 }}
 /* ChecklistStack */
 .checklist-stack {{
-  width: 780px;
+  width: 840px;
   max-width: 100%;
   box-sizing: border-box;
-  padding: 18px 28px;
+  padding: var(--pad-checklist, 28px 42px);
   border: var(--border-card);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);
-  gap: 12px;
+  gap: 18px;
 }}
 .checklist-item {{
   width: 100%;
@@ -2128,10 +2539,10 @@ html, body {{
   flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 14px;
-  padding: 10px 12px;
+  gap: 18px;
+  padding: 14px 20px;
   border-bottom: 1px solid rgba(128, 128, 128, 0.18);
-  font-size: 26px;
+  font-size: 30px;
   font-weight: 700;
 }}
 .checklist-item:last-child {{
@@ -2146,36 +2557,38 @@ html, body {{
 .checklist-label {{
   min-width: 0;
   max-width: 100%;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }}
 /* CtaButton */
 .cta-button {{
-  width: 600px;
+  width: 760px;
   max-width: 100%;
   box-sizing: border-box;
-  min-height: 88px;
-  padding: 18px 36px;
+  min-height: 104px;
+  padding: var(--pad-button, 28px 54px);
   flex-direction: row;
-  gap: 14px;
+  gap: 20px;
   border-radius: var(--radius-pill, 999px);
   border: var(--border-card);
   box-shadow: var(--shadow-card);
   font-family: var(--font-heading);
-  font-size: 36px;
+  font-size: 40px;
   font-weight: 800;
   flex-shrink: 0;
 }}
 .cta-label {{
   min-width: 0;
   max-width: 100%;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }}
 /* LayoutSlot */
 .layout-slot {{
   width: 860px;
   max-width: 100%;
   box-sizing: border-box;
-  gap: 18px;
+  gap: var(--inner-gap, 22px);
 }}
 .layout-slot.dir-row,
 .layout-slot.dir-grid-2col {{
@@ -2183,9 +2596,15 @@ html, body {{
   flex-wrap: wrap;
 }}
 /* Nested primitive constraints: never exceed parent content box */
-.phone-body .primitive,
-.layout-slot .primitive {{
+.phone-body .primitive:not(.icon-badge):not(.pill-badge),
+.layout-slot .primitive:not(.icon-badge):not(.pill-badge) {{
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}}
+.phone-body .pill-badge,
+.layout-slot .pill-badge {{
+  width: fit-content;
   max-width: 100%;
   box-sizing: border-box;
 }}
@@ -2201,7 +2620,7 @@ html, body {{
   max-width: 100%;
   box-sizing: border-box;
 }}
-.svg-draw-path {{
+.prim-icon .svg-draw-path {{
   stroke-dasharray: 240;
   stroke-dashoffset: 0;
 }}

@@ -27,7 +27,16 @@ tokens:
   headline_case: "none"
   headline_letter_spacing: "-0.02em"
   bg_variant: "orb-glow"
-  slot_gap: "20px"
+  slot_gap: "30px"
+  inner_gap: "22px"
+  pad_card: "34px 40px"
+  pad_phone: "36px 44px"
+  pad_button: "28px 54px"
+  pad_pill: "22px 44px"
+  pad_stat: "30px 40px"
+  pad_checklist: "28px 42px"
+  pad_badge: "24px"
+  pad_brand_plate: "16px 38px"
   force_dark_canvas: true
 motion:
   eases:
