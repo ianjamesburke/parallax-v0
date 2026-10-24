@@ -1184,7 +1184,7 @@ def test_recovered_real3_rejected_specs_render_cleanly_and_pass_audit(tmp_path: 
 
 
 # ---------------------------------------------------------------------------
-# 8. Auto-fit fill ratio [0.55, 0.80], centering, phone width >= 800, font floors, and many-primitive cap
+# 8. Auto-fit fill ratio [0.78, 0.92], centering around y=700, effective font floors, sparse phone >= 600, and dense cap
 # ---------------------------------------------------------------------------
 
 _STACK_METRICS_JS = """
@@ -1209,13 +1209,42 @@ _STACK_METRICS_JS = """
   const stageCenterY = (80.0 + 1320.0) / 2.0;
   const stackCenterY = (minT + maxB) / 2.0;
 
+  function effZoom(el) {
+    let z = 1.0;
+    let cur = el;
+    while (cur && cur !== document.body && cur !== document.documentElement) {
+      const sz = parseFloat(cur.style && cur.style.zoom);
+      if (!isNaN(sz) && sz > 0) z *= sz;
+      cur = cur.parentElement;
+    }
+    return z;
+  }
+
+  function effFont(el) {
+    return parseFloat(window.getComputedStyle(el).fontSize) * effZoom(el);
+  }
+
   const phone = stage.querySelector('.phone-frame');
+  const phoneBody = stage.querySelector('.phone-body');
   const phoneRect = phone ? phone.getBoundingClientRect() : null;
+  const phoneChildCount = phoneBody ? phoneBody.children.length : null;
   const zoom = parseFloat(stage.getAttribute('data-auto-fit-zoom') || '1') || 1.0;
 
-  const headlineSizes = Array.from(stage.querySelectorAll('.headline-main')).map(
-    (el) => parseFloat(window.getComputedStyle(el).fontSize) * ( parseFloat(el.closest('#safe-stage > .primitive')?.style.zoom || '1') || 1 )
-  );
+  const headlineSizes = Array.from(stage.querySelectorAll('.headline-main')).map(effFont);
+  const heroHeadlineSizes = Array.from(stage.querySelectorAll('.headline-block.size-hero .headline-main')).map(effFont);
+  const titleSizes = Array.from(stage.querySelectorAll('.card-title')).map(effFont);
+  const ctaSizes = Array.from(stage.querySelectorAll('.cta-label, .cta-button')).map(effFont);
+  const phoneHeaderSizes = Array.from(stage.querySelectorAll('.phone-header-label')).map(effFont);
+  const eyebrowSizes = Array.from(stage.querySelectorAll('.headline-eyebrow')).map(effFont);
+  const bodySizes = Array.from(
+    stage.querySelectorAll('.card-sub, .headline-sub, .pill-badge, .pill-label, .checklist-item, .checklist-label, .stat-label, .stat-delta, .brand-tag')
+  ).map(effFont);
+  const kineticSizes = Array.from(stage.querySelectorAll('.kinetic-row')).map(effFont);
+  const iconBadgeRects = Array.from(stage.querySelectorAll('.icon-badge')).map((b) => {
+    const r = b.getBoundingClientRect();
+    return { width: r.width, height: r.height };
+  });
+
   const cssHeadlineSizes = Array.from(stage.querySelectorAll('.headline-main')).map(
     (el) => parseFloat(window.getComputedStyle(el).fontSize)
   );
@@ -1230,16 +1259,73 @@ _STACK_METRICS_JS = """
     maxR,
     minT,
     maxB,
+    stackCenterY,
     maxCxDiff: Math.max(0, ...cxDiffs),
     centerYDiff: Math.abs(stackCenterY - stageCenterY),
     phoneWidth: phoneRect ? phoneRect.width : null,
+    phoneHeight: phoneRect ? phoneRect.height : null,
+    phoneChildCount,
     zoom,
     headlineSizes,
+    heroHeadlineSizes,
+    titleSizes,
+    ctaSizes,
+    phoneHeaderSizes,
+    eyebrowSizes,
+    bodySizes,
+    kineticSizes,
+    iconBadgeRects,
     cssHeadlineSizes,
     cssBodySizes,
   };
 })()
 """
+
+
+def _assert_effective_font_and_layout_floors(m: dict, label: str, *, enforce_font_floors: bool = True) -> None:
+    assert abs(m["stackCenterY"] - 700.0) <= 60.0, (
+        f"{label} stackCenterY={m['stackCenterY']:.1f} outside 700 +- 60"
+    )
+    assert m["centerYDiff"] <= 28.0, f"{label} off-center vertically: {m['centerYDiff']:.2f}px"
+    assert m["maxCxDiff"] <= 4.0, f"{label} off-center horizontally: {m['maxCxDiff']:.2f}px"
+    assert m["minL"] >= STAGE_LEFT - 1.0, f"{label} minL={m['minL']:.1f} < {STAGE_LEFT}"
+    assert m["maxR"] <= STAGE_RIGHT + 1.0, f"{label} maxR={m['maxR']:.1f} > {STAGE_RIGHT}"
+    assert m["minT"] >= STAGE_TOP - 1.0, f"{label} minT={m['minT']:.1f} < {STAGE_TOP}"
+    assert m["maxB"] <= STAGE_BOTTOM + 1.0, f"{label} maxB={m['maxB']:.1f} > {STAGE_BOTTOM}"
+
+    if m["phoneWidth"] is not None:
+        assert 800.0 <= m["phoneWidth"] <= 905.0, (
+            f"{label} phoneWidth={m['phoneWidth']:.1f}px not in [800, 905]"
+        )
+    if m["phoneHeight"] is not None and m["phoneChildCount"] is not None and m["phoneChildCount"] <= 2:
+        assert m["phoneHeight"] >= 600.0, (
+            f"{label} sparse phone (children={m['phoneChildCount']}) height={m['phoneHeight']:.1f}px < 600px"
+        )
+    for badge in m["iconBadgeRects"]:
+        assert 140.0 <= badge["width"] <= 200.0, (
+            f"{label} IconBadge width={badge['width']:.1f}px not in [140, 200]"
+        )
+        assert 140.0 <= badge["height"] <= 200.0, (
+            f"{label} IconBadge height={badge['height']:.1f}px not in [140, 200]"
+        )
+
+    if enforce_font_floors:
+        for hs in m["headlineSizes"]:
+            assert hs >= 76.0 - 0.5, f"{label} effective headline font-size {hs:.1f}px < 76px"
+        for hhs in m["heroHeadlineSizes"]:
+            assert hhs >= 88.0 - 0.5, f"{label} effective hero headline font-size {hhs:.1f}px < 88px"
+        for ts in m["titleSizes"]:
+            assert ts >= 44.0 - 0.5, f"{label} effective card title font-size {ts:.1f}px < 44px"
+        for cs in m["ctaSizes"]:
+            assert cs >= 44.0 - 0.5, f"{label} effective CTA font-size {cs:.1f}px < 44px"
+        for phs in m["phoneHeaderSizes"]:
+            assert phs >= 38.0 - 0.5, f"{label} effective phone-header-label font-size {phs:.1f}px < 38px"
+        for es in m["eyebrowSizes"]:
+            assert es >= 28.0 - 0.5, f"{label} effective eyebrow font-size {es:.1f}px < 28px"
+        for bs in m["bodySizes"]:
+            assert bs >= 36.0 - 0.5, f"{label} effective body/pill/badge font-size {bs:.1f}px < 36px"
+        for ks in m["kineticSizes"]:
+            assert ks >= 96.0 - 0.5, f"{label} effective kinetic row font-size {ks:.1f}px < 96px"
 
 
 @requires_chrome
@@ -1266,25 +1352,42 @@ def test_auto_fit_fill_ratio_for_non_kinetic_styles_and_many_primitive_spec(tmp_
             words=words,
         )
         m = _evaluate_in_chrome(html, tmp_path, _STACK_METRICS_JS, name=f"fill_tm_{style_name}.html")
-        assert 0.55 <= m["fillRatio"] <= 0.80, (
-            f"{style_name} test-mode fillRatio={m['fillRatio']:.3f} outside [0.55, 0.80]"
+        assert 0.78 <= m["fillRatio"] <= 0.92, (
+            f"{style_name} test-mode fillRatio={m['fillRatio']:.3f} outside [0.78, 0.92]"
         )
-        assert m["maxCxDiff"] <= 4.0, f"{style_name} off-center horizontally: {m['maxCxDiff']:.2f}px"
-        assert m["centerYDiff"] <= 24.0, f"{style_name} off-center vertically: {m['centerYDiff']:.2f}px"
-        assert m["minL"] >= STAGE_LEFT - 1.0
-        assert m["maxR"] <= STAGE_RIGHT + 1.0
-        assert m["minT"] >= STAGE_TOP - 1.0
-        assert m["maxB"] <= STAGE_BOTTOM + 1.0
-        if m["phoneWidth"] is not None:
-            assert 800.0 <= m["phoneWidth"] <= 900.0, (
-                f"{style_name} phoneWidth={m['phoneWidth']:.1f}px not in [800, 900]"
-            )
-        for hs in m["cssHeadlineSizes"]:
-            assert hs >= 56.0, f"{style_name} headline CSS font-size {hs}px < 56px"
-        for bs in m["cssBodySizes"]:
-            assert bs >= 28.0, f"{style_name} body CSS font-size {bs}px < 28px"
+        _assert_effective_font_and_layout_floors(m, f"test-mode/{style_name}", enforce_font_floors=True)
 
-    # Many-primitive spec: 5 stage primitives + 3 phone children + 3 checklist items must scale DOWN <= 0.80
+    # Sparse phone (<=2 children) test across non-kinetic styles: phone height >= 600, hero headline >= 88, pill >= 36, icon badge >= 140
+    for style_name in non_kinetic_styles:
+        sparse_spec = {
+            "style": style_name,
+            "layout_slot": "phone-hero",
+            "gap": "md",
+            "bg_variant": "radial",
+            "primitives": [
+                {"type": "BrandHeader", "props": {"align": "center", "logo_plate": "auto"}},
+                {
+                    "type": "PhoneFrame",
+                    "props": {
+                        "header_label": "Scam Guard",
+                        "children": [
+                            {"type": "PillBadge", "props": {"label": "Incoming Call", "icon": "phone-call", "tone": "accent"}},
+                            {"type": "HeadlineBlock", "props": {"headline": "Is it a scam?", "subhead": "Wait before you answer.", "size": "lg"}},
+                        ],
+                    },
+                },
+            ],
+        }
+        html_sparse = render_scene_spec_html(sparse_spec, style=style_name, brand=brand, duration_s=5.0)
+        fname_sparse = f"fill_sparse_{style_name}.html"
+        m_sparse = _evaluate_in_chrome(html_sparse, tmp_path, _STACK_METRICS_JS, name=fname_sparse)
+        assert 0.78 <= m_sparse["fillRatio"] <= 0.92, (
+            f"{style_name} sparse fillRatio={m_sparse['fillRatio']:.3f} outside [0.78, 0.92]"
+        )
+        assert m_sparse["phoneHeight"] is not None and m_sparse["phoneHeight"] >= 600.0
+        _assert_effective_font_and_layout_floors(m_sparse, f"sparse/{style_name}", enforce_font_floors=True)
+
+    # Many-primitive spec: 5 stage primitives + 3 phone children + 3 checklist items must scale DOWN <= 0.92 and stay in bounds
     many_spec = {
         "style": "flat-explainer",
         "layout_slot": "phone-hero",
@@ -1347,14 +1450,10 @@ def test_auto_fit_fill_ratio_for_non_kinetic_styles_and_many_primitive_spec(tmp_
         html_many = render_scene_spec_html(spec_copy, style=style_name, brand=brand, duration_s=5.0)
         fname = f"fill_many_{style_name}.html"
         m_many = _evaluate_in_chrome(html_many, tmp_path, _STACK_METRICS_JS, name=fname)
-        assert 0.55 <= m_many["fillRatio"] <= 0.80, (
-            f"{style_name} many-primitive fillRatio={m_many['fillRatio']:.3f} outside [0.55, 0.80]"
+        assert 0.78 <= m_many["fillRatio"] <= 0.92, (
+            f"{style_name} many-primitive fillRatio={m_many['fillRatio']:.3f} outside [0.78, 0.92]"
         )
-        assert m_many["maxCxDiff"] <= 4.0
-        assert m_many["minL"] >= STAGE_LEFT - 1.0
-        assert m_many["maxR"] <= STAGE_RIGHT + 1.0
-        assert m_many["minT"] >= STAGE_TOP - 1.0
-        assert m_many["maxB"] <= STAGE_BOTTOM + 1.0
+        _assert_effective_font_and_layout_floors(m_many, f"many/{style_name}", enforce_font_floors=False)
         audit = audit_layout(tmp_path / fname, duration_s=5.0)
         assert audit.passed, f"{style_name} many-primitive failed audit_layout: {audit.violations}"
 
@@ -1375,14 +1474,10 @@ def test_saved_real3_specs_fill_ratio_and_centering(tmp_path: Path) -> None:
         html = render_scene_spec_html(spec, style=style_name, brand=brand, duration_s=5.0)
         fname = f"real3_{sp_path.stem}.html"
         m = _evaluate_in_chrome(html, tmp_path, _STACK_METRICS_JS, name=fname)
-        assert 0.55 <= m["fillRatio"] <= 0.80, (
-            f"{sp_path.name} ({style_name}) fillRatio={m['fillRatio']:.3f} outside [0.55, 0.80]"
+        assert 0.78 <= m["fillRatio"] <= 0.92, (
+            f"{sp_path.name} ({style_name}) fillRatio={m['fillRatio']:.3f} outside [0.78, 0.92]"
         )
-        assert m["maxCxDiff"] <= 4.0, f"{sp_path.name} off-center: maxCxDiff={m['maxCxDiff']:.2f}"
-        assert m["minL"] >= STAGE_LEFT - 1.0
-        assert m["maxR"] <= STAGE_RIGHT + 1.0
-        assert m["minT"] >= STAGE_TOP - 1.0
-        assert m["maxB"] <= STAGE_BOTTOM + 1.0
+        _assert_effective_font_and_layout_floors(m, f"real3/{sp_path.name}", enforce_font_floors=True)
         audit = audit_layout(tmp_path / fname, duration_s=5.0)
         assert audit.passed, f"{sp_path.name} failed audit_layout: {audit.violations}"
 

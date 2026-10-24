@@ -8,8 +8,7 @@
       "type": "BrandHeader",
       "props": {
         "align": "center",
-        "logo_plate": "auto",
-        "tag_text": "__SCENE_TAG__"
+        "logo_plate": "auto"
       },
       "motion": {
         "entrance": "fade-up",
@@ -20,7 +19,6 @@
       "type": "HeadlineBlock",
       "props": {
         "headline": "__SCENE_HEADLINE__",
-        "subhead": "__SCENE_SUB__",
         "size": "lg",
         "align": "center"
       },
@@ -41,7 +39,7 @@
               "value": "99.9%",
               "label": "REAL-TIME CALL SCREENING",
               "delta": "LIVE SHIELD",
-              "meter": "arc",
+              "meter": "bar",
               "progress": 0.92
             },
             "motion": {
@@ -68,19 +66,6 @@
       "motion": {
         "entrance": "slide-up",
         "cue": "__CUE_WORD_1__"
-      }
-    },
-    {
-      "type": "CtaButton",
-      "props": {
-        "label": "__SCENE_CTA__",
-        "icon": "spark",
-        "tone": "accent",
-        "emphasis": "pulse"
-      },
-      "motion": {
-        "entrance": "pop",
-        "cue": "__CUE_WORD_2__"
       }
     }
   ]

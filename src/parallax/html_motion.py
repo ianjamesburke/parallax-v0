@@ -10,6 +10,7 @@ import os
 import re
 import select
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -1323,6 +1324,55 @@ def _format_cdp_exception_details(details: dict[str, Any], time_s: float = 0.0) 
     }
 
 
+def _chrome_stray_Watch_roots() -> tuple[Path, ...]:
+    """Return directories where headless Chrome may drop `scoped_dir*` or `com.google.Chrome.*` folders."""
+    roots: list[Path] = []
+    headless_cfg = Path.home() / ".config" / "google-chrome-headless"
+    if headless_cfg.is_dir():
+        roots.append(headless_cfg)
+    tmp_root = Path(tempfile.gettempdir())
+    if tmp_root.is_dir() and tmp_root not in roots:
+        roots.append(tmp_root)
+    return tuple(roots)
+
+
+def _iter_chrome_stray_candidates() -> list[Path]:
+    """List existing `scoped_dir*`, `com.google.Chrome.*`, and `.org.chromium.Chromium.*` dirs in watch roots."""
+    found: list[Path] = []
+    prefixes = ("scoped_dir", "com.google.Chrome.", ".org.chromium.Chromium.")
+    for root in _chrome_stray_Watch_roots():
+        try:
+            for entry in root.iterdir():
+                if entry.name.startswith(prefixes):
+                    found.append(entry)
+        except OSError:
+            continue
+    return found
+
+
+def _cleanup_chrome_stray_dirs(
+    start_time: float,
+    pre_existing: set[Path] | None = None,
+) -> None:
+    """Remove stray Chrome temp dirs created since `start_time` and owned by the current UID."""
+    uid = os.getuid()
+    known = pre_existing or set()
+    for candidate in _iter_chrome_stray_candidates():
+        if candidate in known:
+            continue
+        try:
+            if candidate.is_symlink() or not candidate.is_dir():
+                continue
+            st = candidate.stat()
+            if st.st_uid != uid:
+                continue
+            if st.st_mtime < start_time - 0.5:
+                continue
+            shutil.rmtree(candidate, ignore_errors=True)
+        except OSError:
+            continue
+
+
 class _CDPPipeSession:
     """Lightweight Chrome DevTools Protocol client over `--remote-debugging-pipe` (fds 3 & 4).
 
@@ -1339,68 +1389,124 @@ class _CDPPipeSession:
         self._buf = b""
         self._msg_id = 0
         self._session_id: str | None = None
+        self._user_data_dir: str | None = None
+        self._start_time: float = 0.0
+        self._pre_existing_stray_dirs: set[Path] = set()
         self.js_errors: list[dict[str, Any]] = []
 
     def __enter__(self) -> _CDPPipeSession:
-        c2b_r, c2b_w = os.pipe()
-        b2c_r, b2c_w = os.pipe()
+        self._start_time = time.time()
+        self._pre_existing_stray_dirs = set(_iter_chrome_stray_candidates())
+        self._user_data_dir = tempfile.mkdtemp(prefix="parallax-chrome-")
+        c2b_r: int | None = None
+        b2c_w: int | None = None
+        try:
+            c2b_r, c2b_w = os.pipe()
+            b2c_r, b2c_w = os.pipe()
+            self._c2b_w = c2b_w
+            self._b2c_r = b2c_r
 
-        def _setup_child_fds() -> None:
-            # Ensure target fds 3 and 4 do not collide before dup2
-            r_fd = os.dup(c2b_r) if c2b_r in (3, 4) else c2b_r
-            w_fd = os.dup(b2c_w) if b2c_w in (3, 4) else b2c_w
-            os.dup2(r_fd, 3)
-            os.dup2(w_fd, 4)
-            os.set_inheritable(3, True)
-            os.set_inheritable(4, True)
-
-        args = [
-            self.chrome_bin,
-            "--headless=new",
-            "--no-sandbox",
-            "--disable-gpu",
-            "--disable-dev-shm-usage",
-            "--hide-scrollbars",
-            "--mute-audio",
-            "--disable-background-timer-throttling",
-            "--disable-renderer-backgrounding",
-            "--disable-backgrounding-occluded-windows",
-            f"--window-size={self.width},{self.height}",
-            "--remote-debugging-pipe",
-            "about:blank",
-        ]
-        self._proc = subprocess.Popen(
-            args,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            pass_fds=(3, 4),
-            preexec_fn=_setup_child_fds,
-        )
-        os.close(c2b_r)
-        os.close(b2c_w)
-        self._c2b_w = c2b_w
-        self._b2c_r = b2c_r
-        return self
-
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        for fd in (self._c2b_w, self._b2c_r):
-            if fd is not None:
+            def _setup_child_fds() -> None:
+                assert c2b_r is not None and b2c_w is not None
                 try:
-                    os.close(fd)
+                    os.setsid()
                 except OSError:
                     pass
-        self._c2b_w = None
-        self._b2c_r = None
-        if self._proc is not None:
-            if self._proc.poll() is None:
-                self._proc.terminate()
+                # Ensure target fds 3 and 4 do not collide before dup2
+                r_fd = os.dup(c2b_r) if c2b_r in (3, 4) else c2b_r
+                w_fd = os.dup(b2c_w) if b2c_w in (3, 4) else b2c_w
+                os.dup2(r_fd, 3)
+                os.dup2(w_fd, 4)
+                os.set_inheritable(3, True)
+                os.set_inheritable(4, True)
+
+            args = [
+                self.chrome_bin,
+                "--headless=new",
+                "--no-sandbox",
+                "--disable-gpu",
+                "--disable-dev-shm-usage",
+                "--hide-scrollbars",
+                "--mute-audio",
+                "--disable-background-timer-throttling",
+                "--disable-renderer-backgrounding",
+                "--disable-backgrounding-occluded-windows",
+                "--no-first-run",
+                "--no-default-browser-check",
+                f"--user-data-dir={self._user_data_dir}",
+                f"--window-size={self.width},{self.height}",
+                "--remote-debugging-pipe",
+                "about:blank",
+            ]
+            self._proc = subprocess.Popen(
+                args,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                pass_fds=(3, 4),
+                preexec_fn=_setup_child_fds,
+            )
+            os.close(c2b_r)
+            c2b_r = None
+            os.close(b2c_w)
+            b2c_w = None
+            return self
+        except Exception:
+            for extra_fd in (c2b_r, b2c_w):
+                if extra_fd is not None:
+                    try:
+                        os.close(extra_fd)
+                    except OSError:
+                        pass
+            self._close_and_cleanup()
+            raise
+
+    def _close_and_cleanup(self) -> None:
+        try:
+            for fd in (self._c2b_w, self._b2c_r):
+                if fd is not None:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+            self._c2b_w = None
+            self._b2c_r = None
+            if self._proc is not None:
+                pid = self._proc.pid
+                if self._proc.poll() is None:
+                    self._proc.terminate()
+                    try:
+                        os.killpg(pid, signal.SIGTERM)
+                    except OSError:
+                        pass
+                    try:
+                        self._proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        self._proc.kill()
+                        try:
+                            os.killpg(pid, signal.SIGKILL)
+                        except OSError:
+                            pass
+                        self._proc.wait()
                 try:
-                    self._proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    self._proc.kill()
-                    self._proc.wait()
-            self._proc = None
+                    os.killpg(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                self._proc = None
+        finally:
+            if self._user_data_dir is not None:
+                udir = Path(self._user_data_dir)
+                for _ in range(5):
+                    shutil.rmtree(udir, ignore_errors=True)
+                    if not udir.exists():
+                        break
+                    time.sleep(0.05)
+                self._user_data_dir = None
+            if self._start_time > 0:
+                _cleanup_chrome_stray_dirs(self._start_time, self._pre_existing_stray_dirs)
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self._close_and_cleanup()
 
     def _record_event(self, msg: dict[str, Any]) -> None:
         method = msg.get("method")
@@ -1489,26 +1595,30 @@ class _CDPPipeSession:
                 raise RuntimeError(f"Chrome closed CDP pipe unexpectedly during {method}")
             self._buf += chunk
 
-    def open_page(self, html_path: Path) -> None:
-        """Attach to the browser's page target, set viewport metrics, and navigate to `html_path`."""
-        targets = self.send("Target.getTargets", session_id="").get("targetInfos") or []
+    def _open_page_once(self, html_path: Path) -> None:
         page_target_id: str | None = None
-        for t in targets:
-            if t.get("type") == "page":
-                page_target_id = t.get("targetId")
+        for _ in range(30):
+            targets = self.send("Target.getTargets", session_id="", timeout=10.0).get("targetInfos") or []
+            for t in targets:
+                if t.get("type") == "page":
+                    page_target_id = t.get("targetId")
+                    break
+            if page_target_id:
                 break
+            time.sleep(0.05)
         if not page_target_id:
             page_target_id = self.send(
-                "Target.createTarget", {"url": "about:blank"}, session_id=""
+                "Target.createTarget", {"url": "about:blank"}, session_id="", timeout=10.0
             ).get("targetId")
         attached = self.send(
             "Target.attachToTarget",
             {"targetId": page_target_id, "flatten": True},
             session_id="",
+            timeout=10.0,
         )
         self._session_id = attached["sessionId"]
-        self.send("Page.enable")
-        self.send("Runtime.enable")
+        self.send("Page.enable", timeout=10.0)
+        self.send("Runtime.enable", timeout=10.0)
         self.send(
             "Emulation.setDeviceMetricsOverride",
             {
@@ -1517,9 +1627,10 @@ class _CDPPipeSession:
                 "deviceScaleFactor": 1,
                 "mobile": False,
             },
+            timeout=10.0,
         )
         file_url = html_path.resolve().as_uri()
-        self.send("Page.navigate", {"url": file_url})
+        self.send("Page.navigate", {"url": file_url}, timeout=15.0)
         # Wait for document.readyState === 'complete' and fonts ready
         self.send(
             "Runtime.evaluate",
@@ -1538,8 +1649,22 @@ class _CDPPipeSession:
                 "awaitPromise": True,
                 "returnByValue": True,
             },
+            timeout=15.0,
         )
         self.drain_events()
+
+    def open_page(self, html_path: Path) -> None:
+        """Attach to the browser's page target, set viewport metrics, and navigate to `html_path`."""
+        try:
+            self._open_page_once(html_path)
+        except (TimeoutError, RuntimeError, OSError):
+            self._close_and_cleanup()
+            self._buf = b""
+            self._msg_id = 0
+            self._session_id = None
+            self.js_errors.clear()
+            self.__enter__()
+            self._open_page_once(html_path)
 
 
 _AUDIT_JS_TEMPLATE = """

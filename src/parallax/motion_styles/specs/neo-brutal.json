@@ -16,19 +16,6 @@
       }
     },
     {
-      "type": "PillBadge",
-      "props": {
-        "label": "__SCENE_TAG__",
-        "icon": "alert",
-        "tone": "accent2",
-        "pulse": true
-      },
-      "motion": {
-        "entrance": "stamp",
-        "cue": "__CUE_WORD_1__"
-      }
-    },
-    {
       "type": "HeadlineBlock",
       "props": {
         "headline": "__SCENE_HEADLINE__",

@@ -902,3 +902,55 @@ def test_guide_topics_has_single_motion_graphic_key_and_no_remotion() -> None:
     assert "parallax video motion --style" in serialized
     for style_name in CANONICAL_STYLE_ORDER:
         assert style_name in serialized
+
+
+# ---------------------------------------------------------------------------
+# 9. Headless Chrome temp-dir cleanup (no net new parallax-chrome-* or scoped_dir*)
+# ---------------------------------------------------------------------------
+
+
+@requires_chrome
+def test_chrome_temp_dir_cleanup_leaves_no_stray_dirs(tmp_path: Path) -> None:
+    import tempfile
+
+    tmp_root = Path(tempfile.gettempdir())
+    headless_cfg = Path.home() / ".config" / "google-chrome-headless"
+
+    def _list_parallax_chrome() -> set[str]:
+        if not tmp_root.is_dir():
+            return set()
+        return {p.name for p in tmp_root.glob("parallax-chrome-*") if p.is_dir()}
+
+    def _list_headless_scoped() -> set[str]:
+        if not headless_cfg.is_dir():
+            return set()
+        return {p.name for p in headless_cfg.glob("scoped_dir*") if p.is_dir()}
+
+    before_parallax = _list_parallax_chrome()
+    before_scoped = _list_headless_scoped()
+
+    html = generate_scene_html(
+        scene_text="Stop scam calls before your phone rings.",
+        style="flat-explainer",
+        duration_s=1.0,
+    )
+    html_path = tmp_path / "cleanup_check.html"
+    html_path.write_text(html, encoding="utf-8")
+    audit = audit_layout(html_path, duration_s=1.0)
+    assert audit.passed
+
+    out_mp4 = tmp_path / "cleanup_check.mp4"
+    render_html_to_mp4(html_path, out_mp4, duration_s=0.5, fps=6)
+    assert out_mp4.is_file()
+
+    after_parallax = _list_parallax_chrome()
+    after_scoped = _list_headless_scoped()
+
+    net_new_parallax = after_parallax - before_parallax
+    net_new_scoped = after_scoped - before_scoped
+
+    assert len(net_new_parallax) <= 0, f"Stray parallax-chrome-* dirs left behind: {sorted(net_new_parallax)}"
+    assert len(net_new_scoped) <= 0, (
+        f"Stray ~/.config/google-chrome-headless/scoped_dir* left behind: {sorted(net_new_scoped)}"
+    )
+

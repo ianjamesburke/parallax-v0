@@ -40,9 +40,9 @@ BG_VARIANTS: tuple[str, ...] = (
 )
 
 GAP_TOKENS: dict[str, str] = {
-    "sm": "22px",
-    "md": "30px",
-    "lg": "40px",
+    "sm": "26px",
+    "md": "34px",
+    "lg": "44px",
 }
 
 MOTION_VERBS: tuple[str, ...] = (
@@ -1080,8 +1080,8 @@ def resolve_preset_tokens(
     if gap == "md" and raw_tokens.get("slot_gap"):
         slot_gap = str(raw_tokens["slot_gap"])
     else:
-        slot_gap = GAP_TOKENS.get(gap, str(raw_tokens.get("slot_gap", "30px")))
-    inner_gap = str(raw_tokens.get("inner_gap", "22px"))
+        slot_gap = GAP_TOKENS.get(gap, str(raw_tokens.get("slot_gap", "34px")))
+    inner_gap = str(raw_tokens.get("inner_gap", "26px"))
 
     return {
         "--bg": palette["bg"],
@@ -1113,15 +1113,15 @@ def resolve_preset_tokens(
         "--headline-letter-spacing": str(raw_tokens.get("headline_letter_spacing", "-0.02em")),
         "--stage-gap": slot_gap,
         "--inner-gap": inner_gap,
-        "--pad-card": str(raw_tokens.get("pad_card", "34px 40px")),
-        "--pad-phone": str(raw_tokens.get("pad_phone", "36px 44px")),
-        "--pad-button": str(raw_tokens.get("pad_button", "28px 54px")),
-        "--pad-pill": str(raw_tokens.get("pad_pill", "22px 44px")),
-        "--pad-stat": str(raw_tokens.get("pad_stat", "30px 40px")),
-        "--pad-checklist": str(raw_tokens.get("pad_checklist", "28px 42px")),
-        "--pad-badge": str(raw_tokens.get("pad_badge", "24px")),
-        "--pad-brand-plate": str(raw_tokens.get("pad_brand_plate", "16px 38px")),
-        "--pad-kinetic-row": str(raw_tokens.get("pad_kinetic_row", "22px 50px")),
+        "--pad-card": str(raw_tokens.get("pad_card", "39px 46px")),
+        "--pad-phone": str(raw_tokens.get("pad_phone", "42px 50px")),
+        "--pad-button": str(raw_tokens.get("pad_button", "32px 62px")),
+        "--pad-pill": str(raw_tokens.get("pad_pill", "26px 50px")),
+        "--pad-stat": str(raw_tokens.get("pad_stat", "35px 46px")),
+        "--pad-checklist": str(raw_tokens.get("pad_checklist", "32px 48px")),
+        "--pad-badge": str(raw_tokens.get("pad_badge", "28px")),
+        "--pad-brand-plate": str(raw_tokens.get("pad_brand_plate", "18px 44px")),
+        "--pad-kinetic-row": str(raw_tokens.get("pad_kinetic_row", "24px 54px")),
         "--ease-enter": ease_enter,
         "--ease-pop": ease_pop,
         "--dur-enter": dur_enter,
@@ -1173,15 +1173,16 @@ def _render_primitive_html(
     style_name: str,
     anim_Collector: list[dict[str, Any]],
     in_phone: bool = False,
+    in_sparse_phone: bool = False,
 ) -> str:
     ptype = prim["type"]
     props = prim.get("props") or {}
     motion = normalize_motion_spec(prim.get("motion"))
     dom_id = f"prim-{idx_prefix}"
-    fit_max_headline = 710 if in_phone else 840
-    fit_max_card = 660 if in_phone else 760
-    fit_max_pill = 620 if in_phone else 740
-    fit_max_cta = 620 if in_phone else 700
+    fit_max_headline = 760 if in_phone else 860
+    fit_max_card = 720 if in_phone else 800
+    fit_max_pill = 680 if in_phone else 780
+    fit_max_cta = 680 if in_phone else 760
 
     if ptype == "BrandHeader":
         logo_plate_mode = str(props.get("logo_plate") or "auto")
@@ -1226,7 +1227,10 @@ def _render_primitive_html(
         )
 
     if ptype == "HeadlineBlock":
-        size = props.get("size") or "lg"
+        size = str(props.get("size") or "lg").strip().lower()
+        if in_sparse_phone and size in ("md", "lg"):
+            size = "hero"
+        min_hl_size = 88 if size == "hero" else 76
         eyebrow = _clamp_str(props.get("eyebrow") or "", CHAR_LIMITS["HeadlineBlock"]["eyebrow"])
         headline = _clamp_str(
             props.get("headline") or "",
@@ -1249,7 +1253,7 @@ def _render_primitive_html(
         return (
             f'<section id="{dom_id}" class="primitive headline-block size-{size}" data-primitive="HeadlineBlock">'
             f"{eyebrow_html}"
-            f'<h1 class="headline headline-main fit-text" data-max-width="{fit_max_headline}" data-min-size="56">{_escape_html(headline)}</h1>'
+            f'<h1 class="headline headline-main fit-text" data-max-width="{fit_max_headline}" data-min-size="{min_hl_size}">{_escape_html(headline)}</h1>'
             f"{sub_html}"
             f"</section>"
         )
@@ -1291,6 +1295,8 @@ def _render_primitive_html(
             default="LIVE PROTECTION",
         )
         children = props.get("children") or []
+        is_sparse = len(children) <= 2
+        sparse_cls = " is-sparse" if is_sparse else ""
         anim_Collector.append(
             {
                 "id": dom_id,
@@ -1311,10 +1317,12 @@ def _render_primitive_html(
                     style_name=style_name,
                     anim_Collector=anim_Collector,
                     in_phone=True,
+                    in_sparse_phone=is_sparse,
                 )
             )
         return (
-            f'<section id="{dom_id}" class="primitive phone-frame" data-primitive="PhoneFrame">'
+            f'<section id="{dom_id}" class="primitive phone-frame{sparse_cls}" '
+            f'data-primitive="PhoneFrame" data-child-count="{len(children)}">'
             f'<div class="phone-speaker" aria-hidden="true"></div>'
             f'<div class="phone-header-label">{_escape_html(header_label)}</div>'
             f'<div class="phone-body">'
@@ -1333,6 +1341,7 @@ def _render_primitive_html(
                 style_name=style_name,
                 anim_Collector=anim_Collector,
                 in_phone=in_phone,
+                in_sparse_phone=in_sparse_phone,
             )
             for c_idx, ch in enumerate(children)
         ]
@@ -1365,13 +1374,13 @@ def _render_primitive_html(
                 "is_headline": True,
             }
         )
-        icon_html = f'<div class="card-icon-wrap">{_render_svg_icon(icon, 52)}</div>' if icon else ""
+        icon_html = f'<div class="card-icon-wrap">{_render_svg_icon(icon, 58)}</div>' if icon else ""
         body_html = f'<div class="card-sub">{_escape_html(body)}</div>' if body else ""
         return (
             f'<article id="{dom_id}" class="primitive feature-card tone-{tone}{tilt_cls}" '
             f'data-primitive="FeatureCard" style="background-color: {bg_var}; color: {fg_var};">'
             f"{icon_html}"
-            f'<div class="card-title fit-text" data-max-width="{fit_max_card}" data-min-size="34">{_escape_html(title)}</div>'
+            f'<div class="card-title fit-text" data-max-width="{fit_max_card}" data-min-size="44">{_escape_html(title)}</div>'
             f"{body_html}"
             f"</article>"
         )
@@ -1395,12 +1404,13 @@ def _render_primitive_html(
                 "cue": motion["cue"],
             }
         )
-        icon_html = _render_svg_icon(icon, 36) if icon else ""
+        pill_icon_px = 42 if in_sparse_phone else 38
+        icon_html = _render_svg_icon(icon, pill_icon_px) if icon else ""
         return (
             f'<div id="{dom_id}" class="primitive pill-badge tone-{tone}" '
             f'data-primitive="PillBadge" style="background-color: {bg_var}; color: {fg_var};">'
             f"{icon_html}"
-            f'<span class="pill-label fit-text" data-max-width="{fit_max_pill}" data-min-size="30">{_escape_html(label)}</span>'
+            f'<span class="pill-label fit-text" data-max-width="{fit_max_pill}" data-min-size="36">{_escape_html(label)}</span>'
             f"</div>"
         )
 
@@ -1409,7 +1419,10 @@ def _render_primitive_html(
         size = props.get("size") or "md"
         tone = props.get("tone") or "accent"
         draw_stroke = bool(props.get("draw_stroke", False))
-        size_px = {"sm": 64, "md": 84, "lg": 108}.get(size, 84)
+        size_px = {"sm": 84, "md": 94, "lg": 108}.get(size, 94)
+        if in_sparse_phone:
+            size_px = max(size_px, 112)
+        hero_badge_cls = " is-hero-badge" if (in_sparse_phone or not in_phone) else ""
         bg_var, fg_var = _tone_style_vars(tone)
         anim_Collector.append(
             {
@@ -1422,7 +1435,7 @@ def _render_primitive_html(
             }
         )
         return (
-            f'<div id="{dom_id}" class="primitive icon-badge size-{size} tone-{tone}" '
+            f'<div id="{dom_id}" class="primitive icon-badge size-{size} tone-{tone}{hero_badge_cls}" '
             f'data-primitive="IconBadge" data-icon="{name}" '
             f'style="background-color: {bg_var}; color: {fg_var};">'
             f"{_render_svg_icon(name, size_px)}"
@@ -1480,13 +1493,13 @@ def _render_primitive_html(
                 f'<div id="{dom_id}" class="primitive stat-callout meter-arc" data-primitive="StatCallout" '
                 f'style="background-color: var(--surface); color: var(--on-surface);">'
                 f'<div class="stat-arc-wrap">'
-                f'<svg class="stat-arc-svg" width="168" height="168" viewBox="0 0 168 168" fill="none" aria-hidden="true">'
+                f'<svg class="stat-arc-svg" width="176" height="176" viewBox="0 0 168 168" fill="none" aria-hidden="true">'
                 f'<circle class="stat-arc-track" cx="84" cy="84" r="68" stroke="currentColor" stroke-opacity="0.18" stroke-width="12" fill="none"/>'
                 f'<circle class="stat-arc-progress svg-draw-path" cx="84" cy="84" r="68" stroke="var(--accent2)" '
                 f'stroke-width="12" style="stroke-dasharray: {dash}px {circumference}px; stroke-dashoffset: 0;" '
                 f'stroke-linecap="round" transform="rotate(-90 84 84)" fill="none"/>'
                 f"</svg>"
-                f'<span class="stat-value stat-arc-value fit-text" data-max-width="112" data-min-size="30">{_escape_html(value)}</span>'
+                f'<span class="stat-value stat-arc-value fit-text" data-max-width="136" data-min-size="44">{_escape_html(value)}</span>'
                 f"</div>"
                 f'<div class="stat-main">'
                 f"{delta_html}"
@@ -1509,7 +1522,7 @@ def _render_primitive_html(
             f"{meter_html}"
             f'<div class="stat-main">'
             f'<div class="stat-value-row">'
-            f'<span class="stat-value fit-text" data-max-width="{fit_max_card}" data-min-size="38">{_escape_html(value)}</span>'
+            f'<span class="stat-value fit-text" data-max-width="{fit_max_card}" data-min-size="44">{_escape_html(value)}</span>'
             f"{delta_html}"
             f"</div>"
             f'<div class="stat-label">{_escape_html(label)}</div>'
@@ -1534,7 +1547,7 @@ def _render_primitive_html(
             icon_key = {"check": "check", "alert": "alert", "x": "x", "bullet": "spark"}.get(state, "check")
             rows_html.append(
                 f'<div class="checklist-item" id="{dom_id}-item-{i_idx}">'
-                f'<span class="checklist-icon">{_render_svg_icon(icon_key, 34)}</span>'
+                f'<span class="checklist-icon">{_render_svg_icon(icon_key, 38)}</span>'
                 f'<span class="checklist-label">{_escape_html(item.get("label") or "")}</span>'
                 f"</div>"
             )
@@ -1560,12 +1573,12 @@ def _render_primitive_html(
                 "cue": motion["cue"],
             }
         )
-        icon_html = _render_svg_icon(icon, 38) if icon else ""
+        icon_html = _render_svg_icon(icon, 42) if icon else ""
         return (
             f'<div id="{dom_id}" class="primitive cta-button btn tone-{tone}" '
             f'data-primitive="CtaButton" style="background-color: {bg_var}; color: {fg_var};">'
             f"{icon_html}"
-            f'<span class="cta-label fit-text" data-max-width="{fit_max_cta}" data-min-size="32">{_escape_html(label)}</span>'
+            f'<span class="cta-label fit-text" data-max-width="{fit_max_cta}" data-min-size="44">{_escape_html(label)}</span>'
             f"</div>"
         )
 
@@ -1616,36 +1629,167 @@ def _build_motion_runtime_js(anim_items: list[dict[str, Any]]) -> str:
     }}
   }}
 
-  // 2. Fit text while respecting per-element minimum font-size floors (headline >= 56, kinetic >= 96, body >= 28)
-  function fitAllText() {{
-    guardCtaButtons();
-    if (window.__fitText) {{
-      var fitNodes = document.querySelectorAll('.fit-text');
-      for (var i = 0; i < fitNodes.length; i++) {{
-        var node = fitNodes[i];
-        var maxW = parseFloat(node.getAttribute('data-max-width')) || 840;
-        var minS = parseFloat(node.getAttribute('data-min-size')) || 30;
-        var parentPhone = node.closest('.phone-body');
-        if (parentPhone && parentPhone.clientWidth > 0) {{
-          maxW = Math.min(maxW, Math.max(260, parentPhone.clientWidth - 24));
-        }}
-        window.__fitText(node, maxW, minS);
+    // 2. Effective zoom & font-size floor helpers
+  function roundZoom(v) {{
+    return Math.round(v * 1000) / 1000;
+  }}
+
+  function getEffectiveZoom(el) {{
+    var z = 1.0;
+    var cur = el;
+    while (cur && cur !== document.body && cur !== document.documentElement) {{
+      var sz = parseFloat(cur.style && cur.style.zoom);
+      if (!isNaN(sz) && sz > 0) z *= sz;
+      cur = cur.parentElement;
+    }}
+    return z;
+  }}
+
+  function getEffectiveFloor(el) {{
+    if (!el || !el.classList) return 36;
+    if (el.classList.contains('kinetic-row')) return 96;
+    if (el.classList.contains('stat-arc-value')) return 36;
+    if (el.classList.contains('headline-main')) {{
+      var hb = el.closest('.headline-block');
+      if (hb && hb.classList.contains('size-hero')) return 88;
+      return 76;
+    }}
+    if (
+      el.classList.contains('card-title') ||
+      el.classList.contains('cta-label') ||
+      el.classList.contains('cta-button') ||
+      el.classList.contains('brand-wordmark') ||
+      el.classList.contains('stat-value')
+    ) {{
+      return 44;
+    }}
+    if (el.classList.contains('phone-header-label')) return 38;
+    if (el.classList.contains('headline-eyebrow')) return 30;
+    return 36;
+  }}
+
+  function normalizeIconBadges() {{
+    if (!stage) return;
+    var badges = stage.querySelectorAll('.icon-badge');
+    for (var i = 0; i < badges.length; i++) {{
+      var b = badges[i];
+      var z = getEffectiveZoom(b);
+      var isHero = b.classList.contains('is-hero-badge') || !!b.closest('.phone-frame.is-sparse');
+      var targetScreenPx = isHero ? 168 : 150;
+      var localPx = Math.round(targetScreenPx / z);
+      b.style.width = localPx + 'px';
+      b.style.height = localPx + 'px';
+      b.style.minWidth = localPx + 'px';
+      b.style.minHeight = localPx + 'px';
+      var svg = b.querySelector('svg');
+      if (svg) {{
+        var svgPx = Math.round(localPx * 0.58);
+        svg.style.width = svgPx + 'px';
+        svg.style.height = svgPx + 'px';
       }}
+    }}
+  }}
+
+  // Fit text while respecting per-element effective font-size floors
+  // (body/pill/badge >= 36px, title/cta >= 44px, headline lg >= 76px, hero >= 88px, kinetic >= 96px, eyebrow >= 28px)
+  function fitAllText(enforceZoomFloors) {{
+    guardCtaButtons();
+    if (!stage) return;
+
+    var textSelector = [
+      '.fit-text',
+      '.kinetic-row',
+      '.headline-main',
+      '.headline-sub',
+      '.headline-eyebrow',
+      '.card-title',
+      '.card-sub',
+      '.pill-badge',
+      '.pill-label',
+      '.checklist-item',
+      '.checklist-label',
+      '.cta-button',
+      '.cta-label',
+      '.stat-value',
+      '.stat-arc-value',
+      '.stat-label',
+      '.stat-delta',
+      '.brand-wordmark',
+      '.brand-tag',
+      '.phone-header-label'
+    ].join(', ');
+
+    var textNodes = stage.querySelectorAll(textSelector);
+    for (var i = 0; i < textNodes.length; i++) {{
+      var node = textNodes[i];
+      var compSize = parseFloat(window.getComputedStyle(node).fontSize) || 36;
+      if (!node.getAttribute('data-base-font-size')) {{
+        node.setAttribute('data-base-font-size', String(compSize));
+      }}
+      var baseSize = parseFloat(node.getAttribute('data-base-font-size')) || compSize;
+      var effFloor = getEffectiveFloor(node);
+      var targetSize = Math.max(baseSize, effFloor);
+      if (enforceZoomFloors) {{
+        var z = getEffectiveZoom(node);
+        if (z >= 0.70) {{
+          var localFloor = Math.ceil((effFloor + 0.4) / z);
+          targetSize = Math.max(targetSize, localFloor);
+        }}
+      }}
+      node.style.fontSize = targetSize + 'px';
+      node.style.letterSpacing = '';
+    }}
+
+    if (window.__fitText) {{
       window.__fitText('.kinetic-row', 900, 96);
     }}
-    if (!stage) return;
+
+    var singleLineNodes = stage.querySelectorAll('.brand-wordmark, .cta-label, .pill-label, .stat-value, .stat-arc-value');
+    for (var s = 0; s < singleLineNodes.length; s++) {{
+      var sNode = singleLineNodes[s];
+      var sz = getEffectiveZoom(sNode);
+      var sEffFloor = getEffectiveFloor(sNode);
+      var sFloor = (enforceZoomFloors && sz >= 0.70 && !sNode.classList.contains('stat-arc-value'))
+        ? Math.ceil((sEffFloor + 0.4) / sz)
+        : (sNode.classList.contains('stat-arc-value') ? 28 : sEffFloor);
+      var sCur = parseFloat(window.getComputedStyle(sNode).fontSize) || sFloor;
+      var maxBoxW = sNode.classList.contains('stat-arc-value') ? 156 : 790;
+      while (
+        ((sNode.clientWidth > 0 && sNode.scrollWidth > sNode.clientWidth + 1) ||
+          sNode.getBoundingClientRect().width > maxBoxW) &&
+        sCur > sFloor
+      ) {{
+        sCur = Math.max(sFloor, sCur - 1);
+        sNode.style.fontSize = sCur + 'px';
+      }}
+    }}
+
     var allNodes = stage.querySelectorAll('*');
     for (var j = 0; j < allNodes.length; j++) {{
       var tel = allNodes[j];
       if (tel.clientWidth > 0 && tel.scrollWidth > tel.clientWidth + 1) {{
-        tel.style.whiteSpace = 'normal';
-        var curSize = parseFloat(window.getComputedStyle(tel).fontSize) || 32;
-        var floor = tel.classList.contains('kinetic-row')
-          ? 96
-          : (tel.classList.contains('headline-main') ? 56 : 28);
+        if (!tel.classList.contains('kinetic-row') && !tel.classList.contains('brand-wordmark') && !tel.classList.contains('stat-arc-value')) {{
+          tel.style.whiteSpace = 'normal';
+        }}
+        var tz = getEffectiveZoom(tel);
+        var curSize = parseFloat(window.getComputedStyle(tel).fontSize) || 36;
+        var tEffFloor = getEffectiveFloor(tel);
+        var floor = (enforceZoomFloors && tz >= 0.70 && !tel.classList.contains('stat-arc-value'))
+          ? Math.ceil((tEffFloor + 0.4) / tz)
+          : (tel.classList.contains('stat-arc-value') ? 26 : tEffFloor);
         while (tel.scrollWidth > tel.clientWidth + 1 && curSize > floor) {{
-          curSize = Math.max(floor, curSize - 2);
+          curSize = Math.max(floor, curSize - 1);
           tel.style.fontSize = curSize + 'px';
+        }}
+        if (tel.scrollWidth > tel.clientWidth + 1) {{
+          tel.style.letterSpacing = '-0.045em';
+        }}
+        if (tel.scrollWidth > tel.clientWidth + 1 && (tz < 0.70 || tel.classList.contains('stat-arc-value'))) {{
+          var hardFloor = tel.classList.contains('stat-arc-value') ? 24 : Math.ceil(28 / Math.max(0.45, tz));
+          while (tel.scrollWidth > tel.clientWidth + 1 && curSize > hardFloor) {{
+            curSize = Math.max(hardFloor, curSize - 1);
+            tel.style.fontSize = curSize + 'px';
+          }}
         }}
       }}
     }}
@@ -1682,41 +1826,40 @@ def _build_motion_runtime_js(anim_items: list[dict[str, Any]]) -> str:
   function applyStageZoom(z, baseStageGap) {{
     if (!stage) return;
     var ch = stage.children;
-    var maxScreenW = styleName === 'neo-brutal' ? 868 : 884;
+    var isEditorialGrid = stage.classList.contains('slot-editorial-grid');
+    var maxScreenW = isEditorialGrid ? 880 : (styleName === 'neo-brutal' ? 884 : 896);
     for (var i = 0; i < ch.length; i++) {{
       var el = ch[i];
       el.style.zoom = String(roundZoom(z));
       if (el.classList.contains('phone-frame')) {{
-        var targetPhoneW = Math.min(maxScreenW, Math.max(812, Math.round(840 * z)));
+        var targetPhoneW = Math.min(maxScreenW, Math.max(844, Math.round(892 * z)));
         el.style.width = (targetPhoneW / z).toFixed(2) + 'px';
         el.style.maxWidth = (maxScreenW / z).toFixed(2) + 'px';
       }} else if (!el.classList.contains('icon-badge') && !el.classList.contains('pill-badge') && !el.classList.contains('kinetic-stack')) {{
         el.style.maxWidth = (maxScreenW / z).toFixed(2) + 'px';
-        var baseW = parseFloat(el.getAttribute('data-base-width')) || 840;
-        var minScreenW = Math.min(baseW, 760);
+        var baseW = parseFloat(el.getAttribute('data-base-width')) || 892;
+        var minScreenW = Math.min(baseW, 800);
         var targetW = Math.min(maxScreenW, Math.max(minScreenW, Math.round(baseW * z)));
         el.style.width = (targetW / z).toFixed(2) + 'px';
       }}
     }}
     var scaledGap = z >= 1.0
-      ? Math.max(baseStageGap, Math.min(56, Math.round(baseStageGap * Math.min(z, 1.3))))
-      : Math.max(28, Math.round(baseStageGap * Math.max(0.72, z)));
+      ? Math.max(baseStageGap, Math.min(64, Math.round(baseStageGap * Math.min(z, 1.32))))
+      : Math.max(28, Math.round(baseStageGap * Math.max(0.75, z)));
     stage.style.gap = scaledGap + 'px';
     stage.setAttribute('data-auto-fit-zoom', String(roundZoom(z)));
+    normalizeIconBadges();
   }}
 
-  function roundZoom(v) {{
-    return Math.round(v * 1000) / 1000;
-  }}
+  normalizeIconBadges();
+  fitAllText(false);
 
-  fitAllText();
-
-  // 4. Auto-fit content block height to ~60-75% of SAFE_H (1240px)
+  // 4. Auto-fit content block height to ~85% (accept 0.80-0.90) of SAFE_H (1240px)
   if (stage && stage.children.length > 0) {{
-    var baseStageGap = parseFloat(window.getComputedStyle(stage).rowGap || window.getComputedStyle(stage).gap) || 30;
+    var baseStageGap = parseFloat(window.getComputedStyle(stage).rowGap || window.getComputedStyle(stage).gap) || 34;
     for (var ci = 0; ci < stage.children.length; ci++) {{
       var cel = stage.children[ci];
-      cel.setAttribute('data-base-width', String(cel.getBoundingClientRect().width || 840));
+      cel.setAttribute('data-base-width', String(cel.getBoundingClientRect().width || 892));
     }}
 
     var m0 = measureStack();
@@ -1726,56 +1869,83 @@ def _build_motion_runtime_js(anim_items: list[dict[str, Any]]) -> str:
 
     var isKineticScene = (styleName === 'kinetic-type' && !!stage.querySelector('.kinetic-stack'));
     if (isKineticScene) {{
-      // Keep kinetic-type as it looks unless it overflows > 0.78 or underflows < 0.56
-      if (ratio0 > 0.78 || m0.width > 900) {{
-        var targetHK = 0.73 * SAFE_H;
-        for (var kStep = 0; kStep < 5 && (measureStack().height > 0.78 * SAFE_H || measureStack().width > 900); kStep++) {{
+      // Keep kinetic-type's look: adjust gaps/padding first so rows stay at zoom=1.0 (>= 96px)
+      var kStack = stage.querySelector('.kinetic-stack');
+      if (ratio0 > 0.90) {{
+        if (kStack) kStack.style.gap = '20px';
+        stage.style.gap = '28px';
+        m0 = measureStack();
+        ratio0 = m0.height / SAFE_H;
+      }}
+      if (ratio0 > 0.91 || m0.width > 912) {{
+        var targetHK = 0.86 * SAFE_H;
+        for (var kStep = 0; kStep < 4 && (measureStack().height > 0.91 * SAFE_H || measureStack().width > 912); kStep++) {{
           var mk = measureStack();
-          var zk = Math.min(targetHK / Math.max(1, mk.height), 892 / Math.max(1, mk.width));
-          currentZoom = Math.max(0.55, Math.min(1.0, currentZoom * zk));
+          var zk = Math.min(targetHK / Math.max(1, mk.height), 900 / Math.max(1, mk.width));
+          currentZoom = Math.max(0.85, Math.min(1.0, currentZoom * zk));
           for (var ki = 0; ki < stage.children.length; ki++) {{
             stage.children[ki].style.zoom = String(roundZoom(currentZoom));
           }}
           stage.setAttribute('data-auto-fit-zoom', String(roundZoom(currentZoom)));
-          fitAllText();
+          normalizeIconBadges();
+          fitAllText(true);
         }}
-      }} else if (ratio0 < 0.56) {{
-        var extraK = (0.64 * SAFE_H) - m0.height;
-        var kStack = stage.querySelector('.kinetic-stack');
+      }} else if (ratio0 < 0.80) {{
+        var extraK = (0.84 * SAFE_H) - m0.height;
         if (kStack && extraK > 0) {{
           var kRows = kStack.querySelectorAll('.kinetic-row');
-          var curKGap = parseFloat(window.getComputedStyle(kStack).rowGap || window.getComputedStyle(kStack).gap) || 22;
-          var addGap = Math.min(36, Math.round(extraK / Math.max(1, kRows.length)));
-          kStack.style.gap = (curKGap + addGap) + 'px';
+          var numKRows = Math.max(1, kRows.length);
+          var padAddPerSide = Math.min(22, Math.round((extraK * 0.35) / (numKRows * 2)));
+          for (var kri = 0; kri < kRows.length; kri++) {{
+            var kr = kRows[kri];
+            var kpt = parseFloat(window.getComputedStyle(kr).paddingTop) || 22;
+            var kpb = parseFloat(window.getComputedStyle(kr).paddingBottom) || 22;
+            kr.style.paddingTop = (kpt + padAddPerSide) + 'px';
+            kr.style.paddingBottom = (kpb + padAddPerSide) + 'px';
+          }}
+          var mAfterPad = measureStack();
+          var remK = Math.max(0, (0.84 * SAFE_H) - mAfterPad.height);
+          var curKGap = parseFloat(window.getComputedStyle(kStack).rowGap || window.getComputedStyle(kStack).gap) || 24;
+          var kGaps = Math.max(1, numKRows - 1);
+          var addKGap = Math.min(76, Math.round((remK * 0.68) / kGaps));
+          kStack.style.gap = (curKGap + addKGap) + 'px';
+          var mAfterKGap = measureStack();
+          var remStageK = Math.max(0, (0.84 * SAFE_H) - mAfterKGap.height);
+          if (remStageK > 4 && stage.children.length > 1) {{
+            var addStKGap = Math.min(84, Math.round(remStageK / (stage.children.length - 1)));
+            stage.style.gap = (baseStageGap + addStKGap) + 'px';
+          }}
         }}
       }}
+      normalizeIconBadges();
+      fitAllText(true);
     }} else {{
-      var minTargetRatio = 0.65;
-      var maxTargetRatio = 0.75;
-      var idealGrowH = 0.69 * SAFE_H;   // ~856px
-      var idealShrinkH = 0.70 * SAFE_H; // ~868px
+      var minTargetRatio = 0.81;
+      var maxTargetRatio = 0.89;
+      var idealGrowH = 0.85 * SAFE_H;   // ~1054px
+      var idealShrinkH = 0.85 * SAFE_H; // ~1054px
 
       if (ratio0 < minTargetRatio) {{
-        // Sparse spec: scale UP via CSS zoom first (capped at 1.26x so width stays <= 884px)
-        currentZoom = Math.min(1.26, Math.max(1.02, idealGrowH / Math.max(1, m0.height)));
+        // Sparse or medium scene: scale UP via CSS zoom (capped at 1.32x; base widths are 892px)
+        currentZoom = Math.min(1.32, Math.max(1.02, idealGrowH / Math.max(1, m0.height)));
         applyStageZoom(currentZoom, baseStageGap);
-        fitAllText();
+        fitAllText(false);
 
         var mGrow = measureStack();
         if (mGrow.height > maxTargetRatio * SAFE_H) {{
-          // If text line-wrapping during zoom pushed height past 0.75, step zoom back to fit
-          for (var gBack = 0; gBack < 4 && measureStack().height > maxTargetRatio * SAFE_H; gBack++) {{
+          // If text line-wrapping during zoom pushed height past 0.89, step zoom back to fit
+          for (var gBack = 0; gBack < 5 && measureStack().height > maxTargetRatio * SAFE_H; gBack++) {{
             var mgb = measureStack();
             currentZoom = Math.max(0.65, currentZoom * (idealShrinkH / Math.max(1, mgb.height)));
             applyStageZoom(currentZoom, baseStageGap);
-            fitAllText();
+            fitAllText(false);
           }}
         }} else if (mGrow.height < minTargetRatio * SAFE_H) {{
-          // Still below 61% after max zoom: expand vertical breathing room (stage gap + phone/card vertical padding & body gap)
+          // Still below 81% after zoom: expand vertical breathing room (stage gap + phone/card vertical padding & body gap)
           var remH = idealGrowH - mGrow.height;
           var numStageGaps = Math.max(1, stage.children.length - 1);
           var curStGap = parseFloat(window.getComputedStyle(stage).rowGap || window.getComputedStyle(stage).gap) || baseStageGap;
-          var stGapAdd = Math.min(28, Math.round((remH * 0.25) / numStageGaps));
+          var stGapAdd = Math.min(44, Math.round((remH * 0.25) / numStageGaps));
           stage.style.gap = (curStGap + stGapAdd) + 'px';
 
           mGrow = measureStack();
@@ -1787,60 +1957,149 @@ def _build_motion_runtime_js(anim_items: list[dict[str, Any]]) -> str:
               var localRem = remH / currentZoom;
               var pChildren = phoneBody.children.length;
               var pGaps = Math.max(1, pChildren - 1);
-              var curPhonePadT = parseFloat(window.getComputedStyle(phone).paddingTop) || 36;
-              var curPhonePadB = parseFloat(window.getComputedStyle(phone).paddingBottom) || 36;
-              var curBodyGap = parseFloat(window.getComputedStyle(phoneBody).rowGap || window.getComputedStyle(phoneBody).gap) || 22;
+              var curPhonePadT = parseFloat(window.getComputedStyle(phone).paddingTop) || 42;
+              var curPhonePadB = parseFloat(window.getComputedStyle(phone).paddingBottom) || 42;
+              var curBodyGap = parseFloat(window.getComputedStyle(phoneBody).rowGap || window.getComputedStyle(phoneBody).gap) || 26;
 
-              var bodyGapAdd = Math.min(36, Math.round((localRem * 0.35) / pGaps));
+              var bodyGapAdd = Math.min(64, Math.round((localRem * 0.42) / pGaps));
               phoneBody.style.gap = (curBodyGap + bodyGapAdd) + 'px';
               var usedByGap = bodyGapAdd * (pChildren > 1 ? pGaps : 0);
               var padEach = Math.max(0, Math.round((localRem - usedByGap) / 2));
               phone.style.paddingTop = (curPhonePadT + padEach) + 'px';
               phone.style.paddingBottom = (curPhonePadB + padEach) + 'px';
             }} else {{
+              var slotEl = stage.querySelector('.layout-slot');
+              if (slotEl) {{
+                var curSlotGap = parseFloat(window.getComputedStyle(slotEl).rowGap || window.getComputedStyle(slotEl).gap) || 26;
+                var slotChildren = Math.max(1, slotEl.children.length - 1);
+                var slotGapAdd = Math.min(48, Math.round(((remH * 0.35) / currentZoom) / slotChildren));
+                slotEl.style.gap = (curSlotGap + slotGapAdd) + 'px';
+              }}
+              mGrow = measureStack();
+              remH = Math.max(0, idealGrowH - mGrow.height);
               var blocks = stage.querySelectorAll('.feature-card, .stat-callout, .checklist-stack, .headline-block, .kinetic-stack');
-              if (blocks.length > 0) {{
+              if (blocks.length > 0 && remH > 4) {{
                 var localPerBlock = (remH / currentZoom) / (blocks.length * 2);
                 for (var bi = 0; bi < blocks.length; bi++) {{
-                  var bpt = parseFloat(window.getComputedStyle(blocks[bi]).paddingTop) || 24;
-                  var bpb = parseFloat(window.getComputedStyle(blocks[bi]).paddingBottom) || 24;
+                  var bpt = parseFloat(window.getComputedStyle(blocks[bi]).paddingTop) || 28;
+                  var bpb = parseFloat(window.getComputedStyle(blocks[bi]).paddingBottom) || 28;
                   blocks[bi].style.paddingTop = Math.round(bpt + localPerBlock) + 'px';
                   blocks[bi].style.paddingBottom = Math.round(bpb + localPerBlock) + 'px';
                 }}
               }}
             }}
           }}
-          fitAllText();
+          fitAllText(false);
         }}
       }} else if (ratio0 > maxTargetRatio) {{
-        // Dense / many-primitive spec: scale DOWN via CSS zoom so stack lands at ~70% of SAFE_H
-        for (var sStep = 0; sStep < 5 && measureStack().height > maxTargetRatio * SAFE_H; sStep++) {{
+        // Dense / many-primitive spec: scale DOWN via CSS zoom so stack lands at ~85% of SAFE_H
+        for (var sStep = 0; sStep < 6 && measureStack().height > maxTargetRatio * SAFE_H; sStep++) {{
           var ms = measureStack();
           currentZoom = Math.max(0.45, Math.min(1.0, currentZoom * (idealShrinkH / Math.max(1, ms.height))));
           applyStageZoom(currentZoom, baseStageGap);
-          fitAllText();
+          fitAllText(false);
         }}
       }}
 
-      // Final clamp pass in case post-zoom text wrapping shifted stack height outside [0.58, 0.77]
-      for (var fStep = 0; fStep < 4; fStep++) {{
+      // Final clamp pass in case post-zoom text wrapping shifted stack height outside [0.80, 0.895]
+      for (var fStep = 0; fStep < 6; fStep++) {{
         var mf = measureStack();
         var rf = mf.height / SAFE_H;
-        if (rf > 0.77) {{
-          currentZoom = Math.max(0.45, currentZoom * ((0.70 * SAFE_H) / Math.max(1, mf.height)));
+        if (rf > 0.895 || mf.bottom > 1318 || mf.top < 82) {{
+          currentZoom = Math.max(0.45, currentZoom * Math.min(0.97, (0.85 * SAFE_H) / Math.max(1, mf.height)));
           applyStageZoom(currentZoom, baseStageGap);
-          fitAllText();
-        }} else if (rf < 0.58) {{
-          currentZoom = Math.min(1.28, currentZoom * ((0.65 * SAFE_H) / Math.max(1, mf.height)));
-          applyStageZoom(currentZoom, baseStageGap);
-          fitAllText();
+          fitAllText(false);
+        }} else if (rf < 0.80) {{
+          if (currentZoom < 1.32) {{
+            currentZoom = Math.min(1.32, currentZoom * ((0.85 * SAFE_H) / Math.max(1, mf.height)));
+            applyStageZoom(currentZoom, baseStageGap);
+            fitAllText(false);
+          }} else {{
+            var extraF = (0.84 * SAFE_H) - mf.height;
+            var fPhone = stage.querySelector('.phone-frame');
+            if (fPhone && extraF > 4) {{
+              var curFMinH = fPhone.getBoundingClientRect().height / currentZoom;
+              fPhone.style.minHeight = Math.ceil(curFMinH + (extraF / currentZoom)) + 'px';
+            }} else {{
+              var fBlocks = stage.querySelectorAll('.feature-card, .stat-callout, .checklist-stack, .headline-block');
+              if (fBlocks.length > 0 && extraF > 4) {{
+                var addPer = (extraF / currentZoom) / (fBlocks.length * 2);
+                for (var fbi = 0; fbi < fBlocks.length; fbi++) {{
+                  var fbpt = parseFloat(window.getComputedStyle(fBlocks[fbi]).paddingTop) || 28;
+                  var fbpb = parseFloat(window.getComputedStyle(fBlocks[fbi]).paddingBottom) || 28;
+                  fBlocks[fbi].style.paddingTop = Math.round(fbpt + addPer) + 'px';
+                  fBlocks[fbi].style.paddingBottom = Math.round(fbpb + addPer) + 'px';
+                }}
+              }}
+            }}
+            fitAllText(false);
+          }}
+        }} else {{
+          break;
+        }}
+      }}
+
+      // Guarantee sparse phones (<=2 children) have rendered height >= 600px
+      var sparsePhones = stage.querySelectorAll('.phone-frame.is-sparse');
+      for (var spi = 0; spi < sparsePhones.length; spi++) {{
+        var sp = sparsePhones[spi];
+        var spZ = getEffectiveZoom(sp);
+        if (stage.children.length >= 3) {{
+          sp.style.minHeight = Math.ceil(608 / spZ) + 'px';
+          sp.style.paddingTop = '42px';
+          sp.style.paddingBottom = '42px';
+          sp.style.gap = '26px';
+          var spBody = sp.querySelector('.phone-body');
+          if (spBody) {{
+            spBody.style.gap = '26px';
+            spBody.style.paddingTop = '4px';
+            spBody.style.paddingBottom = '4px';
+          }}
+        }}
+        var spRect = sp.getBoundingClientRect();
+        if (spRect.height < 606) {{
+          sp.style.minHeight = Math.ceil(612 / spZ) + 'px';
+        }}
+      }}
+
+      // Enforce effective font-size floors after zoom settles
+      normalizeIconBadges();
+      fitAllText(true);
+      for (var pStep = 0; pStep < 4; pStep++) {{
+        var mPost = measureStack();
+        var rPost = mPost.height / SAFE_H;
+        if (rPost > 0.90) {{
+          stage.style.gap = '28px';
+          var pBody = stage.querySelector('.phone-body');
+          if (pBody) pBody.style.gap = '22px';
+          mPost = measureStack();
+          if (mPost.height > 0.90 * SAFE_H) {{
+            currentZoom = Math.max(0.45, currentZoom * ((0.86 * SAFE_H) / Math.max(1, mPost.height)));
+            applyStageZoom(currentZoom, 28);
+            var spAfter = stage.querySelector('.phone-frame.is-sparse');
+            if (spAfter && spAfter.getBoundingClientRect().height < 606) {{
+              spAfter.style.minHeight = Math.ceil(610 / getEffectiveZoom(spAfter)) + 'px';
+            }}
+            fitAllText(true);
+          }}
+        }} else if (rPost < 0.80) {{
+          var extraPost = (0.84 * SAFE_H) - mPost.height;
+          var pPhone = stage.querySelector('.phone-frame');
+          if (pPhone && extraPost > 4) {{
+            var curPH = pPhone.getBoundingClientRect().height / currentZoom;
+            pPhone.style.minHeight = Math.ceil(curPH + (extraPost / currentZoom)) + 'px';
+          }} else if (currentZoom < 1.32) {{
+            currentZoom = Math.min(1.32, currentZoom * ((0.85 * SAFE_H) / Math.max(1, mPost.height)));
+            applyStageZoom(currentZoom, baseStageGap);
+            fitAllText(true);
+          }}
         }} else {{
           break;
         }}
       }}
 
       if (currentZoom < 0.95) {{
-        var minLocalPad = Math.ceil(16 / currentZoom);
+        var minLocalPad = Math.ceil(18 / currentZoom);
         var padContainers = stage.querySelectorAll('.feature-card, .cta-button, .pill-badge, .stat-callout, .checklist-stack');
         for (var pi = 0; pi < padContainers.length; pi++) {{
           var pc = padContainers[pi];
@@ -2086,12 +2345,12 @@ html, body {{
   top: {STAGE_TOP}px;
   width: {STAGE_WIDTH}px;
   height: {STAGE_HEIGHT}px;
-  padding: 20px 24px;
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--stage-gap, 30px);
+  gap: var(--stage-gap, 34px);
   overflow: hidden;
 }}
 #safe-stage.slot-editorial-grid {{
@@ -2100,7 +2359,7 @@ html, body {{
   border: var(--border-card);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);
-  padding: 36px 42px;
+  padding: 24px 22px;
 }}
 .primitive {{
   margin-left: auto;
@@ -2115,11 +2374,11 @@ html, body {{
 }}
 /* BrandHeader */
 .brand-header {{
-  width: 860px;
+  width: 892px;
   max-width: 100%;
   box-sizing: border-box;
-  gap: 14px;
-  padding: 8px 16px;
+  gap: 16px;
+  padding: 10px 18px;
   flex-shrink: 0;
 }}
 .brand-plate {{
@@ -2127,8 +2386,8 @@ html, body {{
   flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 18px;
-  padding: var(--pad-brand-plate, 16px 38px);
+  gap: 20px;
+  padding: var(--pad-brand-plate, 18px 44px);
   border-radius: 999px;
   margin: 0 auto;
   max-width: 100%;
@@ -2139,24 +2398,24 @@ html, body {{
   border: 2px solid rgba(128, 128, 128, 0.16);
 }}
 .brand-logo-wrap {{
-  width: 52px;
-  height: 52px;
+  width: 58px;
+  height: 58px;
   overflow: hidden;
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
   flex-shrink: 0;
-  border-radius: 12px;
+  border-radius: 14px;
 }}
 #brand-logo {{
-  height: 52px;
+  height: 58px;
   width: auto;
   max-width: none;
   display: block;
 }}
 .brand-wordmark {{
   font-family: var(--font-heading);
-  font-size: 38px;
+  font-size: 46px;
   font-weight: 800;
   letter-spacing: -0.01em;
   line-height: 1.12;
@@ -2166,12 +2425,12 @@ html, body {{
 }}
 .brand-tag {{
   display: inline-block;
-  padding: 14px 30px;
+  padding: 16px 34px;
   border-radius: 999px;
   background-color: var(--accent2);
   color: var(--on-accent2);
   font-family: var(--font-heading);
-  font-size: 28px;
+  font-size: 36px;
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -2182,18 +2441,18 @@ html, body {{
 }}
 /* HeadlineBlock */
 .headline-block {{
-  width: 860px;
+  width: 892px;
   max-width: 100%;
   box-sizing: border-box;
-  gap: 14px;
-  padding: 16px 24px;
+  gap: 16px;
+  padding: 18px 26px;
 }}
 #safe-stage.slot-editorial-grid .headline-block {{
   border-bottom: 1.5px solid rgba(128, 128, 128, 0.22);
-  padding-bottom: 22px;
+  padding-bottom: 24px;
 }}
 .headline-eyebrow {{
-  font-size: 28px;
+  font-size: 34px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -2208,7 +2467,7 @@ html, body {{
   font-weight: var(--headline-weight, 800);
   text-transform: var(--headline-case, none);
   letter-spacing: var(--headline-letter-spacing, -0.02em);
-  line-height: 1.12;
+  line-height: 1.10;
   color: inherit;
   width: 100%;
   max-width: 100%;
@@ -2217,16 +2476,16 @@ html, body {{
   overflow-wrap: break-word;
   word-break: normal;
 }}
-.headline-block.size-md .headline-main {{ font-size: 58px; }}
-.headline-block.size-lg .headline-main {{ font-size: 66px; }}
-.headline-block.size-hero .headline-main {{ font-size: 74px; }}
-.phone-body .headline-block.size-md .headline-main {{ font-size: 56px; }}
-.phone-body .headline-block.size-lg .headline-main {{ font-size: 60px; }}
-.phone-body .headline-block.size-hero .headline-main {{ font-size: 66px; }}
+.headline-block.size-md .headline-main {{ font-size: 78px; }}
+.headline-block.size-lg .headline-main {{ font-size: 82px; }}
+.headline-block.size-hero .headline-main {{ font-size: 92px; }}
+.phone-body .headline-block.size-md .headline-main {{ font-size: 78px; }}
+.phone-body .headline-block.size-lg .headline-main {{ font-size: 80px; }}
+.phone-body .headline-block.size-hero .headline-main {{ font-size: 90px; }}
 .headline-sub {{
-  font-size: 32px;
+  font-size: 38px;
   font-weight: 600;
-  line-height: 1.28;
+  line-height: 1.26;
   opacity: 0.92;
   width: 100%;
   max-width: 100%;
@@ -2240,8 +2499,8 @@ html, body {{
   width: 900px;
   max-width: 100%;
   box-sizing: border-box;
-  gap: 22px;
-  padding: 12px 0;
+  gap: 28px;
+  padding: 16px 0;
 }}
 .kinetic-row {{
   font-family: var(--font-heading);
@@ -2251,7 +2510,7 @@ html, body {{
   letter-spacing: -0.02em;
   text-transform: uppercase;
   text-align: center;
-  padding: var(--pad-kinetic-row, 22px 50px);
+  padding: var(--pad-kinetic-row, 24px 54px);
   border-radius: 32px;
   max-width: 100%;
   width: fit-content;
@@ -2284,7 +2543,7 @@ html, body {{
 }}
 /* PhoneFrame */
 .phone-frame {{
-  width: 840px;
+  width: 892px;
   max-width: 100%;
   box-sizing: border-box;
   background-color: var(--surface);
@@ -2293,26 +2552,35 @@ html, body {{
   border-radius: var(--radius-phone);
   box-shadow: var(--shadow-phone);
   backdrop-filter: blur(var(--glass-blur, 0px));
-  padding: var(--pad-phone, 36px 44px);
-  gap: var(--inner-gap, 22px);
+  padding: var(--pad-phone, 42px 50px);
+  gap: var(--inner-gap, 26px);
+}}
+.phone-frame.is-sparse {{
+  min-height: 660px;
+  justify-content: space-evenly;
+  padding: 52px 54px;
+  gap: 36px;
 }}
 .phone-speaker {{
-  width: 140px;
-  height: 12px;
+  width: 152px;
+  height: 14px;
   border-radius: 999px;
   background-color: currentColor;
-  opacity: 0.22;
+  opacity: 0.24;
   margin: 0 auto;
 }}
 .phone-header-label {{
   font-family: var(--font-heading);
-  font-size: 28px;
+  font-size: 40px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  opacity: 0.88;
+  opacity: 0.90;
   max-width: 100%;
   overflow-wrap: break-word;
+}}
+.phone-frame.is-sparse .phone-header-label {{
+  font-size: 42px;
 }}
 .phone-body {{
   width: 100%;
@@ -2322,22 +2590,43 @@ html, body {{
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--inner-gap, 22px);
+  gap: var(--inner-gap, 26px);
+}}
+.phone-frame.is-sparse .phone-body {{
+  flex: 1 1 auto;
+  justify-content: space-evenly;
+  gap: 42px;
+  padding: 14px 0;
+}}
+.phone-frame.is-sparse .pill-badge {{
+  font-size: 42px;
+  padding: 30px 58px;
+}}
+.phone-frame.is-sparse .headline-block .headline-main {{
+  font-size: 92px;
+  line-height: 1.08;
+}}
+.phone-frame.is-sparse .headline-sub {{
+  font-size: 40px;
+}}
+.phone-frame.is-sparse .feature-card {{
+  padding: 46px 52px;
+  gap: 24px;
 }}
 /* FeatureCard */
 .feature-card {{
-  width: 840px;
+  width: 892px;
   max-width: 100%;
   box-sizing: border-box;
-  padding: var(--pad-card, 34px 40px);
+  padding: var(--pad-card, 39px 46px);
   border: var(--border-card);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);
   backdrop-filter: blur(var(--glass-blur, 0px));
-  gap: 20px;
+  gap: 22px;
 }}
 #safe-stage > .feature-card {{
-  width: 840px;
+  width: 892px;
   max-width: 100%;
 }}
 .feature-card.tilt-left,
@@ -2348,13 +2637,13 @@ html, body {{
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }}
 .card-title {{
   font-family: var(--font-heading);
-  font-size: 42px;
+  font-size: 48px;
   font-weight: var(--headline-weight, 800);
-  line-height: 1.15;
+  line-height: 1.14;
   text-align: center;
   width: 100%;
   max-width: 100%;
@@ -2363,9 +2652,9 @@ html, body {{
   word-break: normal;
 }}
 .card-sub {{
-  font-size: 30px;
+  font-size: 38px;
   font-weight: 600;
-  line-height: 1.28;
+  line-height: 1.26;
   opacity: 0.92;
   text-align: center;
   width: 100%;
@@ -2380,13 +2669,13 @@ html, body {{
   flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 18px;
-  padding: var(--pad-pill, 22px 44px);
+  gap: 20px;
+  padding: var(--pad-pill, 26px 50px);
   border-radius: var(--radius-pill, 999px);
   border: var(--border-card);
   box-shadow: var(--shadow-card);
   font-family: var(--font-heading);
-  font-size: 34px;
+  font-size: 38px;
   font-weight: 800;
   width: fit-content;
   max-width: 100%;
@@ -2403,53 +2692,65 @@ html, body {{
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: fit-content !important;
+  width: 150px;
+  height: 150px;
+  min-width: 144px;
+  min-height: 144px;
   align-self: center;
   aspect-ratio: 1 / 1;
-  padding: var(--pad-badge, 24px);
-  border-radius: 32px;
+  padding: var(--pad-badge, 28px);
+  border-radius: 36px;
   border: var(--border-card);
   box-shadow: var(--shadow-card);
   max-width: 100%;
   box-sizing: border-box;
+}}
+.icon-badge.is-hero-badge,
+.phone-frame.is-sparse .icon-badge {{
+  width: 168px;
+  height: 168px;
+  min-width: 156px;
+  min-height: 156px;
+  padding: 34px;
+  border-radius: 40px;
 }}
 /* StatCallout */
 .stat-callout {{
-  width: 840px;
+  width: 892px;
   max-width: 100%;
   box-sizing: border-box;
-  padding: var(--pad-stat, 30px 40px);
+  padding: var(--pad-stat, 35px 46px);
   border: var(--border-card);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);
-  gap: 18px;
+  gap: 20px;
 }}
 #safe-stage > .stat-callout {{
-  width: 840px;
+  width: 892px;
   max-width: 100%;
 }}
 .stat-arc-wrap {{
   position: relative;
-  width: 148px;
-  height: 148px;
+  width: 196px;
+  height: 196px;
   display: flex;
   align-items: center;
   justify-content: center;
   margin: 0 auto;
 }}
 .stat-arc-svg {{
-  width: 148px;
-  height: 148px;
+  width: 196px;
+  height: 196px;
   display: block;
 }}
 .stat-arc-value {{
   position: absolute;
-  inset: 22px;
+  inset: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-family: var(--font-heading);
-  font-size: 34px;
+  font-size: 38px;
   font-weight: 900;
   line-height: 1.05;
   text-align: center;
@@ -2459,7 +2760,7 @@ html, body {{
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
@@ -2469,14 +2770,14 @@ html, body {{
   flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 18px;
+  gap: 20px;
   flex-wrap: wrap;
   width: 100%;
   max-width: 100%;
 }}
 .stat-value {{
   font-family: var(--font-heading);
-  font-size: 60px;
+  font-size: 64px;
   font-weight: 900;
   line-height: 1.08;
   font-variant-numeric: tabular-nums;
@@ -2485,11 +2786,11 @@ html, body {{
   word-break: normal;
 }}
 .stat-delta {{
-  padding: 14px 26px;
+  padding: 16px 30px;
   border-radius: 999px;
   background-color: var(--accent);
   color: var(--on-accent);
-  font-size: 28px;
+  font-size: 36px;
   font-weight: 800;
   text-transform: uppercase;
   max-width: 100%;
@@ -2497,7 +2798,7 @@ html, body {{
   word-break: normal;
 }}
 .stat-label {{
-  font-size: 28px;
+  font-size: 36px;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -2510,7 +2811,7 @@ html, body {{
 .stat-bar-track {{
   width: 100%;
   max-width: 100%;
-  height: 16px;
+  height: 18px;
   border-radius: 999px;
   background-color: rgba(128, 128, 128, 0.22);
   overflow: hidden;
@@ -2522,14 +2823,14 @@ html, body {{
 }}
 /* ChecklistStack */
 .checklist-stack {{
-  width: 840px;
+  width: 892px;
   max-width: 100%;
   box-sizing: border-box;
-  padding: var(--pad-checklist, 28px 42px);
+  padding: var(--pad-checklist, 32px 48px);
   border: var(--border-card);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);
-  gap: 18px;
+  gap: 20px;
 }}
 .checklist-item {{
   width: 100%;
@@ -2539,10 +2840,10 @@ html, body {{
   flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 18px;
-  padding: 14px 20px;
+  gap: 20px;
+  padding: 16px 22px;
   border-bottom: 1px solid rgba(128, 128, 128, 0.18);
-  font-size: 30px;
+  font-size: 38px;
   font-weight: 700;
 }}
 .checklist-item:last-child {{
@@ -2562,18 +2863,18 @@ html, body {{
 }}
 /* CtaButton */
 .cta-button {{
-  width: 760px;
+  width: 820px;
   max-width: 100%;
   box-sizing: border-box;
-  min-height: 104px;
-  padding: var(--pad-button, 28px 54px);
+  min-height: 112px;
+  padding: var(--pad-button, 32px 62px);
   flex-direction: row;
-  gap: 20px;
+  gap: 22px;
   border-radius: var(--radius-pill, 999px);
   border: var(--border-card);
   box-shadow: var(--shadow-card);
   font-family: var(--font-heading);
-  font-size: 40px;
+  font-size: 46px;
   font-weight: 800;
   flex-shrink: 0;
 }}
@@ -2585,10 +2886,10 @@ html, body {{
 }}
 /* LayoutSlot */
 .layout-slot {{
-  width: 860px;
+  width: 892px;
   max-width: 100%;
   box-sizing: border-box;
-  gap: var(--inner-gap, 22px);
+  gap: var(--inner-gap, 26px);
 }}
 .layout-slot.dir-row,
 .layout-slot.dir-grid-2col {{

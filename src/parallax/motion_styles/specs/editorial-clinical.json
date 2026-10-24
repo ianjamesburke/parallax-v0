@@ -8,8 +8,7 @@
       "type": "BrandHeader",
       "props": {
         "align": "center",
-        "logo_plate": "auto",
-        "tag_text": "__SCENE_TAG__"
+        "logo_plate": "auto"
       },
       "motion": {
         "entrance": "fade-up",
@@ -42,27 +41,6 @@
       "motion": {
         "entrance": "fade-up",
         "cue": "__CUE_WORD_1__"
-      }
-    },
-    {
-      "type": "ChecklistStack",
-      "props": {
-        "items": [
-          {
-            "label": "Caller reputation & carrier check",
-            "state": "check",
-            "cue": "__CUE_WORD_1__"
-          },
-          {
-            "label": "AI scam pattern verification",
-            "state": "check",
-            "cue": "__CUE_WORD_2__"
-          }
-        ]
-      },
-      "motion": {
-        "entrance": "fade-up",
-        "cue": "__CUE_WORD_2__"
       }
     },
     {
