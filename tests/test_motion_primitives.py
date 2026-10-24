@@ -448,7 +448,8 @@ def test_scene_spec_validation_clamps_lengths_caps_children_and_drops_unknowns()
                         {"type": "PillBadge", "props": {"label": "P" * 45, "icon": "bad-icon"}},
                         {"type": "FeatureCard", "props": {"title": "T" * 60, "body": "B" * 140, "icon": "shield"}},
                         {"type": "CtaButton", "props": {"label": "C" * 50, "icon": "check"}},
-                        {"type": "StatCallout", "props": {"value": "99.9%", "label": "EXTRACHILD DROPPED"}},
+                        {"type": "StatCallout", "props": {"value": "99.9%", "label": "FOURTH KEPT"}},
+                        {"type": "ChecklistStack", "props": {"items": ["FIFTH EXTRACHILD DROPPED"]}},
                     ],
                 },
             },
@@ -671,3 +672,514 @@ def test_cli_saves_spec_json_and_rerenders_from_spec_with_zero_network(
     assert int(stream["width"]) == 1080
     assert int(stream["height"]) == 1920
     assert int(stream["nb_read_frames"]) == 9
+
+
+# ---------------------------------------------------------------------------
+# 7. Regression: nested primitives in PhoneFrame / LayoutSlot never overflow parent or shift off-center
+# ---------------------------------------------------------------------------
+
+
+@requires_chrome
+def test_nested_primitives_in_phone_frame_never_overflow_and_stay_centered(tmp_path: Path) -> None:
+    brand = _sample_malwarebytes_brand()
+    duration_s = 4.0
+
+    inspect_phone_js = f"""
+    (() => {{
+      if (typeof window.__seek === 'function') window.__seek({duration_s});
+      const stage = document.getElementById('safe-stage');
+      const phone = document.querySelector('.phone-frame');
+      const phoneBody = document.querySelector('.phone-body');
+      if (!stage || !phone || !phoneBody) {{
+        return {{ error: 'missing stage/phone/phoneBody' }};
+      }}
+      const phoneRect = phone.getBoundingClientRect();
+      const stageChildren = Array.from(stage.children).map((el) => {{
+        const r = el.getBoundingClientRect();
+        return {{
+          id: el.id,
+          primitive: el.getAttribute('data-primitive') || el.tagName,
+          left: r.left,
+          right: r.right,
+          top: r.top,
+          bottom: r.bottom,
+          centerX: (r.left + r.right) / 2.0,
+        }};
+      }});
+      const phoneChildren = Array.from(phoneBody.children).map((el) => {{
+        const r = el.getBoundingClientRect();
+        return {{
+          id: el.id,
+          primitive: el.getAttribute('data-primitive') || el.tagName,
+          left: r.left,
+          right: r.right,
+          top: r.top,
+          bottom: r.bottom,
+          width: r.width,
+          centerX: (r.left + r.right) / 2.0,
+        }};
+      }});
+      const ignored = new Set(['SCRIPT', 'STYLE', 'TITLE', 'HEAD', 'META', 'LINK', 'DEFS', 'DESC']);
+      function collectTextBoxes(rootEl) {{
+        const out = [];
+        for (const el of Array.from(rootEl.querySelectorAll('*'))) {{
+          if (ignored.has(el.tagName.toUpperCase())) continue;
+          let hasText = false;
+          for (let i = 0; i < el.childNodes.length; i++) {{
+            const n = el.childNodes[i];
+            if (n.nodeType === 3 && n.nodeValue && n.nodeValue.trim().length > 0) {{
+              hasText = true;
+              break;
+            }}
+          }}
+          if (!hasText) continue;
+          const st = window.getComputedStyle(el);
+          if (st.display === 'none' || st.visibility === 'hidden' || parseFloat(st.opacity) <= 0.05) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width <= 0.5 || r.height <= 0.5) continue;
+          out.push({{
+            text: (el.textContent || '').trim().slice(0, 50),
+            left: r.left,
+            right: r.right,
+            top: r.top,
+            bottom: r.bottom,
+            centerX: (r.left + r.right) / 2.0,
+          }});
+        }}
+        return out;
+      }}
+      return {{
+        phoneRect: {{
+          left: phoneRect.left,
+          right: phoneRect.right,
+          top: phoneRect.top,
+          bottom: phoneRect.bottom,
+          centerX: (phoneRect.left + phoneRect.right) / 2.0,
+        }},
+        stageChildren,
+        phoneChildren,
+        phoneTextBoxes: collectTextBoxes(phone),
+        allTextBoxes: collectTextBoxes(document.body),
+      }};
+    }})()
+    """
+
+    for style_name in CANONICAL_STYLE_ORDER:
+        # Spec 1: BrandHeader + PhoneFrame[PillBadge, HeadlineBlock(size lg, 'Is it a scam?'), FeatureCard, CtaButton]
+        spec_stack = {
+            "style": style_name,
+            "layout_slot": "phone-hero",
+            "gap": "md",
+            "bg_variant": "solid",
+            "primitives": [
+                {"type": "BrandHeader", "props": {"align": "center", "logo_plate": "auto"}},
+                {
+                    "type": "PhoneFrame",
+                    "props": {
+                        "header_label": "Incoming Call",
+                        "children": [
+                            {
+                                "type": "PillBadge",
+                                "props": {"label": "Unknown Number", "tone": "accent2", "pulse": True, "icon": "phone-call"},
+                            },
+                            {
+                                "type": "HeadlineBlock",
+                                "props": {"headline": "Is it a scam?", "size": "lg", "align": "center"},
+                            },
+                            {
+                                "type": "FeatureCard",
+                                "props": {
+                                    "title": "AI Call Screening",
+                                    "body": "Checks suspicious callers before your phone rings.",
+                                    "icon": "shield",
+                                    "tone": "surface",
+                                },
+                            },
+                            {
+                                "type": "CtaButton",
+                                "props": {"label": "Block Scam Call", "tone": "ink", "icon": "check"},
+                            },
+                        ],
+                    },
+                },
+            ],
+        }
+
+        # Spec 2: HeadlineBlock size hero inside PhoneFrame with a long headline (plus StatCallout & ChecklistStack)
+        spec_hero_long = {
+            "style": style_name,
+            "layout_slot": "phone-hero",
+            "gap": "md",
+            "bg_variant": "radial",
+            "primitives": [
+                {"type": "BrandHeader", "props": {"align": "center", "logo_plate": "auto"}},
+                {
+                    "type": "PhoneFrame",
+                    "props": {
+                        "header_label": "Scam Guard Active",
+                        "children": [
+                            {
+                                "type": "HeadlineBlock",
+                                "props": {
+                                    "eyebrow": "REAL-TIME PROTECTION",
+                                    "headline": "Suspicious Scam Caller Blocked Automatically",
+                                    "subhead": "Malwarebytes screens unknown numbers and risky links before you answer.",
+                                    "size": "hero",
+                                    "align": "center",
+                                },
+                            },
+                            {
+                                "type": "StatCallout",
+                                "props": {"value": "99.9%", "label": "SCAM CALLS BLOCKED", "delta": "+24% FASTER", "meter": "bar"},
+                            },
+                            {
+                                "type": "ChecklistStack",
+                                "props": {
+                                    "items": [
+                                        {"label": "Caller identity verified instantly", "state": "check"},
+                                        {"label": "Phishing links quarantined", "state": "check"},
+                                    ]
+                                },
+                            },
+                        ],
+                    },
+                },
+            ],
+        }
+
+        for variant_name, spec in (("stack4", spec_stack), ("hero_long", spec_hero_long)):
+            html = render_scene_spec_html(
+                spec,
+                style=style_name,
+                brand=brand,
+                duration_s=duration_s,
+            )
+            fname = f"phone_{variant_name}_{style_name}.html"
+            metrics = _evaluate_in_chrome(html, tmp_path, inspect_phone_js, name=fname)
+            assert "error" not in metrics, f"{style_name}/{variant_name}: {metrics}"
+
+            pr = metrics["phoneRect"]
+            assert abs(pr["centerX"] - STAGE_CENTER_X) <= 4.0, (
+                f"{style_name}/{variant_name} PhoneFrame off-center: centerX={pr['centerX']:.2f}"
+            )
+
+            for sc in metrics["stageChildren"]:
+                assert abs(sc["centerX"] - STAGE_CENTER_X) <= 4.0, (
+                    f"{style_name}/{variant_name} stage child {sc['primitive']} off-center: centerX={sc['centerX']:.2f}"
+                )
+
+            assert len(metrics["phoneChildren"]) >= 3
+            for pc in metrics["phoneChildren"]:
+                assert abs(pc["centerX"] - STAGE_CENTER_X) <= 4.0, (
+                    f"{style_name}/{variant_name} phone child {pc['primitive']} off-center: centerX={pc['centerX']:.2f}"
+                )
+                assert pc["left"] >= pr["left"] - 1.0, (
+                    f"{style_name}/{variant_name} phone child {pc['primitive']} overflows phone left: "
+                    f"{pc['left']:.1f} < {pr['left']:.1f}"
+                )
+                assert pc["right"] <= pr["right"] + 1.0, (
+                    f"{style_name}/{variant_name} phone child {pc['primitive']} overflows phone right: "
+                    f"{pc['right']:.1f} > {pr['right']:.1f}"
+                )
+
+            assert len(metrics["phoneTextBoxes"]) >= 2
+            for tb in metrics["phoneTextBoxes"]:
+                assert tb["left"] >= pr["left"] - 1.0, (
+                    f"{style_name}/{variant_name} phone text {tb['text']!r} left={tb['left']:.1f} < phone.left={pr['left']:.1f}"
+                )
+                assert tb["right"] <= pr["right"] + 1.0, (
+                    f"{style_name}/{variant_name} phone text {tb['text']!r} right={tb['right']:.1f} > phone.right={pr['right']:.1f}"
+                )
+
+            for tb in metrics["allTextBoxes"]:
+                assert tb["left"] >= STAGE_LEFT - 1.0, (
+                    f"{style_name}/{variant_name} text {tb['text']!r} left={tb['left']:.1f} < {STAGE_LEFT}"
+                )
+                assert tb["right"] <= STAGE_RIGHT + 1.0, (
+                    f"{style_name}/{variant_name} text {tb['text']!r} right={tb['right']:.1f} > {STAGE_RIGHT}"
+                )
+                assert tb["bottom"] <= STAGE_BOTTOM + 1.0, (
+                    f"{style_name}/{variant_name} text {tb['text']!r} bottom={tb['bottom']:.1f} > {STAGE_BOTTOM}"
+                )
+                assert tb["top"] >= STAGE_TOP - 1.0, (
+                    f"{style_name}/{variant_name} text {tb['text']!r} top={tb['top']:.1f} < {STAGE_TOP}"
+                )
+
+            audit = audit_layout(tmp_path / fname, duration_s=duration_s)
+            assert audit.passed, f"{style_name}/{variant_name} failed audit_layout: {audit.violations}"
+
+
+@requires_chrome
+def test_recovered_real3_rejected_specs_render_cleanly_and_pass_audit(tmp_path: Path) -> None:
+    brand = _sample_malwarebytes_brand()
+    recovered_specs = [
+        (
+            "flat-explainer-s1",
+            {
+                "style": "flat-explainer",
+                "layout_slot": "phone-hero",
+                "gap": "md",
+                "bg_variant": "solid",
+                "primitives": [
+                    {
+                        "type": "BrandHeader",
+                        "props": {"align": "center", "logo_plate": "auto"},
+                        "motion": {"entrance": "fade-up", "emphasis": "none", "cue": "your"},
+                    },
+                    {
+                        "type": "PhoneFrame",
+                        "props": {
+                            "header_label": "Incoming Call",
+                            "bezel": "preset",
+                            "children": [
+                                {
+                                    "type": "PillBadge",
+                                    "props": {
+                                        "label": "Unknown Number",
+                                        "tone": "accent2",
+                                        "pulse": True,
+                                        "icon": "phone-call",
+                                    },
+                                    "motion": {"entrance": "pop", "emphasis": "pulse", "cue": "phone"},
+                                },
+                                {
+                                    "type": "HeadlineBlock",
+                                    "props": {"headline": "Is it a scam?", "size": "lg", "align": "center"},
+                                    "motion": {"entrance": "slide-up", "emphasis": "none", "cue": "scam"},
+                                },
+                            ],
+                        },
+                        "motion": {"entrance": "pop", "emphasis": "none", "cue": "rings"},
+                    },
+                ],
+            },
+        ),
+        (
+            "neo-brutal-s1",
+            {
+                "style": "neo-brutal",
+                "layout_slot": "phone-hero",
+                "gap": "md",
+                "bg_variant": "solid",
+                "primitives": [
+                    {
+                        "type": "BrandHeader",
+                        "props": {"align": "center", "logo_plate": "auto"},
+                        "motion": {"entrance": "fade-up", "emphasis": "none", "cue": ""},
+                    },
+                    {
+                        "type": "PhoneFrame",
+                        "props": {
+                            "header_label": "Incoming Call",
+                            "bezel": "preset",
+                            "children": [
+                                {
+                                    "type": "IconBadge",
+                                    "props": {
+                                        "name": "phone-call",
+                                        "size": "lg",
+                                        "tone": "accent",
+                                        "draw_stroke": True,
+                                    },
+                                    "motion": {"entrance": "pop", "emphasis": "none", "cue": "rings"},
+                                },
+                                {
+                                    "type": "HeadlineBlock",
+                                    "props": {
+                                        "headline": "UNKNOWN",
+                                        "size": "md",
+                                        "align": "center",
+                                        "subhead": "CALLER",
+                                    },
+                                    "motion": {"entrance": "slide-up", "emphasis": "none", "cue": "caller"},
+                                },
+                                {
+                                    "type": "PillBadge",
+                                    "props": {
+                                        "label": "IS IT A SCAM?",
+                                        "tone": "ink",
+                                        "pulse": True,
+                                        "icon": "alert",
+                                    },
+                                    "motion": {"entrance": "stamp", "emphasis": "none", "cue": "scam"},
+                                },
+                            ],
+                        },
+                        "motion": {"entrance": "pop", "emphasis": "none", "cue": "phone"},
+                    },
+                ],
+            },
+        ),
+        (
+            "glass-ui-s1",
+            {
+                "style": "glass-ui",
+                "layout_slot": "phone-hero",
+                "gap": "md",
+                "bg_variant": "orb-glow",
+                "primitives": [
+                    {
+                        "type": "BrandHeader",
+                        "props": {"align": "center", "logo_plate": "auto", "tag_text": "Malwarebytes"},
+                        "motion": {"entrance": "fade-up", "emphasis": "none", "cue": ""},
+                    },
+                    {
+                        "type": "PhoneFrame",
+                        "props": {
+                            "header_label": "Incoming Call",
+                            "bezel": "preset",
+                            "children": [
+                                {
+                                    "type": "IconBadge",
+                                    "props": {
+                                        "name": "phone-call",
+                                        "size": "lg",
+                                        "tone": "accent",
+                                        "draw_stroke": True,
+                                    },
+                                    "motion": {"entrance": "pop", "emphasis": "pulse", "cue": "rings"},
+                                },
+                                {
+                                    "type": "HeadlineBlock",
+                                    "props": {"headline": "Scam Likely", "size": "md", "align": "center"},
+                                    "motion": {"entrance": "fade-up", "emphasis": "none", "cue": "unknown"},
+                                },
+                                {
+                                    "type": "CtaButton",
+                                    "props": {
+                                        "label": "Block Call",
+                                        "tone": "ink",
+                                        "emphasis": "pulse",
+                                        "icon": "alert",
+                                    },
+                                    "motion": {"entrance": "slide-up", "emphasis": "pulse", "cue": "scam"},
+                                },
+                            ],
+                        },
+                        "motion": {"entrance": "slide-up", "emphasis": "none", "cue": "phone"},
+                    },
+                ],
+            },
+        ),
+        (
+            "glass-ui-s3",
+            {
+                "style": "glass-ui",
+                "layout_slot": "phone-hero",
+                "gap": "md",
+                "bg_variant": "orb-glow",
+                "primitives": [
+                    {
+                        "type": "BrandHeader",
+                        "props": {"align": "center", "logo_plate": "auto", "tag_text": "Malwarebytes"},
+                        "motion": {"entrance": "fade-up", "emphasis": "none", "cue": ""},
+                    },
+                    {
+                        "type": "PhoneFrame",
+                        "props": {
+                            "header_label": "Malwarebytes",
+                            "bezel": "preset",
+                            "children": [
+                                {
+                                    "type": "IconBadge",
+                                    "props": {
+                                        "name": "shield",
+                                        "size": "lg",
+                                        "tone": "accent",
+                                        "draw_stroke": True,
+                                    },
+                                    "motion": {"entrance": "draw", "emphasis": "none", "cue": "scam"},
+                                },
+                                {
+                                    "type": "HeadlineBlock",
+                                    "props": {"headline": "Scam Blocked!", "size": "md", "align": "center"},
+                                    "motion": {"entrance": "pop", "emphasis": "none", "cue": "blocked"},
+                                },
+                                {
+                                    "type": "CtaButton",
+                                    "props": {
+                                        "label": "Try Free Now",
+                                        "tone": "accent",
+                                        "emphasis": "pulse",
+                                        "icon": "check",
+                                    },
+                                    "motion": {"entrance": "slide-up", "emphasis": "pulse", "cue": "today"},
+                                },
+                            ],
+                        },
+                        "motion": {"entrance": "pop", "emphasis": "none", "cue": ""},
+                    },
+                ],
+            },
+        ),
+        (
+            "editorial-clinical-s1",
+            {
+                "style": "editorial-clinical",
+                "layout_slot": "phone-hero",
+                "gap": "md",
+                "bg_variant": "solid",
+                "primitives": [
+                    {
+                        "type": "BrandHeader",
+                        "props": {"align": "split", "logo_plate": "auto", "tag_text": "Malwarebytes"},
+                        "motion": {"entrance": "fade-up", "emphasis": "none", "cue": ""},
+                    },
+                    {
+                        "type": "PhoneFrame",
+                        "props": {
+                            "header_label": "Incoming Call",
+                            "bezel": "preset",
+                            "children": [
+                                {
+                                    "type": "IconBadge",
+                                    "props": {
+                                        "name": "phone-call",
+                                        "size": "lg",
+                                        "tone": "accent",
+                                        "draw_stroke": True,
+                                    },
+                                    "motion": {"entrance": "pop", "emphasis": "pulse", "cue": "rings"},
+                                },
+                                {
+                                    "type": "HeadlineBlock",
+                                    "props": {
+                                        "headline": "Unknown Number?",
+                                        "size": "md",
+                                        "align": "center",
+                                        "subhead": "Is it a scam?",
+                                    },
+                                    "motion": {"entrance": "slide-up", "emphasis": "none", "cue": "unknown"},
+                                },
+                                {
+                                    "type": "CtaButton",
+                                    "props": {
+                                        "label": "Block Call",
+                                        "tone": "ink",
+                                        "emphasis": "none",
+                                        "icon": "x",
+                                    },
+                                    "motion": {"entrance": "fade-up", "emphasis": "none", "cue": "scam"},
+                                },
+                            ],
+                        },
+                        "motion": {"entrance": "slide-up", "emphasis": "none", "cue": "phone"},
+                    },
+                ],
+            },
+        ),
+    ]
+
+    for scene_label, spec in recovered_specs:
+        html = render_scene_spec_html(
+            spec,
+            style=spec["style"],
+            brand=brand,
+            duration_s=3.6,
+        )
+        out_html = tmp_path / f"{scene_label}.html"
+        out_html.write_text(html, encoding="utf-8")
+        audit = audit_layout(out_html, duration_s=3.6)
+        assert audit.passed, f"{scene_label} failed audit_layout: {audit.violations}"
+
+

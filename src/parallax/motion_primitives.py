@@ -175,7 +175,7 @@ CHAR_LIMITS: dict[str, dict[str, int]] = {
 CHILD_CAPS: dict[str, tuple[int, int]] = {
     "stage_primitives": (1, 5),
     "LayoutSlot": (1, 4),
-    "PhoneFrame": (1, 3),
+    "PhoneFrame": (1, 4),
     "KineticWordStack": (2, 4),
     "ChecklistStack": (1, 4),
 }
@@ -1068,11 +1068,16 @@ def _render_primitive_html(
     norm_brand: dict[str, Any],
     style_name: str,
     anim_Collector: list[dict[str, Any]],
+    in_phone: bool = False,
 ) -> str:
     ptype = prim["type"]
     props = prim.get("props") or {}
     motion = normalize_motion_spec(prim.get("motion"))
     dom_id = f"prim-{idx_prefix}"
+    fit_max_headline = 580 if in_phone else 860
+    fit_max_card = 550 if in_phone else 760
+    fit_max_pill = 520 if in_phone else 760
+    fit_max_cta = 520 if in_phone else 720
 
     if ptype == "BrandHeader":
         logo_plate_mode = str(props.get("logo_plate") or "auto")
@@ -1132,7 +1137,7 @@ def _render_primitive_html(
         return (
             f'<section id="{dom_id}" class="primitive headline-block size-{size}" data-primitive="HeadlineBlock">'
             f"{eyebrow_html}"
-            f'<h1 class="headline headline-main fit-text" data-max-width="880">{_escape_html(headline)}</h1>'
+            f'<h1 class="headline headline-main fit-text" data-max-width="{fit_max_headline}">{_escape_html(headline)}</h1>'
             f"{sub_html}"
             f"</section>"
         )
@@ -1189,6 +1194,7 @@ def _render_primitive_html(
                     norm_brand=norm_brand,
                     style_name=style_name,
                     anim_Collector=anim_Collector,
+                    in_phone=True,
                 )
             )
         return (
@@ -1210,6 +1216,7 @@ def _render_primitive_html(
                 norm_brand=norm_brand,
                 style_name=style_name,
                 anim_Collector=anim_Collector,
+                in_phone=in_phone,
             )
             for c_idx, ch in enumerate(children)
         ]
@@ -1244,7 +1251,7 @@ def _render_primitive_html(
             f'<article id="{dom_id}" class="primitive feature-card tone-{tone}{tilt_cls}" '
             f'data-primitive="FeatureCard" style="background-color: {bg_var}; color: {fg_var};">'
             f"{icon_html}"
-            f'<div class="card-title fit-text" data-max-width="760">{_escape_html(title)}</div>'
+            f'<div class="card-title fit-text" data-max-width="{fit_max_card}">{_escape_html(title)}</div>'
             f"{body_html}"
             f"</article>"
         )
@@ -1269,7 +1276,7 @@ def _render_primitive_html(
             f'<div id="{dom_id}" class="primitive pill-badge tone-{tone}" '
             f'data-primitive="PillBadge" style="background-color: {bg_var}; color: {fg_var};">'
             f"{icon_html}"
-            f'<span class="pill-label fit-text" data-max-width="760">{_escape_html(label)}</span>'
+            f'<span class="pill-label fit-text" data-max-width="{fit_max_pill}">{_escape_html(label)}</span>'
             f"</div>"
         )
 
@@ -1395,7 +1402,7 @@ def _render_primitive_html(
             f'<div id="{dom_id}" class="primitive cta-button btn tone-{tone}" '
             f'data-primitive="CtaButton" style="background-color: {bg_var}; color: {fg_var};">'
             f"{icon_html}"
-            f'<span class="cta-label fit-text" data-max-width="720">{_escape_html(label)}</span>'
+            f'<span class="cta-label fit-text" data-max-width="{fit_max_cta}">{_escape_html(label)}</span>'
             f"</div>"
         )
 
@@ -1421,12 +1428,28 @@ def _build_motion_runtime_js(anim_items: list[dict[str, Any]]) -> str:
   var stage = document.getElementById('safe-stage');
   if (window.__fitText) {{
     window.__fitText('.fit-text', 860, 22);
+    var phoneBodies = document.querySelectorAll('.phone-body');
+    for (var pb = 0; pb < phoneBodies.length; pb++) {{
+      var pbWidth = Math.max(240, (phoneBodies[pb].clientWidth || 624) - 24);
+      window.__fitText(phoneBodies[pb].querySelectorAll('.fit-text'), pbWidth, 20);
+    }}
     window.__fitText('.kinetic-row', 900, 96);
   }}
   // Ensure vertical stack fits comfortably inside #safe-stage (1240px height) with breathing room for y-entrances
   if (stage) {{
+    function stageOverflows() {{
+      if (stage.scrollHeight > stage.clientHeight - 48) return true;
+      var sRect = stage.getBoundingClientRect();
+      var ch = stage.children;
+      if (ch.length > 0) {{
+        var firstRect = ch[0].getBoundingClientRect();
+        var lastRect = ch[ch.length - 1].getBoundingClientRect();
+        if (firstRect.top < sRect.top + 12 || lastRect.bottom > sRect.bottom - 28) return true;
+      }}
+      return false;
+    }}
     var guard = 0;
-    while (stage.scrollHeight > stage.clientHeight - 48 && guard < 10) {{
+    while (stageOverflows() && guard < 12) {{
       guard++;
       var curGap = parseFloat(window.getComputedStyle(stage).rowGap || window.getComputedStyle(stage).gap) || 20;
       if (curGap > 8) {{
@@ -1453,8 +1476,8 @@ def _build_motion_runtime_js(anim_items: list[dict[str, Any]]) -> str:
         var heads = stage.querySelectorAll('.headline-main');
         for (var h = 0; h < heads.length; h++) {{
           var hSize = parseFloat(window.getComputedStyle(heads[h]).fontSize) || 48;
-          if (hSize > 34) {{
-            heads[h].style.fontSize = Math.max(34, hSize - 4) + 'px';
+          if (hSize > 30) {{
+            heads[h].style.fontSize = Math.max(30, hSize - 4) + 'px';
           }}
         }}
       }}
@@ -1528,7 +1551,7 @@ def _build_motion_runtime_js(anim_items: list[dict[str, Any]]) -> str:
     }} else if (item.emphasis === 'shake') {{
       var sStart = Math.min(startTime + dur + 0.06, Math.max(0.25, totalDur - 0.32));
       if (sStart + 0.24 < totalDur - 0.04) {{
-        tl.to(el, {{ x: 6, duration: 0.05, yoyo: true, repeat: 3, ease: 'none' }}, sStart);
+        tl.to(el, {{ x: 3, duration: 0.05, yoyo: true, repeat: 3, ease: 'none' }}, sStart);
       }}
     }}
   }}
@@ -1712,7 +1735,8 @@ html, body {{
 .primitive {{
   margin-left: auto;
   margin-right: auto;
-  max-width: 880px;
+  max-width: 100%;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1722,6 +1746,8 @@ html, body {{
 /* BrandHeader */
 .brand-header {{
   width: 860px;
+  max-width: 100%;
+  box-sizing: border-box;
   gap: 10px;
   flex-shrink: 0;
 }}
@@ -1734,7 +1760,8 @@ html, body {{
   padding: 10px 26px;
   border-radius: 999px;
   margin: 0 auto;
-  max-width: 820px;
+  max-width: 100%;
+  box-sizing: border-box;
 }}
 .brand-plate.is-pill {{
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
@@ -1763,6 +1790,8 @@ html, body {{
   letter-spacing: -0.01em;
   line-height: 1.1;
   white-space: nowrap;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }}
 .brand-tag {{
   display: inline-block;
@@ -1776,10 +1805,15 @@ html, body {{
   letter-spacing: 0.06em;
   text-transform: uppercase;
   margin: 0 auto;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
 }}
 /* HeadlineBlock */
 .headline-block {{
   width: 860px;
+  max-width: 100%;
+  box-sizing: border-box;
   gap: 10px;
   padding: 6px 12px;
 }}
@@ -1793,6 +1827,10 @@ html, body {{
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--accent);
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
 }}
 .headline-main {{
   font-family: var(--font-heading);
@@ -1801,27 +1839,34 @@ html, body {{
   letter-spacing: var(--headline-letter-spacing, -0.02em);
   line-height: 1.12;
   color: inherit;
-  max-width: 840px;
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   margin: 0 auto;
   overflow-wrap: anywhere;
 }}
 .headline-block.size-md .headline-main {{ font-size: 44px; }}
 .headline-block.size-lg .headline-main {{ font-size: 52px; }}
 .headline-block.size-hero .headline-main {{ font-size: 62px; }}
+.phone-body .headline-block.size-md .headline-main {{ font-size: 38px; }}
+.phone-body .headline-block.size-lg .headline-main {{ font-size: 44px; }}
+.phone-body .headline-block.size-hero .headline-main {{ font-size: 48px; }}
 .headline-sub {{
   font-size: 26px;
   font-weight: 600;
   line-height: 1.28;
   opacity: 0.90;
-  max-width: 800px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   margin: 0 auto;
   overflow-wrap: anywhere;
 }}
 /* KineticWordStack */
 .kinetic-stack {{
   width: 900px;
-  max-width: 900px;
+  max-width: 100%;
+  box-sizing: border-box;
   gap: 16px;
   padding: 8px 0;
 }}
@@ -1835,8 +1880,9 @@ html, body {{
   text-align: center;
   padding: 14px 36px;
   border-radius: 28px;
-  max-width: 892px;
+  max-width: 100%;
   width: fit-content;
+  box-sizing: border-box;
   margin: 0 auto;
   white-space: nowrap;
   overflow-wrap: break-word;
@@ -1866,6 +1912,8 @@ html, body {{
 /* PhoneFrame */
 .phone-frame {{
   width: 680px;
+  max-width: 100%;
+  box-sizing: border-box;
   background-color: var(--surface);
   color: var(--on-surface);
   border: var(--border-phone);
@@ -1890,9 +1938,13 @@ html, body {{
   letter-spacing: 0.08em;
   text-transform: uppercase;
   opacity: 0.85;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }}
 .phone-body {{
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1903,6 +1955,7 @@ html, body {{
 .feature-card {{
   width: 600px;
   max-width: 100%;
+  box-sizing: border-box;
   padding: 22px 26px;
   border: var(--border-card);
   border-radius: var(--radius-card);
@@ -1912,6 +1965,7 @@ html, body {{
 }}
 #safe-stage > .feature-card {{
   width: 780px;
+  max-width: 100%;
 }}
 .feature-card.tilt-left,
 .feature-card.tilt-right {{
@@ -1929,6 +1983,9 @@ html, body {{
   font-weight: var(--headline-weight, 800);
   line-height: 1.15;
   text-align: center;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   overflow-wrap: anywhere;
 }}
 .card-sub {{
@@ -1937,6 +1994,9 @@ html, body {{
   line-height: 1.26;
   opacity: 0.92;
   text-align: center;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   overflow-wrap: anywhere;
 }}
 /* PillBadge */
@@ -1953,7 +2013,13 @@ html, body {{
   font-family: var(--font-heading);
   font-size: 30px;
   font-weight: 800;
-  max-width: 820px;
+  max-width: 100%;
+  box-sizing: border-box;
+}}
+.pill-label {{
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }}
 /* IconBadge */
 .icon-badge {{
@@ -1964,11 +2030,14 @@ html, body {{
   border-radius: 28px;
   border: var(--border-card);
   box-shadow: var(--shadow-card);
+  max-width: 100%;
+  box-sizing: border-box;
 }}
 /* StatCallout */
 .stat-callout {{
   width: 600px;
   max-width: 100%;
+  box-sizing: border-box;
   padding: 20px 26px;
   border: var(--border-card);
   border-radius: var(--radius-card);
@@ -1977,6 +2046,7 @@ html, body {{
 }}
 #safe-stage > .stat-callout {{
   width: 780px;
+  max-width: 100%;
 }}
 .stat-main {{
   display: flex;
@@ -1984,6 +2054,8 @@ html, body {{
   align-items: center;
   gap: 6px;
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }}
 .stat-value-row {{
   display: flex;
@@ -1991,6 +2063,8 @@ html, body {{
   align-items: center;
   justify-content: center;
   gap: 14px;
+  flex-wrap: wrap;
+  max-width: 100%;
 }}
 .stat-value {{
   font-family: var(--font-heading);
@@ -1998,6 +2072,8 @@ html, body {{
   font-weight: 900;
   line-height: 1.05;
   font-variant-numeric: tabular-nums;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }}
 .stat-delta {{
   padding: 6px 14px;
@@ -2007,6 +2083,8 @@ html, body {{
   font-size: 20px;
   font-weight: 800;
   text-transform: uppercase;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }}
 .stat-label {{
   font-size: 22px;
@@ -2014,10 +2092,13 @@ html, body {{
   letter-spacing: 0.05em;
   text-transform: uppercase;
   opacity: 0.88;
+  width: 100%;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }}
 .stat-bar-track {{
   width: 100%;
-  max-width: 520px;
+  max-width: 100%;
   height: 14px;
   border-radius: 999px;
   background-color: rgba(128, 128, 128, 0.22);
@@ -2032,6 +2113,7 @@ html, body {{
 .checklist-stack {{
   width: 780px;
   max-width: 100%;
+  box-sizing: border-box;
   padding: 18px 28px;
   border: var(--border-card);
   border-radius: var(--radius-card);
@@ -2040,6 +2122,8 @@ html, body {{
 }}
 .checklist-item {{
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -2059,9 +2143,16 @@ html, body {{
   align-items: center;
   flex-shrink: 0;
 }}
+.checklist-label {{
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}}
 /* CtaButton */
 .cta-button {{
   width: 600px;
+  max-width: 100%;
+  box-sizing: border-box;
   min-height: 88px;
   padding: 18px 36px;
   flex-direction: row;
@@ -2074,14 +2165,41 @@ html, body {{
   font-weight: 800;
   flex-shrink: 0;
 }}
+.cta-label {{
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}}
 /* LayoutSlot */
 .layout-slot {{
   width: 860px;
+  max-width: 100%;
+  box-sizing: border-box;
   gap: 18px;
 }}
-.layout-slot.dir-row {{
+.layout-slot.dir-row,
+.layout-slot.dir-grid-2col {{
   flex-direction: row;
   flex-wrap: wrap;
+}}
+/* Nested primitive constraints: never exceed parent content box */
+.phone-body .primitive,
+.layout-slot .primitive {{
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}}
+.phone-body .headline-block,
+.phone-body .headline-main,
+.phone-body .headline-sub,
+.phone-body .headline-eyebrow,
+.layout-slot .headline-block,
+.layout-slot .headline-main,
+.layout-slot .headline-sub,
+.layout-slot .headline-eyebrow {{
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }}
 .svg-draw-path {{
   stroke-dasharray: 240;
