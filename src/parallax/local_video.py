@@ -118,10 +118,10 @@ def _graphic_frames(duration, out, draw_frame, *, resolution_="1080x1920"):
         if r.returncode: raise RuntimeError(r.stderr[:500])
     return str(target)
 
-def app_screen(screen, duration, out, *, bg="#272137", bg_image=None, callout=None, highlight=None, zoom_to_highlight=False, accent="#721CFF", title=None, full_bleed=False, callout_y=None, brand=None, resolution_="1080x1920"):
+def app_screen(screen, duration, out, *, bg="#272137", bg_image=None, callout=None, highlight=None, zoom_to_highlight=False, accent="#721CFF", title=None, title_fade_in_s=0.0, full_bleed=False, callout_y=None, brand=None, resolution_="1080x1920"):
     """Real screenshot + push-in + animated highlight/callout. See motion_graphics.app_screen."""
     from . import motion_graphics as mg
-    return mg.app_screen(screen, duration, out, bg=bg, bg_image=bg_image, callout=callout, highlight=highlight, zoom_to_highlight=zoom_to_highlight, accent=accent, title=title, full_bleed=full_bleed, callout_y=callout_y, brand=brand, resolution_=resolution_)
+    return mg.app_screen(screen, duration, out, bg=bg, bg_image=bg_image, callout=callout, highlight=highlight, zoom_to_highlight=zoom_to_highlight, accent=accent, title=title, title_fade_in_s=title_fade_in_s, full_bleed=full_bleed, callout_y=callout_y, brand=brand, resolution_=resolution_)
 
 def end_card(logo,duration,out,*,icon=None,headline="Become a morning person",cta="Try RISE free",sub="Download on the App Store",bg="#14102A",accent="#721CFF",colors=None,brand=None,resolution_="1080x1920"):
     from . import motion_graphics as mg

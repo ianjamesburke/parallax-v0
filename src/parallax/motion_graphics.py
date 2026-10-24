@@ -152,12 +152,17 @@ def _pill(im, cx, cy, text, font, fill, scale=1.0, text_fill="#FFFFFF", alpha=1.
     return (x, y, x + tile.width, y + tile.height)
 
 
-def _title(im, t, text, w, h, y=0.13, size=None, start=0.0):
-    """Kinetic title: slides up + fades in."""
+def _title(im, t, text, w, h, y=0.13, size=None, start=0.0, fade_in_s=0.0):
+    """Draw a title, opaque from frame 0 unless an explicit fade is requested."""
     if not text:
         return
     from PIL import ImageDraw
-    p = ease_out_cubic(seg(t, start, start + 0.18))
+    fade_in_s = max(0.0, float(fade_in_s))
+    # Opening titles must be visible on frame 0. Delayed titles retain their
+    # deliberate start time; callers can explicitly opt into a fade.
+    if t < start:
+        return
+    p = ease_out_cubic(seg(t, start, start + fade_in_s)) if fade_in_s else 1.0
     if p <= 0:
         return
     f = _fit_font(text, int(w * (1 - 2 * SAFE_X)), size or int(w * 0.075))
@@ -484,7 +489,7 @@ def end_card(logo, duration, out, *, icon=None, headline="Become a morning perso
 
 
 def app_screen(screen, duration, out, *, bg="#272137", bg_image=None, callout=None, highlight=None,
-               zoom_to_highlight=False, accent="#721CFF", title=None, full_bleed=False, callout_y=None,
+               zoom_to_highlight=False, accent="#721CFF", title=None, title_fade_in_s=0.0, full_bleed=False, callout_y=None,
                brand: Optional[dict] = None, resolution_="1080x1920"):
     """Real app screenshot (pixels used as-is) with push-in, animated highlight and kinetic callout.
 
@@ -559,6 +564,6 @@ def app_screen(screen, duration, out, *, bg="#272137", bg_image=None, callout=No
             cp = ease_out_back(seg(t, 0.2, 0.4))
             _pill(im, w / 2, (callout_y or 0.62) * h, callout, _fit_font(callout, int(w * 0.78), int(w * 0.06)), accent, scale=cp)
         if title:
-            _title(im, t, title, w, h, y=0.1)
+            _title(im, t, title, w, h, y=0.1, fade_in_s=title_fade_in_s)
         return im
     return render(duration, out, frame, resolution_)
