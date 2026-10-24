@@ -1,0 +1,87 @@
+{
+  "style": "glass-ui",
+  "layout_slot": "phone-hero",
+  "gap": "md",
+  "bg_variant": "orb-glow",
+  "primitives": [
+    {
+      "type": "BrandHeader",
+      "props": {
+        "align": "center",
+        "logo_plate": "auto",
+        "tag_text": "__SCENE_TAG__"
+      },
+      "motion": {
+        "entrance": "fade-up",
+        "cue": ""
+      }
+    },
+    {
+      "type": "HeadlineBlock",
+      "props": {
+        "headline": "__SCENE_HEADLINE__",
+        "subhead": "__SCENE_SUB__",
+        "size": "lg",
+        "align": "center"
+      },
+      "motion": {
+        "entrance": "fade-up",
+        "cue": "__CUE_WORD_1__"
+      }
+    },
+    {
+      "type": "PhoneFrame",
+      "props": {
+        "header_label": "ACTIVE CALL GUARD",
+        "bezel": "preset",
+        "children": [
+          {
+            "type": "StatCallout",
+            "props": {
+              "value": "99.9%",
+              "label": "REAL-TIME CALL SCREENING",
+              "delta": "LIVE SHIELD",
+              "meter": "arc",
+              "progress": 0.92
+            },
+            "motion": {
+              "entrance": "draw",
+              "cue": "__CUE_WORD_1__"
+            }
+          },
+          {
+            "type": "FeatureCard",
+            "props": {
+              "title": "__CARD_TITLE__",
+              "body": "__CARD_BODY__",
+              "icon": "shield",
+              "tone": "surface",
+              "tilt": "none"
+            },
+            "motion": {
+              "entrance": "fade-up",
+              "cue": "__CUE_WORD_1__"
+            }
+          }
+        ]
+      },
+      "motion": {
+        "entrance": "slide-up",
+        "cue": "__CUE_WORD_1__"
+      }
+    },
+    {
+      "type": "CtaButton",
+      "props": {
+        "label": "__SCENE_CTA__",
+        "icon": "spark",
+        "tone": "accent",
+        "emphasis": "pulse"
+      },
+      "motion": {
+        "entrance": "pop",
+        "cue": "__CUE_WORD_2__"
+      }
+    }
+  ]
+}

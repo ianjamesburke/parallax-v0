@@ -13,6 +13,22 @@ palette:
 fonts:
   heading: "'Anton', 'Montserrat', 'DejaVu Sans', Impact, sans-serif"
   body: "'Space Grotesk', 'DejaVu Sans', Arial, sans-serif"
+tokens:
+  radius_card: "12px"
+  radius_phone: "36px"
+  radius_pill: "12px"
+  border_card: "6px solid var(--ink)"
+  border_phone: "8px solid var(--ink)"
+  shadow_card: "12px 12px 0px var(--ink)"
+  shadow_phone: "16px 16px 0px var(--ink)"
+  glass_blur: "0px"
+  surface_opacity: "1"
+  headline_weight: "900"
+  headline_case: "uppercase"
+  headline_letter_spacing: "0.01em"
+  bg_variant: "solid"
+  slot_gap: "22px"
+  force_dark_canvas: false
 motion:
   eases:
     - "back.out(2.2)"

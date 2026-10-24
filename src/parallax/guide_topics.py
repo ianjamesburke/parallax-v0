@@ -187,7 +187,7 @@ TOPICS: dict[str, dict] = {
         ],
         "brand_note": "For product shots use actual screenshots, never generated UI; complete the sequence with a branded CTA end card.",
         "local_primitives": {
-            "motion": "`parallax video motion --style <flat-explainer|neo-brutal|glass-ui|editorial-clinical|kinetic-type> [--brand brand.yaml] --text '<copy>' [--words words.json] --duration S --out c.mp4` (and `--from-html c.html` to re-time with zero LLM calls).",
+            "motion": "`parallax video motion --style <flat-explainer|neo-brutal|glass-ui|editorial-clinical|kinetic-type> [--brand brand.yaml] --text '<copy>' [--words words.json] --duration S --out c.mp4` (and `--from-spec c.spec.json` or `--from-html c.html` to re-render/re-time with zero LLM calls).",
             "app_screen": "`parallax video app-screen --screen shot.png --full-bleed --highlight x,y,w,h --callout TEXT [--callout-y 0.6] --duration S --out c.mp4`. --full-bleed for App Store screenshots that already include a device frame + headline (fills 9:16, push-in, glowing highlight, pop callout; pixels as-is). Without it the screenshot sits in a drawn phone frame. Crop marketing text off the bottom first if captions would sit on it.",
             "diagram": "`parallax video diagram --preset clock-window --label .. --sub ..` | `--preset meter --value 6.3 --max 10 --unit \" HRS\" --label ..` | `--preset curve --label .. --peak PEAK --dip DIP`. Brand colors via --colors hex,hex,...",
             "end_card": "`parallax video end-card --logo wordmark.png --icon icon.png --headline .. --cta .. --sub .. --duration 3`: icon pop, wordmark, headline slide-up, pulsing CTA pill.",

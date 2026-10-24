@@ -1148,12 +1148,13 @@ def stage_motion_graphics(plan: dict[str, Any], settings: Settings, state: Pipel
     from .html_motion import (
         LayoutViolationError,
         _save_rejected_html,
-        audit_and_repair_html,
+        audit_and_repair_scene,
         audit_layout,
-        generate_scene_html,
+        generate_scene_spec_and_html,
         inline_gsap_script,
         patch_html_timing,
         render_html_to_mp4,
+        save_scene_spec,
     )
 
     scenes = state.scenes
@@ -1246,22 +1247,25 @@ def stage_motion_graphics(plan: dict[str, Any], settings: Settings, state: Pipel
             style_name = s.motion_style or "flat-explainer"
             _log(settings, f"  [{s.index:02d}] generating HTML motion style={style_name} ({scene_dur:.2f}s)")
             scene_copy = s.vo_text or s.prompt or "Motion scene"
-            html_content = generate_scene_html(
+            spec, html_content = generate_scene_spec_and_html(
                 scene_text=scene_copy,
                 style=style_name,
                 brand=plan_brand,
                 duration_s=scene_dur,
                 words=scene_words,
             )
-            html_content, _audit = audit_and_repair_html(
+            spec, html_content, _audit = audit_and_repair_scene(
+                spec,
                 html_content,
                 duration_s=scene_dur,
                 style=style_name,
                 brand=plan_brand,
                 words=scene_words,
                 out_path=canonical_mp4,
+                scene_text=scene_copy,
             )
             canonical_html.write_text(html_content, encoding="utf-8")
+            save_scene_spec(spec, canonical_html)
 
         render_html_to_mp4(
             canonical_html,

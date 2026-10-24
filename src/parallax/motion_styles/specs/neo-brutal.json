@@ -1,0 +1,72 @@
+{
+  "style": "neo-brutal",
+  "layout_slot": "center-stack",
+  "gap": "md",
+  "bg_variant": "solid",
+  "primitives": [
+    {
+      "type": "BrandHeader",
+      "props": {
+        "align": "center",
+        "logo_plate": "auto"
+      },
+      "motion": {
+        "entrance": "stamp",
+        "cue": ""
+      }
+    },
+    {
+      "type": "PillBadge",
+      "props": {
+        "label": "__SCENE_TAG__",
+        "icon": "alert",
+        "tone": "accent2",
+        "pulse": true
+      },
+      "motion": {
+        "entrance": "stamp",
+        "cue": "__CUE_WORD_1__"
+      }
+    },
+    {
+      "type": "HeadlineBlock",
+      "props": {
+        "headline": "__SCENE_HEADLINE__",
+        "subhead": "__SCENE_SUB__",
+        "size": "hero",
+        "align": "center"
+      },
+      "motion": {
+        "entrance": "stamp",
+        "cue": "__CUE_WORD_1__"
+      }
+    },
+    {
+      "type": "FeatureCard",
+      "props": {
+        "title": "__CARD_TITLE__",
+        "body": "__CARD_BODY__",
+        "icon": "shield",
+        "tone": "accent",
+        "tilt": "left"
+      },
+      "motion": {
+        "entrance": "pop",
+        "cue": "__CUE_WORD_1__"
+      }
+    },
+    {
+      "type": "CtaButton",
+      "props": {
+        "label": "__SCENE_CTA__",
+        "icon": "check",
+        "tone": "surface",
+        "emphasis": "shake"
+      },
+      "motion": {
+        "entrance": "stamp",
+        "cue": "__CUE_WORD_2__"
+      }
+    }
+  ]
+}

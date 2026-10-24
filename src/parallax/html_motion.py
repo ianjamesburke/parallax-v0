@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -18,10 +19,30 @@ from typing import Any, Sequence
 
 import yaml
 
-from parallax import usage
+from parallax import runlog, usage
 from parallax.motion_graphics import BRAND_DEFAULT, CAPTION_TOP, SAFE_X
+from parallax.motion_primitives import (
+    BG_VARIANTS,
+    CHAR_LIMITS,
+    CHILD_CAPS,
+    EMPHASIS_VERBS,
+    ICON_REGISTRY,
+    LAYOUT_SLOTS,
+    MOTION_VERBS,
+    PRIMITIVE_TYPES,
+    SceneSpecValidationError,
+    build_default_scene_spec,
+    extract_embedded_scene_spec,
+    load_scene_spec,
+    parse_llm_scene_spec,
+    render_scene_spec_html,
+    save_scene_spec,
+    validate_scene_spec,
+)
 from parallax.openrouter import client as openrouter_client
 from parallax.shim import is_test_mode
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MOTION_MODEL = "google/gemini-2.5-flash"
 
@@ -192,6 +213,7 @@ def list_style_presets(styles_dir: Path | None = None) -> list[dict[str, Any]]:
         data.setdefault("design_rules", "")
         data.setdefault("palette", {})
         data.setdefault("fonts", {})
+        data.setdefault("tokens", {})
         motion_vocab = data.get("motion_vocabulary") or data.get("motion") or {}
         data["motion_vocabulary"] = motion_vocab
         data["motion"] = motion_vocab
@@ -303,21 +325,12 @@ def _default_logo_svg_data_uri(brand_name: str, accent_hex: str, ink_hex: str) -
     """Build a crisp self-contained SVG badge data URI when no external logo file is given."""
     label = (brand_name or "BRAND").strip()
     initials = "".join(part[0] for part in label.split()[:2] if part).upper() or "PX"
-    safe_label = (
-        label[:18]
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
     badge_fg = pick_contrasting_text("#FFFFFF", accent_hex)
     svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 72" width="280" height="72">'
-        f'<rect x="2" y="4" width="64" height="64" rx="16" fill="{accent_hex}"/>'
-        f'<text x="34" y="46" text-anchor="middle" font-family="Inter, system-ui, sans-serif" '
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 68 68" width="68" height="68">'
+        f'<rect x="2" y="2" width="64" height="64" rx="16" fill="{accent_hex}"/>'
+        f'<text x="34" y="44" text-anchor="middle" font-family="Inter, system-ui, sans-serif" '
         f'font-size="28" font-weight="800" fill="{badge_fg}">{initials}</text>'
-        f'<text x="82" y="46" font-family="Inter, system-ui, sans-serif" '
-        f'font-size="28" font-weight="800" fill="{ink_hex}">{safe_label}</text>'
         f"</svg>"
     )
     b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
@@ -441,6 +454,16 @@ def normalize_brand(
                 explicit_surface = True
 
     brand_ink = palette["ink"]
+    palette["brand_ink"] = brand_ink
+
+    # If the preset enforces a dark canvas (e.g. glass-ui) and the brand supplied a light bg,
+    # retain the preset's dark canvas and dark frosted surface while keeping brand_ink for BrandHeader's auto-plate.
+    preset_tokens = dict((preset or {}).get("tokens") or {})
+    if preset_tokens.get("force_dark_canvas") and _relative_luminance(palette["bg"]) > 0.35:
+        palette["bg"] = preset_palette.get("bg", "#0A1628")
+        palette["surface"] = preset_palette.get("surface", "#132347")
+        explicit_surface = True
+
     # Contrast-aware role mapping: ensure ink on bg has WCAG contrast >= 4.5
     palette["ink"] = pick_contrasting_text(brand_ink, palette["bg"], min_ratio=4.5)
 
@@ -568,8 +591,9 @@ def _build_timing_js(duration: float, fps: int = 30, words: list[dict[str, Any]]
         "    return fb;\n"
         "  }\n"
         "};\n"
-        "window.__fitText = function(el, maxWidth) {\n"
+        "window.__fitText = function(el, maxWidth, minFontSize) {\n"
         "  var maxW = (typeof maxWidth === 'number' && maxWidth > 0) ? maxWidth : 940;\n"
+        "  var minSize = (typeof minFontSize === 'number' && minFontSize > 0) ? minFontSize : 16;\n"
         "  if (!el) return;\n"
         "  var targets = [];\n"
         "  if (typeof el === 'string') {\n"
@@ -587,10 +611,12 @@ def _build_timing_js(duration: float, fps: int = 30, words: list[dict[str, Any]]
         "      limit = node.clientWidth;\n"
         "    }\n"
         "    var size = parseFloat(window.getComputedStyle(node).fontSize) || 64;\n"
-        "    var minSize = 16;\n"
         "    while (size > minSize && (node.scrollWidth > limit + 1 || node.getBoundingClientRect().width > maxW + 1)) {\n"
         "      size = Math.max(minSize, Math.floor(size * 0.92));\n"
         "      node.style.fontSize = size + 'px';\n"
+        "    }\n"
+        "    if (size <= minSize && (node.scrollWidth > limit + 1 || node.getBoundingClientRect().width > maxW + 1)) {\n"
+        "      node.style.whiteSpace = 'normal';\n"
         "    }\n"
         "  }\n"
         "};"
@@ -739,55 +765,22 @@ def _render_canned_html(
     duration_s: float,
     words: list[dict[str, Any]],
 ) -> str:
-    """Populate the style's canned HTML template without any network or LLM calls."""
-    canned_path = CANNED_STYLES_DIR / f"{style}.html"
-    if not canned_path.is_file():
-        canned_path = CANNED_STYLES_DIR / "flat-explainer.html"
-    html = canned_path.read_text(encoding="utf-8")
-
-    copy_parts = _split_scene_copy(scene_text)
-    if words:
-        first_word = re.sub(r"[^a-z0-9]+", "", str(words[0].get("word", "")).lower())
-        mid_word = re.sub(
-            r"[^a-z0-9]+",
-            "",
-            str(words[min(len(words) - 1, max(1, len(words) // 2))].get("word", "")).lower(),
-        )
-        if first_word:
-            copy_parts["cue1"] = first_word
-        if mid_word:
-            copy_parts["cue2"] = mid_word
-
-    palette = norm_brand["palette"]
-    fonts = norm_brand["fonts"]
-    replacements = {
-        "__PALETTE_BG__": palette["bg"],
-        "__PALETTE_SURFACE__": palette["surface"],
-        "__PALETTE_INK__": palette["ink"],
-        "__PALETTE_ACCENT__": palette["accent"],
-        "__PALETTE_ACCENT2__": palette["accent2"],
-        "__PALETTE_ON_BG__": palette.get("on_bg", palette["ink"]),
-        "__PALETTE_ON_SURFACE__": palette.get("on_surface", palette["ink"]),
-        "__PALETTE_ON_ACCENT__": palette.get("on_accent", "#FFFFFF"),
-        "__PALETTE_ON_ACCENT2__": palette.get("on_accent2", "#FFFFFF"),
-        "__PALETTE_ON_INK__": palette.get("on_ink", "#FFFFFF"),
-        "__FONT_HEADING__": fonts["heading"],
-        "__FONT_BODY__": fonts["body"],
-        "__BRAND_LOGO_DATA_URI__": norm_brand["logo_data_uri"],
-        "__BRAND_NAME__": _escape_html(norm_brand["name"]),
-        "__SCENE_TAG__": _escape_html(copy_parts["tag"]),
-        "__SCENE_HEADLINE__": _escape_html(copy_parts["headline"]),
-        "__SCENE_SUB__": _escape_html(copy_parts["sub"]),
-        "__SCENE_CTA__": _escape_html(copy_parts["cta"]),
-        "__CUE_WORD_1__": copy_parts["cue1"],
-        "__CUE_WORD_2__": copy_parts["cue2"],
-    }
-    for placeholder, val in replacements.items():
-        html = html.replace(placeholder, val)
-
-    html = inline_gsap_script(html)
-    html = patch_html_timing(html, duration=duration_s, fps=30, words=words)
-    return html
+    """Build a deterministic `SceneSpec` from `scene_text` and render it via the primitives engine ($0, zero network)."""
+    spec = build_default_scene_spec(
+        scene_text,
+        style,
+        brand=norm_brand,
+        duration_s=duration_s,
+        words=words,
+    )
+    return render_scene_spec_html(
+        spec,
+        style=style,
+        preset=preset,
+        norm_brand=norm_brand,
+        duration_s=duration_s,
+        words=words,
+    )
 
 
 def build_motion_system_prompt(
@@ -796,66 +789,94 @@ def build_motion_system_prompt(
     duration_s: float = 5.0,
     words: Any = None,
 ) -> str:
-    """Build the system prompt for HTML/SVG + GSAP scene generation."""
+    """Build the system prompt instructing `gemini-2.5-flash` to emit ONLY a JSON `SceneSpec`."""
     palette = norm_brand["palette"]
     fonts = norm_brand["fonts"]
     vocab = preset.get("motion_vocabulary") or {}
     do_list = "\n".join(f"  - DO: {item}" for item in (preset.get("do") or []))
     dont_list = "\n".join(f"  - DON'T: {item}" for item in (preset.get("dont") or []))
+    icons_str = ", ".join(ICON_REGISTRY.keys())
+    slots_str = ", ".join(LAYOUT_SLOTS)
+    bg_str = ", ".join(BG_VARIANTS)
+    verbs_str = ", ".join(MOTION_VERBS)
+    emphasis_str = ", ".join(EMPHASIS_VERBS)
 
-    return f"""You are an expert motion designer building a single self-contained HTML5/SVG + GSAP vertical video scene.
+    return f"""You are an expert motion designer composing a vertical video scene (`1080x1920`) using the Parallax Motion Primitives Layer.
+Instead of writing raw HTML/CSS/JS, you MUST return ONLY a valid JSON `SceneSpec` object. The Python host deterministically compiles your `SceneSpec` into self-contained `1080x1920` HTML5/SVG + GSAP with guaranteed horizontal centering (`x = 540`) and caption-safe bounds (`bottom <= 1320 < {CAPTION_TOP_PX:.0f}`).
 
-1. CANVAS, SAFE ZONES & TYPOGRAPHY FIT (MANDATORY):
-- Viewport / canvas size is strictly {CANVAS_WIDTH}x{CANVAS_HEIGHT} pixels (`width: 1080px; height: 1920px; overflow: hidden; position: relative;`).
-- Safe box for ALL on-screen text and cards: `left >= {SAFE_LEFT}px`, `right <= {SAFE_RIGHT}px`, `top >= {SAFE_TOP}px`.
-- Maximum text width is strictly `940px` (`max-width: 940px; box-sizing: border-box;`).
-- Caption-safe zone: keep ALL text, cards, and CTA buttons strictly above `y = {CAPTION_TOP_PX:.0f}px` (`CAPTION_TOP = {CAPTION_TOP}`). The bottom band `y = {CAPTION_TOP_PX:.0f}..1920` is reserved for burned-in captions; never place CTAs or labels there.
-- Text wrapping & sizing: apply `overflow-wrap: anywhere;` and `font-size: clamp(...)` on headlines and word blocks. Before creating your GSAP timeline, call the host-injected helper `window.__fitText(el, maxWidth)` (e.g. `window.__fitText('.headline', 940)` or `window.__fitText('.word', 900)`) on all headlines and display words so font-size automatically shrinks until `scrollWidth <= clientWidth` and width <= `maxWidth`.
-- Icons: AVOID emoji glyphs as icons (never use 🛡️, 📞, ⚠️, ✅, etc., which have unpredictable metrics and overlap text). Always use crisp inline `<svg>` with explicit `width` and `height`.
-- Final visibility: NEVER leave final-state text at `opacity: 0` and NEVER fade out scene copy at the end of the timeline. All primary scene copy must be visible (`opacity: 1`) across the 50%, 75%, and 100% marks of the scene. Do NOT set `opacity: 0` in CSS when using `tl.from(el, {{ opacity: 0 }})` (use `tl.fromTo(el, {{ opacity: 0, y: 20 }}, {{ opacity: 1, y: 0 }})` instead).
-- HARD RULE: On-screen text is NEVER cropped (`scrollWidth <= clientWidth`, `scrollHeight <= clientHeight`, never outside the safe box, never overlapping other text, and never intruding into the caption-safe zone).
+1. STAGE GEOMETRY & HOST RUNTIME GUARANTEES:
+- Viewport is `{CANVAS_WIDTH}x{CANVAS_HEIGHT}`. Root `<main id="safe-stage">` is locked at `left: {SAFE_LEFT}px`, `top: {SAFE_TOP}px`, `width: 940px` (`right = {SAFE_RIGHT}px`), `height: 1240px` (`bottom = 1320px < {CAPTION_TOP_PX:.0f}px` caption line, `CAPTION_TOP = {CAPTION_TOP}`).
+- Maximum text width is `940px`; the host automatically invokes `window.__fitText(el, maxWidth, minFontSize)` and `window.__TIMING.cue(word, fallback)` on your primitives.
+- The first headline or kinetic element is guaranteed visible (`opacity: 1`) by `t <= 0.6s`, and every element ends at `opacity: 1`.
+- Never supply raw `x`, `y`, `left`, `top`, or CSS strings — choose layout slots, primitives, props, and motion verbs.
 
 2. STYLE PRESET: {preset.get("name")} — {preset.get("description")}
 Design Rules:
 {preset.get("design_rules", "").strip()}
 Motion Vocabulary:
 - Eases: {", ".join(str(x) for x in (vocab.get("eases") or ["power3.out"]))}
-- Durations: {json.dumps(vocab.get("durations") or "0.45s")}
-- Entrances: {", ".join(str(x) for x in (vocab.get("entrance_types") or vocab.get("entrances") or ["fade-up"]))}
+- Durations: {json.dumps(vocab.get("durations") or "0.35s")}
 Style Guidelines:
 {do_list}
 {dont_list}
 
-3. BRAND PALETTE (CONTRAST-CHECKED), FONTS & LOGO:
-- Brand Name: {norm_brand["name"]}
-- Palette Roles (WCAG contrast >= 4.5 verified):
-  - bg (`--bg: {palette["bg"]}`), text on bg (`--on-bg: {palette.get("on_bg", palette["ink"])}`)
-  - surface (`--surface: {palette["surface"]}`), text on surface (`--on-surface: {palette.get("on_surface", palette["ink"])}`)
-  - ink (`--ink: {palette["ink"]}`), text on ink fill (`--on-ink: {palette.get("on_ink", "#FFFFFF")}`)
-  - accent (`--accent: {palette["accent"]}`), button/badge text on accent (`--on-accent: {palette.get("on_accent", "#FFFFFF")}`)
-  - accent2 (`--accent2: {palette["accent2"]}`), badge text on accent2 (`--on-accent2: {palette.get("on_accent2", "#FFFFFF")}`)
-- Font Stack:
-  - heading: {fonts["heading"]}
-  - body: {fonts["body"]}
-- Brand Logo Instruction: Include `<img id="brand-logo" src="__BRAND_LOGO_DATA_URI__" alt="{norm_brand["name"]}" />` inside the safe zone. Do NOT invent external image URLs or file paths; `__BRAND_LOGO_DATA_URI__` is replaced with an inline data URI at render time.
+3. BRAND PALETTE (WCAG >= 4.5 CONTRAST-VERIFIED) & FONTS:
+- Brand Name: {norm_brand["name"]} (Logo is automatically injected via `#brand-logo` in `BrandHeader` with `logo_plate: "auto"` contrast pill protection).
+- Palette Tokens:
+  - `--bg: {palette["bg"]}`, `--on-bg: {palette.get("on_bg", palette["ink"])}`
+  - `--surface: {palette["surface"]}`, `--on-surface: {palette.get("on_surface", palette["ink"])}`
+  - `--ink: {palette["ink"]}`, `--on-ink: {palette.get("on_ink", "#FFFFFF")}`
+  - `--accent: {palette["accent"]}`, `--on-accent: {palette.get("on_accent", "#FFFFFF")}`
+  - `--accent2: {palette["accent2"]}`, `--on-accent2: {palette.get("on_accent2", "#FFFFFF")}`
+- Fonts: heading `{fonts["heading"]}`, body `{fonts["body"]}`
+- Scene Duration: {duration_s:.2f} seconds.
 
-4. TIMING CONTRACT (GSAP):
-- Duration: {duration_s:.2f} seconds.
-- GSAP is injected inline by the host renderer before your script runs. Do NOT include any `<script src="https://...">` or CDN links.
-- Before your script runs, `window.__TIMING = {{ duration, fps, words: [{{word, start, end}}], cue(word, fallback) }}` and `window.__fitText(el, maxWidth)` are injected.
-- `window.__TIMING.cue('scam', 0.5)` returns the start timestamp (seconds) of the first matching voiceover word (case-insensitive, punctuation-stripped), or `fallback` if not found. Use `window.__TIMING.cue(...)` to key animation beats to voiceover words.
-- Never put punctuation (such as `.` or `,`) in HTML `id` attributes when targeting elements with GSAP selectors (use `id="word-0"`, `id="word-1"`, etc.).
-- Your script MUST call `window.__fitText(...)` on headlines, create a paused master timeline, keep final text at `opacity: 1`, and expose `window.__seek(t)`:
-  ```js
-  window.__fitText('.headline', 940);
-  const tl = gsap.timeline({{ paused: true }});
-  // build tweens on tl using tl.fromTo(..., {{ opacity: 0 }}, {{ opacity: 1 }}) ...
-  window.__seek = (t) => {{ tl.seek(t, false); }};
-  window.__seek(0);
-  ```
+4. SCENESPEC JSON SCHEMA:
+Return a single JSON object with these top-level keys:
+{{
+  "style": "{preset.get("name")}",
+  "layout_slot": one of [{slots_str}],
+  "gap": "sm" | "md" | "lg",
+  "bg_variant": one of [{bg_str}],
+  "primitives": [ ... 2 to {CHILD_CAPS["stage_primitives"][1]} primitive objects ... ]
+}}
 
-5. OUTPUT FORMAT:
-- Output ONLY a single complete `<!DOCTYPE html><html>...</html>` document with zero external network requests.
+5. ALLOWED PRIMITIVES, PROPS & CHARACTER/CHILD LIMITS:
+Each entry in `"primitives"` has `{{"type": "<PrimitiveName>", "props": {{...}}, "motion": {{"entrance": "<verb>", "emphasis": "<verb>", "cue": "<voiceover_word>"}}}}`:
+- `BrandHeader`:
+  - `props`: `{{"align": "center"|"split", "logo_plate": "auto"|"pill"|"none", "tag_text": "<=18 chars", "wordmark": "<=28 chars (optional)"}}`
+  - Always include `BrandHeader` as the first primitive with `"logo_plate": "auto"`.
+- `HeadlineBlock`:
+  - `props`: `{{"eyebrow": "<=22 chars (optional)", "headline": "<=44 chars", "subhead": "<=110 chars (optional)", "size": "md"|"lg"|"hero", "align": "center"}}`
+- `KineticWordStack`:
+  - `props`: `{{"rows": [ {{"text": "<=20 chars (each word <=12 chars, UPPERCASE)", "style": "plain"|"pill-accent"|"pill-accent2"|"outline", "cue": "<word>"}}, ... ]}}` (2 to 4 rows; rendered at oversized >=110px font-size, never below 96px).
+- `PhoneFrame`:
+  - `props`: `{{"header_label": "<=20 chars", "bezel": "preset", "children": [ ... 1 to 3 non-container primitives (FeatureCard, PillBadge, IconBadge, StatCallout, ChecklistStack, CtaButton) ... ]}}`
+- `LayoutSlot`:
+  - `props`: `{{"direction": "column"|"row"|"grid-2col", "align": "center"|"stretch", "children": [ ... 1 to 4 non-container primitives ... ]}}`
+- `FeatureCard`:
+  - `props`: `{{"title": "<=36 chars", "body": "<=90 chars (optional)", "icon": "<icon_name>", "tone": "surface"|"accent"|"accent2", "tilt": "none"|"left"|"right"}}`
+- `PillBadge`:
+  - `props`: `{{"label": "<=22 chars", "icon": "<icon_name>", "tone": "accent"|"accent2"|"ink"|"surface", "pulse": true|false}}`
+- `IconBadge`:
+  - `props`: `{{"name": "<icon_name>", "size": "sm"|"md"|"lg", "tone": "accent"|"accent2"|"ink"|"surface", "draw_stroke": true|false}}`
+- `StatCallout`:
+  - `props`: `{{"value": "<=10 chars", "label": "<=32 chars", "delta": "<=12 chars (optional)", "meter": "none"|"bar"|"arc", "progress": 0.05..1.0}}`
+- `ChecklistStack`:
+  - `props`: `{{"items": [ {{"label": "<=38 chars", "state": "check"|"alert"|"bullet"|"x", "cue": "<word>"}}, ... ]}}` (1 to 4 items)
+- `CtaButton`:
+  - `props`: `{{"label": "<=24 chars", "icon": "<icon_name> (optional)", "tone": "ink"|"accent"|"accent2", "emphasis": "pulse"|"shake"|"none"}}`
+
+6. ALLOWED INLINE SVG ICON NAMES (NEVER USE EMOJIS):
+- `icon` / `name` MUST be one of: `{icons_str}`
+
+7. ALLOWED MOTION VERBS & VOICEOVER CUES:
+- `motion.entrance`: one of `{verbs_str}`
+- `motion.emphasis`: one of `{emphasis_str}`
+- `motion.cue`: lowercase single word from the voiceover `words` list (matched via `window.__TIMING.cue(word, fallback)`).
+
+8. OUTPUT FORMAT:
+- Output ONLY the raw JSON `SceneSpec` object. Do not wrap in markdown prose or emit HTML.
 """
 
 
@@ -877,18 +898,20 @@ def _call_openrouter_chat(
     messages: list[dict[str, str]],
     prompt_preview: str,
     temperature: float = 0.3,
+    json_mode: bool = True,
 ) -> dict[str, Any]:
     """Call OpenRouter `/chat/completions` via `parallax.openrouter.client._post` and record usage."""
     api_model = openrouter_client._strip_or_prefix(model_id)
+    req_body: dict[str, Any] = {
+        "model": api_model,
+        "messages": messages,
+        "temperature": temperature,
+    }
+    if json_mode:
+        req_body["response_format"] = {"type": "json_object"}
+
     t0 = time.monotonic()
-    raw_resp = openrouter_client._post(
-        "/chat/completions",
-        {
-            "model": api_model,
-            "messages": messages,
-            "temperature": temperature,
-        },
-    )
+    raw_resp = openrouter_client._post("/chat/completions", req_body)
     duration_ms = int((time.monotonic() - t0) * 1000)
 
     if hasattr(raw_resp, "json"):
@@ -970,19 +993,37 @@ def _finalize_llm_html(
     return html
 
 
-def generate_scene_html(
+def _extract_choice_content(resp: dict[str, Any]) -> str:
+    choices = resp.get("choices") or []
+    if choices and isinstance(choices[0], dict):
+        msg = choices[0].get("message") or {}
+        return str(msg.get("content") or "")
+    return ""
+
+
+def _log_motion_warning(event_name: str, msg: str, **fields: Any) -> None:
+    """Safely record a motion warning via `runlog.event` without failing on closed stdio streams."""
+    try:
+        runlog.event(event_name, level="WARN", msg=msg, **fields)
+    except Exception:
+        pass
+
+
+def generate_scene_spec_and_html(
     scene_text: str,
     style: str,
     brand: dict[str, Any] | str | Path | None = None,
     duration_s: float = 5.0,
     words: Any = None,
     model: str | None = None,
-) -> str:
-    """Generate a self-contained 1080x1920 HTML/SVG + GSAP motion graphic scene.
+) -> tuple[dict[str, Any], str]:
+    """Generate a validated `SceneSpec` dict and its deterministically rendered 1080x1920 HTML.
 
-    In test mode (`PARALLAX_TEST_MODE=1`), makes zero network calls and populates
-    the style's canned HTML template at $0 cost.
-    In real mode, calls OpenRouter `/chat/completions` (default `google/gemini-2.5-flash`).
+    - Test mode (`PARALLAX_TEST_MODE=1`): builds a deterministic `SceneSpec` from `scene_text`
+      and renders it through `render_scene_spec_html` with zero network calls ($0).
+    - Real mode: calls OpenRouter `/chat/completions` (`response_format={"type": "json_object"}`).
+      On invalid JSON or schema errors, runs 1 LLM repair pass with the validation error message,
+      then falls back to the deterministic `SceneSpec` built from `scene_text` (logging a warning).
     """
     preset = load_style_preset(style)
     norm_brand = normalize_brand(brand, preset)
@@ -990,18 +1031,26 @@ def generate_scene_html(
     dur = max(0.2, float(duration_s or 5.0))
 
     if is_test_mode():
-        return _render_canned_html(
-            style=preset["name"],
-            preset=preset,
-            norm_brand=norm_brand,
-            scene_text=scene_text,
+        spec = build_default_scene_spec(
+            scene_text,
+            preset["name"],
+            brand=norm_brand,
             duration_s=dur,
             words=norm_words,
         )
+        html = render_scene_spec_html(
+            spec,
+            style=preset["name"],
+            preset=preset,
+            norm_brand=norm_brand,
+            duration_s=dur,
+            words=norm_words,
+        )
+        return spec, html
 
     resolved_model = resolve_motion_model(model)
-    system_prompt = build_motion_system_prompt(preset, norm_brand, dur)
-    user_prompt = json.dumps(
+    system_prompt = build_motion_system_prompt(preset, norm_brand, dur, words=norm_words)
+    user_payload = json.dumps(
         {
             "scene_text": scene_text,
             "style": preset["name"],
@@ -1022,33 +1071,114 @@ def generate_scene_html(
             {
                 "role": "user",
                 "content": (
-                    "Generate the complete self-contained 1080x1920 HTML document for this scene:\n"
-                    f"{user_prompt}"
+                    "Generate the JSON SceneSpec for this vertical video scene:\n"
+                    f"{user_payload}"
                 ),
             },
         ],
         prompt_preview=scene_text or preset["name"],
         temperature=0.3,
+        json_mode=True,
     )
+    content = _extract_choice_content(resp)
 
-    choices = resp.get("choices") or []
-    content = ""
-    if choices and isinstance(choices[0], dict):
-        msg = choices[0].get("message") or {}
-        content = str(msg.get("content") or "")
-    if not content.strip():
-        raise RuntimeError(f"OpenRouter returned empty HTML content for model {resolved_model!r}")
+    try:
+        spec = parse_llm_scene_spec(content, style=preset["name"])
+    except SceneSpecValidationError as first_err:
+        _log_motion_warning(
+            "motion.spec.repair_attempt",
+            f"Initial LLM SceneSpec validation failed for style={preset['name']}: {first_err}",
+            style=preset["name"],
+            error=str(first_err),
+        )
+        repair_msg = (
+            f"Your previous response failed SceneSpec JSON validation with error:\n{first_err}\n\n"
+            "Return ONLY a corrected, valid JSON SceneSpec object with top-level keys "
+            "`style`, `layout_slot`, `gap`, `bg_variant`, and `primitives` (containing `BrandHeader` "
+            "plus 1-4 content primitives from the allowed catalog).\n\n"
+            f"Previous invalid response:\n{content[:2000]}"
+        )
+        repair_resp = _call_openrouter_chat(
+            model_id=resolved_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": repair_msg},
+            ],
+            prompt_preview=f"spec-repair:{preset['name']}",
+            temperature=0.2,
+            json_mode=True,
+        )
+        repair_content = _extract_choice_content(repair_resp)
+        try:
+            spec = parse_llm_scene_spec(repair_content, style=preset["name"])
+        except SceneSpecValidationError as second_err:
+            _log_motion_warning(
+                "motion.spec.fallback",
+                f"LLM SceneSpec repair also failed for style={preset['name']} ({second_err}); falling back to deterministic SceneSpec.",
+                style=preset["name"],
+                error=str(second_err),
+            )
+            spec = build_default_scene_spec(
+                scene_text,
+                preset["name"],
+                brand=norm_brand,
+                duration_s=dur,
+                words=norm_words,
+            )
 
-    return _finalize_llm_html(
-        content,
+    html = render_scene_spec_html(
+        spec,
+        style=preset["name"],
+        preset=preset,
         norm_brand=norm_brand,
         duration_s=dur,
         words=norm_words,
     )
+    return spec, html
 
 
-def repair_scene_html_with_llm(
-    html: str,
+def generate_scene_spec(
+    scene_text: str,
+    style: str,
+    brand: dict[str, Any] | str | Path | None = None,
+    duration_s: float = 5.0,
+    words: Any = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Generate a validated `SceneSpec` JSON dict for `scene_text` and `style`."""
+    spec, _ = generate_scene_spec_and_html(
+        scene_text=scene_text,
+        style=style,
+        brand=brand,
+        duration_s=duration_s,
+        words=words,
+        model=model,
+    )
+    return spec
+
+
+def generate_scene_html(
+    scene_text: str,
+    style: str,
+    brand: dict[str, Any] | str | Path | None = None,
+    duration_s: float = 5.0,
+    words: Any = None,
+    model: str | None = None,
+) -> str:
+    """Generate a self-contained 1080x1920 HTML/SVG + GSAP motion graphic scene via `SceneSpec` primitives."""
+    _, html = generate_scene_spec_and_html(
+        scene_text=scene_text,
+        style=style,
+        brand=brand,
+        duration_s=duration_s,
+        words=words,
+        model=model,
+    )
+    return html
+
+
+def repair_scene_spec_with_llm(
+    spec: dict[str, Any],
     violations: list[dict[str, Any]],
     *,
     style: str,
@@ -1056,28 +1186,15 @@ def repair_scene_html_with_llm(
     duration_s: float = 5.0,
     words: Any = None,
     model: str | None = None,
-) -> str:
-    """Run a single LLM repair pass given the layout violation list from `audit_layout`."""
+    scene_text: str = "",
+) -> dict[str, Any]:
+    """Run a single LLM repair pass on `spec` given the layout violation list from `audit_layout`."""
     preset = load_style_preset(style)
     norm_brand = normalize_brand(brand, preset)
     norm_words = normalize_words(words)
     dur = max(0.2, float(duration_s or 5.0))
     resolved_model = resolve_motion_model(model)
-    system_prompt = build_motion_system_prompt(preset, norm_brand, dur)
-
-    # Replace long inline scripts/URIs with placeholders before sending to LLM to save tokens
-    compact_html = _TIMING_SCRIPT_RE.sub("<!-- timing injected by host -->", html)
-    compact_html = re.sub(
-        r'<script[^>]*id=["\']parallax-gsap["\'][^>]*>.*?</script>',
-        "<!-- gsap injected by host -->",
-        compact_html,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-    compact_html = re.sub(
-        r"data:image/[^\"'\s>]+",
-        "__BRAND_LOGO_DATA_URI__",
-        compact_html,
-    )
+    system_prompt = build_motion_system_prompt(preset, norm_brand, dur, words=norm_words)
 
     js_errors = [
         str(v.get("detail") or v.get("text") or "")
@@ -1092,16 +1209,15 @@ def repair_scene_html_with_llm(
         )
 
     repair_prompt = (
-        "The HTML scene below failed the layout safety audit with the following violations:\n"
+        "The rendered SceneSpec below failed the layout safety audit with the following violations:\n"
         f"{json.dumps(violations, indent=2)}\n\n"
         f"{js_error_section}"
-        "Fix ALL layout and runtime violations so that:\n"
-        f"1. Every visible text element stays strictly inside safe bounds: left >= {SAFE_LEFT}, right <= {SAFE_RIGHT}, top >= {SAFE_TOP}, bottom <= {CAPTION_TOP_PX:.0f} (max text width 940px).\n"
-        "2. No text element is clipped (`scrollWidth <= clientWidth` and `scrollHeight <= clientHeight`); use `overflow-wrap: anywhere` and call `window.__fitText(el, 940)` on headlines.\n"
-        "3. No two visible text elements overlap (replace any emoji icons with inline `<svg>`).\n"
-        "4. There are zero JavaScript exceptions or console errors, and the scene copy is visible (`opacity: 1`, never left at `opacity: 0` or faded out at the end) across 50%, 75%, and 100% of the timeline.\n"
-        "Return ONLY the complete corrected `<!DOCTYPE html><html>...</html>` document.\n\n"
-        f"Current HTML:\n{compact_html}"
+        "Repair the JSON SceneSpec so that:\n"
+        f"1. Every element stays strictly inside safe bounds: left >= {SAFE_LEFT}, right <= {SAFE_RIGHT}, top >= {SAFE_TOP}, bottom <= {CAPTION_TOP_PX:.0f} (max width 940px).\n"
+        "2. Shorten any long headlines/labels/rows or reduce the number of stacked primitives/children so nothing overflows or clips.\n"
+        "3. Ensure at least one primary content primitive (`HeadlineBlock`, `KineticWordStack`, `FeatureCard`, etc.) is present and visible across 50%, 75%, and 100% of the timeline.\n"
+        "Return ONLY the corrected JSON `SceneSpec` object.\n\n"
+        f"Current SceneSpec:\n{json.dumps(spec, indent=2, ensure_ascii=False)}"
     )
 
     resp = _call_openrouter_chat(
@@ -1112,18 +1228,68 @@ def repair_scene_html_with_llm(
         ],
         prompt_preview=f"repair:{preset['name']}",
         temperature=0.2,
+        json_mode=True,
     )
-
-    choices = resp.get("choices") or []
-    content = ""
-    if choices and isinstance(choices[0], dict):
-        msg = choices[0].get("message") or {}
-        content = str(msg.get("content") or "")
+    content = _extract_choice_content(resp)
     if not content.strip():
         raise RuntimeError(f"OpenRouter repair pass returned empty content for model {resolved_model!r}")
 
-    return _finalize_llm_html(
-        content,
+    try:
+        return parse_llm_scene_spec(content, style=preset["name"])
+    except SceneSpecValidationError as err:
+        _log_motion_warning(
+            "motion.spec.layout_repair_invalid",
+            f"LLM layout-repair SceneSpec invalid for style={preset['name']}: {err}",
+            style=preset["name"],
+            error=str(err),
+        )
+        raise
+
+
+def repair_scene_html_with_llm(
+    html: str,
+    violations: list[dict[str, Any]],
+    *,
+    style: str,
+    brand: dict[str, Any] | str | Path | None = None,
+    duration_s: float = 5.0,
+    words: Any = None,
+    model: str | None = None,
+    spec: dict[str, Any] | None = None,
+) -> str:
+    """Repair a scene using `SceneSpec` JSON repair and re-render via `render_scene_spec_html`."""
+    preset = load_style_preset(style)
+    norm_brand = normalize_brand(brand, preset)
+    norm_words = normalize_words(words)
+    dur = max(0.2, float(duration_s or 5.0))
+
+    current_spec = spec or extract_embedded_scene_spec(html)
+    if current_spec is None:
+        current_spec = build_default_scene_spec(
+            "",
+            preset["name"],
+            brand=norm_brand,
+            duration_s=dur,
+            words=norm_words,
+        )
+
+    try:
+        repaired_spec = repair_scene_spec_with_llm(
+            current_spec,
+            violations,
+            style=preset["name"],
+            brand=norm_brand,
+            duration_s=dur,
+            words=norm_words,
+            model=model,
+        )
+    except SceneSpecValidationError:
+        return html
+
+    return render_scene_spec_html(
+        repaired_spec,
+        style=preset["name"],
+        preset=preset,
         norm_brand=norm_brand,
         duration_s=dur,
         words=norm_words,
@@ -1666,6 +1832,80 @@ def _save_rejected_html(
     return target
 
 
+def audit_and_repair_scene(
+    spec: dict[str, Any],
+    html: str,
+    *,
+    duration_s: float = 5.0,
+    style: str = "flat-explainer",
+    brand: dict[str, Any] | str | Path | None = None,
+    words: Any = None,
+    model: str | None = None,
+    max_repairs: int | None = None,
+    out_path: str | Path | None = None,
+    rejected_html_path: str | Path | None = None,
+    scene_text: str = "",
+) -> tuple[dict[str, Any], str, AuditResult]:
+    """Run `audit_layout` on `html`; on violations in real mode, repair the `SceneSpec` via LLM,
+    re-render HTML, and re-audit up to `MAX_LAYOUT_REPAIRS` passes.
+    """
+    current_spec = spec
+    current_html = html
+    audit = audit_layout(current_html, duration_s=duration_s)
+    if audit.passed:
+        return current_spec, current_html, audit
+
+    if is_test_mode():
+        rejected = _save_rejected_html(
+            current_html,
+            out_path=out_path,
+            rejected_html_path=rejected_html_path,
+            style=style,
+        )
+        raise LayoutViolationError(audit.violations, rejected_html_path=rejected)
+
+    preset = load_style_preset(style)
+    norm_brand = normalize_brand(brand, preset)
+    norm_words = normalize_words(words)
+    dur = max(0.2, float(duration_s or 5.0))
+    repair_limit = resolve_max_layout_repairs(max_repairs)
+
+    for _attempt in range(repair_limit):
+        try:
+            current_spec = repair_scene_spec_with_llm(
+                current_spec,
+                audit.violations,
+                style=preset["name"],
+                brand=norm_brand,
+                duration_s=dur,
+                words=norm_words,
+                model=model,
+                scene_text=scene_text,
+            )
+            current_html = render_scene_spec_html(
+                current_spec,
+                style=preset["name"],
+                preset=preset,
+                norm_brand=norm_brand,
+                duration_s=dur,
+                words=norm_words,
+            )
+        except SceneSpecValidationError:
+            pass
+        audit = audit_layout(current_html, duration_s=duration_s)
+        audit.repaired = True
+        if audit.passed:
+            return current_spec, current_html, audit
+
+    rejected = _save_rejected_html(
+        current_html,
+        out_path=out_path,
+        rejected_html_path=rejected_html_path,
+        style=style,
+    )
+    raise LayoutViolationError(audit.violations, rejected_html_path=rejected)
+
+
 def audit_and_repair_html(
     html: str,
     *,
@@ -1677,9 +1917,10 @@ def audit_and_repair_html(
     max_repairs: int | None = None,
     out_path: str | Path | None = None,
     rejected_html_path: str | Path | None = None,
+    spec: dict[str, Any] | None = None,
 ) -> tuple[str, AuditResult]:
     """Run `audit_layout` on `html`; on violations in real mode, run up to `MAX_LAYOUT_REPAIRS`
-    (default 2, overridable via `PARALLAX_MOTION_MAX_REPAIRS`) LLM repair passes and re-audit.
+    (default 2, overridable via `PARALLAX_MOTION_MAX_REPAIRS`) LLM spec-repair passes and re-audit.
 
     On final failure, saves the last HTML next to the output as `<name>.rejected.html`
     and raises `LayoutViolationError` with that path in the error message.
@@ -1698,6 +1939,7 @@ def audit_and_repair_html(
         )
         raise LayoutViolationError(audit.violations, rejected_html_path=rejected)
 
+    current_spec = spec or extract_embedded_scene_spec(current_html)
     repair_limit = resolve_max_layout_repairs(max_repairs)
     for _attempt in range(repair_limit):
         current_html = repair_scene_html_with_llm(
@@ -1708,7 +1950,9 @@ def audit_and_repair_html(
             duration_s=duration_s,
             words=words,
             model=model,
+            spec=current_spec,
         )
+        current_spec = extract_embedded_scene_spec(current_html) or current_spec
         audit = audit_layout(current_html, duration_s=duration_s)
         audit.repaired = True
         if audit.passed:

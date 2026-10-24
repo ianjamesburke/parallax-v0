@@ -13,6 +13,22 @@ palette:
 fonts:
   heading: "Georgia, 'Instrument Serif', 'Times New Roman', serif"
   body: "'Inter', 'Montserrat', 'DejaVu Sans', Arial, sans-serif"
+tokens:
+  radius_card: "12px"
+  radius_phone: "20px"
+  radius_pill: "8px"
+  border_card: "1.5px solid rgba(24, 24, 27, 0.16)"
+  border_phone: "1.5px solid rgba(24, 24, 27, 0.22)"
+  shadow_card: "0 8px 24px rgba(24, 24, 27, 0.05)"
+  shadow_phone: "0 12px 36px rgba(24, 24, 27, 0.06)"
+  glass_blur: "0px"
+  surface_opacity: "1"
+  headline_weight: "700"
+  headline_case: "none"
+  headline_letter_spacing: "-0.01em"
+  bg_variant: "solid"
+  slot_gap: "20px"
+  force_dark_canvas: false
 motion:
   eases:
     - "power3.out"

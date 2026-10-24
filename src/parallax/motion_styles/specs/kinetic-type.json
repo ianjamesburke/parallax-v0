@@ -1,0 +1,64 @@
+{
+  "style": "kinetic-type",
+  "layout_slot": "kinetic-rows",
+  "gap": "md",
+  "bg_variant": "solid",
+  "primitives": [
+    {
+      "type": "BrandHeader",
+      "props": {
+        "align": "center",
+        "logo_plate": "auto",
+        "tag_text": "__SCENE_TAG__"
+      },
+      "motion": {
+        "entrance": "fade-up",
+        "cue": ""
+      }
+    },
+    {
+      "type": "KineticWordStack",
+      "props": {
+        "rows": [
+          {
+            "text": "__KINETIC_ROW_1__",
+            "style": "pill-accent",
+            "cue": "__CUE_ROW_1__"
+          },
+          {
+            "text": "__KINETIC_ROW_2__",
+            "style": "plain",
+            "cue": "__CUE_ROW_2__"
+          },
+          {
+            "text": "__KINETIC_ROW_3__",
+            "style": "pill-accent2",
+            "cue": "__CUE_ROW_3__"
+          },
+          {
+            "text": "__KINETIC_ROW_4__",
+            "style": "outline",
+            "cue": "__CUE_ROW_4__"
+          }
+        ]
+      },
+      "motion": {
+        "entrance": "pop",
+        "cue": "__CUE_WORD_1__"
+      }
+    },
+    {
+      "type": "CtaButton",
+      "props": {
+        "label": "__SCENE_CTA__",
+        "icon": "shield",
+        "tone": "ink",
+        "emphasis": "pulse"
+      },
+      "motion": {
+        "entrance": "pop",
+        "cue": "__CUE_WORD_2__"
+      }
+    }
+  ]
+}

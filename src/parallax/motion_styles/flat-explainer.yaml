@@ -14,6 +14,22 @@ palette:
 fonts:
   heading: "'Plus Jakarta Sans', 'Montserrat', 'DejaVu Sans', Arial, sans-serif"
   body: "'Inter', 'Montserrat', 'DejaVu Sans', Arial, sans-serif"
+tokens:
+  radius_card: "28px"
+  radius_phone: "48px"
+  radius_pill: "999px"
+  border_card: "2px solid rgba(10, 22, 40, 0.08)"
+  border_phone: "8px solid var(--ink)"
+  shadow_card: "0 16px 40px rgba(10, 22, 40, 0.12)"
+  shadow_phone: "0 24px 60px rgba(10, 22, 40, 0.15)"
+  glass_blur: "0px"
+  surface_opacity: "1"
+  headline_weight: "800"
+  headline_case: "none"
+  headline_letter_spacing: "-0.02em"
+  bg_variant: "radial"
+  slot_gap: "20px"
+  force_dark_canvas: false
 motion:
   eases:
     - "back.out(1.6)"

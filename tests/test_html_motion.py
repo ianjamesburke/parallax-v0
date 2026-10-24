@@ -444,9 +444,27 @@ def test_layout_guard_catches_js_errors_blank_frames_and_sample_failures(
             assert not real_audit.passed, f"{fname} should fail layout audit"
             assert any(v["type"] == expected_vtype for v in real_audit.violations)
 
-    # 1d. Repair prompt receives the JS error text
-    monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
-    valid_html = generate_scene_html("Fixed scene", "kinetic-type", duration_s=2.0)
+    # 1d. Repair prompt receives the JS error text and Current SceneSpec JSON
+    valid_spec_json = json.dumps(
+        {
+            "style": "kinetic-type",
+            "layout_slot": "kinetic-rows",
+            "gap": "md",
+            "bg_variant": "solid",
+            "primitives": [
+                {"type": "BrandHeader", "props": {"logo_plate": "auto"}},
+                {
+                    "type": "KineticWordStack",
+                    "props": {
+                        "rows": [
+                            {"text": "FIXED SCENE", "style": "pill-accent"},
+                            {"text": "PROTECTED", "style": "outline"},
+                        ]
+                    },
+                },
+            ],
+        }
+    )
     monkeypatch.setenv("PARALLAX_TEST_MODE", "0")
 
     repair_Bodies: list[dict[str, Any]] = []
@@ -455,7 +473,7 @@ def test_layout_guard_catches_js_errors_blank_frames_and_sample_failures(
         repair_Bodies.append(body)
         return {
             "id": "gen-mock-js-repair",
-            "choices": [{"message": {"content": valid_html}}],
+            "choices": [{"message": {"content": valid_spec_json}}],
             "usage": {"prompt_tokens": 1000, "completion_tokens": 1000, "cost": 0.0028},
         }
 
@@ -470,6 +488,7 @@ def test_layout_guard_catches_js_errors_blank_frames_and_sample_failures(
     user_prompt = repair_Bodies[0]["messages"][1]["content"]
     assert "JavaScript Errors Thrown During Execution" in user_prompt
     assert "word-answer." in user_prompt
+    assert "Current SceneSpec:" in user_prompt
 
 
 @requires_chrome
@@ -483,19 +502,28 @@ def test_repair_two_passes_rejected_html_fittext_and_overlap_rules(
     assert resolve_max_layout_repairs() == 3
     monkeypatch.delenv("PARALLAX_MOTION_MAX_REPAIRS", raising=False)
 
-    monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
-    valid_html = generate_scene_html("Clean repaired headline", "neo-brutal", duration_s=1.5)
     monkeypatch.setenv("PARALLAX_TEST_MODE", "0")
+    valid_spec_json = json.dumps(
+        {
+            "style": "neo-brutal",
+            "layout_slot": "center-stack",
+            "gap": "md",
+            "bg_variant": "solid",
+            "primitives": [
+                {"type": "BrandHeader", "props": {"logo_plate": "auto"}},
+                {"type": "HeadlineBlock", "props": {"headline": "Clean repaired headline", "size": "lg"}},
+                {"type": "CtaButton", "props": {"label": "Block It Now", "tone": "ink"}},
+            ],
+        }
+    )
 
     bad_html_1 = """<!DOCTYPE html><html><body style="margin:0;width:1080px;height:1920px;position:relative;">
       <div style="position:absolute;left:10px;top:1700px;font-size:42px;">First broken attempt</div>
     </body></html>"""
-    bad_html_2 = """<!DOCTYPE html><html><body style="margin:0;width:1080px;height:1920px;position:relative;">
-      <div style="position:absolute;left:200px;top:1600px;font-size:42px;">Second broken attempt in caption zone</div>
-    </body></html>"""
+    invalid_spec_attempt = '{"style": "neo-brutal", "primitives": [{"type": "UnknownBrokenWidget"}]}'
 
-    # 2a. Succeeds on the 2nd repair pass
-    seq = iter([bad_html_2, valid_html])
+    # 2a. Succeeds on the 2nd repair pass after 1st repair pass returns invalid spec
+    seq = iter([invalid_spec_attempt, valid_spec_json])
     call_count = 0
 
     def _mock_two_repairs(path: str, body: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
@@ -522,7 +550,7 @@ def test_repair_two_passes_rejected_html_fittext_and_overlap_rules(
     def _mock_always_bad(path: str, body: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         return {
             "id": "gen-repair-bad",
-            "choices": [{"message": {"content": bad_html_2}}],
+            "choices": [{"message": {"content": invalid_spec_attempt}}],
             "usage": {"prompt_tokens": 500, "completion_tokens": 500, "cost": 0.0014},
         }
 
@@ -539,7 +567,7 @@ def test_repair_two_passes_rejected_html_fittext_and_overlap_rules(
     assert expected_rejected.is_file()
     assert str(expected_rejected) in str(exc_info.value)
     assert exc_info.value.rejected_html_path == expected_rejected
-    assert "Second broken attempt" in expected_rejected.read_text(encoding="utf-8")
+    assert "First broken attempt" in expected_rejected.read_text(encoding="utf-8")
 
     # 2c. window.__fitText shrinks oversized headline & ancestor/descendant + opacity<0.05 overlap ignored
     fit_and_overlap_html = inline_gsap_script(

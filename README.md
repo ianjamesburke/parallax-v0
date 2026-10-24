@@ -106,15 +106,16 @@ Other commands: `parallax usage`, `parallax credits`, `parallax log <run|latest|
 
 ### Motion graphics styles
 
-`scene_type: motion_graphic` supports an HTML/SVG + GSAP motion-graphics renderer with five built-in style presets (`flat-explainer`, `neo-brutal`, `glass-ui`, `editorial-clinical`, `kinetic-type`) alongside the zero-spend PIL primitives (`app-screen`, `end-card`, `diagram`, `text-overlay`):
+`scene_type: motion_graphic` supports a schema-constrained HTML/SVG + GSAP motion-graphics renderer (`src/parallax/motion_primitives.py`) with five built-in style presets (`flat-explainer`, `neo-brutal`, `glass-ui`, `editorial-clinical`, `kinetic-type`) alongside the zero-spend PIL primitives (`app-screen`, `end-card`, `diagram`, `text-overlay`). The LLM (`google/gemini-2.5-flash`) emits a compact JSON `SceneSpec` (`<out>.spec.json`) which Python deterministically compiles into centered, caption-safe `1080x1920` HTML/SVG + GSAP (`#safe-stage` `940x1240` inside `x=70..1010, y=80..1320 < 1344`):
 
 ```sh
 parallax video motion --list-styles
 parallax video motion --style flat-explainer --brand brand.yaml --text "Stop phone scams before they reach you" --words words.json --duration 4 --out scene.mp4
+parallax video motion --from-spec scene.spec.json --brand brand.yaml --words updated_words.json --duration 4.5 --out scene.mp4
 parallax video motion --from-html scene.html --words updated_words.json --duration 4.5 --out scene.mp4
 ```
 
-In `brief.yaml` or `plan.yaml`, set `scene_type: motion_graphic` and `motion_style: flat-explainer` (with top-level `brand:`); `parallax produce` generates (or re-times `html_path`), audits layout safety, renders the MP4 clip after voiceover alignment, and writes `html_path` and `clip_path` back into `plan.yaml`.
+In `brief.yaml` or `plan.yaml`, set `scene_type: motion_graphic` and `motion_style: flat-explainer` (with top-level `brand:`); `parallax produce` generates the `SceneSpec` + HTML (or re-times `html_path`), audits layout safety, renders the MP4 clip after voiceover alignment, and writes `html_path` and `clip_path` back into `plan.yaml`.
 
 ## Storyboard package
 
