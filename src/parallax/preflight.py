@@ -89,7 +89,8 @@ def compute_preflight(
         idx = s["index"]
 
         if s.get("scene_type") == "motion_graphic":
-            if not stills_only:
+            has_motion_source = bool(s.get("motion_style") or s.get("html_path"))
+            if not stills_only and not has_motion_source:
                 if not s.get("clip_path"):
                     raise ValueError(f"scene {idx}: motion_graphic requires a locally rendered clip_path")
                 if folder is not None:
@@ -97,6 +98,11 @@ def compute_preflight(
                     clip = clip if clip.is_absolute() else Path(folder) / clip
                     if not clip.is_file():
                         raise ValueError(f"scene {idx}: motion_graphic clip_path is missing: {clip}. Render the local graphic before producing.")
+            elif not stills_only and s.get("clip_path") and folder is not None:
+                clip = Path(s["clip_path"]).expanduser()
+                clip = clip if clip.is_absolute() else Path(folder) / clip
+                if not clip.is_file() and not has_motion_source:
+                    raise ValueError(f"scene {idx}: motion_graphic clip_path is missing: {clip}. Render the local graphic before producing.")
             scenes.append(PreflightScene(
                 index=idx, kind="clip", model_alias="local",
                 duration_s=float(s.get("duration_s") or 0), locked=True, cost_usd=0.0,

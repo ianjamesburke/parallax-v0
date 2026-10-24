@@ -202,8 +202,65 @@ def render(duration: float, out: str, draw_frame: Callable, resolution_: str = "
     return str(target)
 
 
-def _colors(colors: Optional[str], accent: Optional[str] = None):
-    pal = dict(BRAND_DEFAULT)
+def merge_brand_palette(brand: Optional[dict] = None, base: Optional[dict] = None) -> dict:
+    """Merge a brand dict (or palette dict) over `BRAND_DEFAULT`."""
+    pal = dict(base or BRAND_DEFAULT)
+    if "sunrise" in pal and isinstance(pal["sunrise"], list):
+        pal["sunrise"] = list(pal["sunrise"])
+    if not brand or not isinstance(brand, dict):
+        return pal
+
+    raw_palette: dict = {}
+    if isinstance(brand.get("palette"), dict):
+        raw_palette.update(brand["palette"])
+    for k, v in brand.items():
+        if k not in ("palette", "fonts", "name", "logo") and v is not None:
+            raw_palette.setdefault(k, v)
+
+    alias_map = {
+        "background": "bg",
+        "bg": "bg",
+        "surface": "bg2",
+        "bg2": "bg2",
+        "primary": "accent",
+        "accent": "accent",
+        "secondary": "good",
+        "accent2": "good",
+        "good": "good",
+        "ink": "text",
+        "text": "text",
+        "muted": "muted",
+    }
+    for src_key, dst_key in alias_map.items():
+        val = raw_palette.get(src_key)
+        if isinstance(val, str) and val.strip():
+            pal[dst_key] = val.strip()
+
+    # Keep raw keys accessible too
+    for k, v in raw_palette.items():
+        if isinstance(v, str) and v.strip():
+            pal[k] = v.strip()
+        elif k == "sunrise" and isinstance(v, list) and v:
+            pal["sunrise"] = list(v)
+
+    if "sunrise" not in raw_palette and isinstance(pal.get("sunrise"), list) and pal["sunrise"]:
+        pal["sunrise"][0] = pal["accent"]
+        if isinstance(raw_palette.get("secondary"), str) and len(pal["sunrise"]) > 1:
+            pal["sunrise"][1] = raw_palette["secondary"].strip()
+
+    from .html_motion import pick_contrasting_text
+
+    if "bg" in pal and "text" in pal:
+        pal["text"] = pick_contrasting_text(pal["text"], pal["bg"])
+        pal["ink"] = pal["text"]
+    if "accent" in pal:
+        pal["on_accent"] = pick_contrasting_text(pal.get("text", "#FFFFFF"), pal["accent"])
+
+    return pal
+
+
+def _colors(colors: Optional[str] = None, accent: Optional[str] = None, brand: Optional[dict] = None):
+    pal = merge_brand_palette(brand)
     if colors:
         cs = [c.strip() for c in colors.split(",") if c.strip()]
         if cs:
@@ -217,10 +274,12 @@ def _colors(colors: Optional[str], accent: Optional[str] = None):
 
 # ---------- primitives ----------
 def clock_window(duration, out, *, label="YOUR MASTER CLOCK", sub=None, colors=None, bg="#14102A",
-                 window=(22.0, 1.0), resolution_="1080x1920"):
+                 window=(22.0, 1.0), brand: Optional[dict] = None, resolution_="1080x1920"):
     """24-hour clock face; a glowing 'window' arc lights up and the hand sweeps toward/past it."""
     from PIL import Image, ImageDraw
-    pal = _colors(colors)
+    pal = _colors(colors, brand=brand)
+    if brand and bg == "#14102A":
+        bg = pal["bg"]
     ws, we = window
 
     def hour_to_deg(hr):  # 0h at top, clockwise; PIL angles: 0 = 3 o'clock
@@ -279,10 +338,12 @@ def clock_window(duration, out, *, label="YOUR MASTER CLOCK", sub=None, colors=N
 
 
 def meter(duration, out, *, value=63.0, label="SLEEP DEBT", unit="", display=None, max_value=100.0, colors=None, bg="#14102A",
-          resolution_="1080x1920"):
+          brand: Optional[dict] = None, resolution_="1080x1920"):
     """Semicircle gauge; needle eases (with overshoot) to value% and a big number counts up."""
     from PIL import Image, ImageDraw
-    pal = _colors(colors)
+    pal = _colors(colors, brand=brand)
+    if brand and bg == "#14102A":
+        bg = pal["bg"]
     stops = [pal.get("good", "#01EDB8"), "#FFD600", "#FD8206", "#FF3963"]
 
     def frame(t, sec, w, h):
@@ -321,10 +382,12 @@ def _energy(x: float) -> float:
 
 
 def curve(duration, out, *, label="YOUR ENERGY TODAY", peak="PEAK", dip="DIP", axis=("7A", "12P", "3P", "9P"),
-          colors=None, bg="#14102A", resolution_="1080x1920"):
+          colors=None, bg="#14102A", brand: Optional[dict] = None, resolution_="1080x1920"):
     """Energy curve draws left-to-right with a sunrise gradient; PEAK/DIP pills pop as the pen passes."""
     from PIL import Image, ImageDraw
-    pal = _colors(colors)
+    pal = _colors(colors, brand=brand)
+    if brand and bg == "#14102A":
+        bg = pal["bg"]
     N = 160
 
     def frame(t, sec, w, h):
@@ -368,10 +431,16 @@ def curve(duration, out, *, label="YOUR ENERGY TODAY", peak="PEAK", dip="DIP", a
 
 
 def end_card(logo, duration, out, *, icon=None, headline="Become a morning person", cta="Try RISE free",
-             sub="Download on the App Store", bg="#14102A", accent="#721CFF", colors=None, resolution_="1080x1920"):
+             sub="Download on the App Store", bg="#14102A", accent="#721CFF", colors=None,
+             brand: Optional[dict] = None, resolution_="1080x1920"):
     """CTA end card: icon pops, wordmark fades up, headline slides up, CTA pill pops then pulses."""
     from PIL import Image, ImageDraw
-    pal = _colors(colors, accent)
+    effective_accent = None if (brand and accent == "#721CFF") else accent
+    pal = _colors(colors, effective_accent, brand=brand)
+    if brand and bg == "#14102A":
+        bg = pal["bg"]
+    if not logo and brand and isinstance(brand.get("logo"), str) and Path(brand["logo"]).is_file():
+        logo = brand["logo"]
     mark = Image.open(logo).convert("RGBA")
     ic = Image.open(icon).convert("RGBA") if icon else None
 
@@ -421,7 +490,7 @@ def end_card(logo, duration, out, *, icon=None, headline="Become a morning perso
 
 def app_screen(screen, duration, out, *, bg="#272137", bg_image=None, callout=None, highlight=None,
                zoom_to_highlight=False, accent="#721CFF", title=None, title_fade_in_s=0.0, full_bleed=False, callout_y=None,
-               resolution_="1080x1920"):
+               brand: Optional[dict] = None, resolution_="1080x1920"):
     """Real app screenshot (pixels used as-is) with push-in, animated highlight and kinetic callout.
 
     full_bleed: the screenshot fills the frame (use for App Store screenshots that already include a
@@ -430,7 +499,11 @@ def app_screen(screen, duration, out, *, bg="#272137", bg_image=None, callout=No
     """
     from PIL import Image, ImageDraw
     src = Image.open(screen).convert("RGB")
-    pal = _colors(None, accent)
+    effective_accent = None if (brand and accent == "#721CFF") else accent
+    pal = _colors(None, effective_accent, brand=brand)
+    accent = pal["accent"]
+    if brand and bg == "#272137":
+        bg = pal["bg"]
 
     def frame(t, sec, w, h):
         hz = ease_in_out(seg(t, 0.0, 1.0))

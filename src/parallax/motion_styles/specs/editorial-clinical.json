@@ -1,0 +1,60 @@
+{
+  "style": "editorial-clinical",
+  "layout_slot": "editorial-grid",
+  "gap": "md",
+  "bg_variant": "solid",
+  "primitives": [
+    {
+      "type": "BrandHeader",
+      "props": {
+        "align": "center",
+        "logo_plate": "auto"
+      },
+      "motion": {
+        "entrance": "fade-up",
+        "cue": ""
+      }
+    },
+    {
+      "type": "HeadlineBlock",
+      "props": {
+        "eyebrow": "SECURITY REPORT",
+        "headline": "__SCENE_HEADLINE__",
+        "subhead": "__SCENE_SUB__",
+        "size": "lg",
+        "align": "center"
+      },
+      "motion": {
+        "entrance": "wipe",
+        "cue": "__CUE_WORD_1__"
+      }
+    },
+    {
+      "type": "StatCallout",
+      "props": {
+        "value": "0.2s",
+        "label": "PRE-RING THREAT ANALYSIS",
+        "delta": "VERIFIED",
+        "meter": "bar",
+        "progress": 0.94
+      },
+      "motion": {
+        "entrance": "fade-up",
+        "cue": "__CUE_WORD_1__"
+      }
+    },
+    {
+      "type": "CtaButton",
+      "props": {
+        "label": "__SCENE_CTA__",
+        "icon": "check",
+        "tone": "accent",
+        "emphasis": "none"
+      },
+      "motion": {
+        "entrance": "fade-up",
+        "cue": "__CUE_WORD_2__"
+      }
+    }
+  ]
+}

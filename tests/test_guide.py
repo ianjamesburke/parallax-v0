@@ -210,11 +210,20 @@ def test_motion_graphic_placeholder_command_in_the_guide_renders_a_usable_clip(t
     assert (tmp_path / "graphics" / "g" / "final.mp4").stat().st_size > 0
 
 
-def test_motion_graphic_guide_instructs_using_remotion_skill(capsys):
+def test_motion_graphic_guide_instructs_using_motion_styles_and_pil_templates(capsys):
     topic = _topic(capsys, "motion_graphic")
     renderer = topic["renderer"]
     workflow = " ".join(topic["workflow"])
     for text in (renderer, workflow):
-        assert "remotion-best-practices" in text
-        assert "create-remotion-geist" in text
-        assert "supplied references" in text
+        assert "parallax video motion --style" in text
+        assert "flat-explainer" in text
+        assert "neo-brutal" in text
+        assert "glass-ui" in text
+        assert "editorial-clinical" in text
+        assert "kinetic-type" in text
+        assert "app-screen" in text
+        assert "end-card" in text
+        assert "diagram" in text
+        assert "text-overlay" in text
+        assert "Remotion" not in text
+        assert "remotion" not in text

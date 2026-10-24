@@ -578,7 +578,7 @@ def test_missing_motion_graphic_clip_is_an_advisory_with_a_plain_remedy(tmp_path
     assert advisory["scene"] == 0 and "clips/collage.mp4" in advisory["message"]
     how = advisory["remedies"][0]["how"]
     assert "does not author" in how and "enforces no clip contract" in how and "not validated" in how
-    assert "remotion-best-practices" in how and "create-remotion-geist" in how
+    assert "parallax video motion --style" in how and "flat-explainer" in how and "app-screen" in how
     (tmp_path / "clips").mkdir()
     (tmp_path / "clips/collage.mp4").write_bytes(b"x")
     assert not [a for a in _storyboard(tmp_path, brief, capsys)["advisories"] if a["kind"] == "motion_graphic_clip_missing"]

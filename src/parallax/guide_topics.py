@@ -21,11 +21,6 @@ TOPICS: dict[str, dict] = {
         "commands": ["parallax video app-screen --screen brand/screen01.jpg --title 'Track the sleep you owe' --duration 4 --out app.mp4", "parallax video end-card --logo brand/logo-white.png --headline 'Become a morning person' --cta 'Try RISE free' --duration 3 --out end.mp4"],
         "next": "assemble",
     },
-    "motion_graphic": {
-        "summary": "Zero-spend, safe-area-aware local motion graphics. Use real product screens and brand colors.",
-        "commands": ["parallax video app-screen --screen shot.jpg --callout '6.3 HRS SLEEP DEBT' --highlight .1,.2,.5,.2 --duration 4 --out app.mp4", "parallax video diagram --preset clock-window --duration 3 --out clock.mp4", "parallax video end-card --logo logo.png --duration 3 --out end.mp4", "parallax video text-overlay --bg-color '#14102A' --text 'SLEEP DEBT' --duration 2 --out type.mp4"],
-        "brand_note": "For product shots use actual screenshots, never generated UI; complete the sequence with a branded CTA end card.", "next":"assemble",
-    },
     "mock": {"summary":"Iterate structure, timing, and captions in PARALLAX_TEST_MODE=1, then rerun the same commands for real.", "next":"produce_loop"},
     "voiceover": {"summary":"Seed Audio requires a natural-language voice_prompt. Social default: A fast documentary narrator revealing a secret: fast-paced social-media-ad delivery, rapid with minimal pauses between lines, highly expressive animated storyteller building intrigue, deep, low, warm, slightly gravelly male voice, punchy emphasis on key words.", "next":"assemble"},
     "single_shot": {
@@ -179,8 +174,20 @@ TOPICS: dict[str, dict] = {
         "next": "produce",
     },
     "motion_graphic": {
-        "summary": "scene_type: motion_graphic is a locally rendered clip. Parallax never AI-generates it; render it with the zero-spend `parallax video` primitives below (or your own tool) and set clip_path.",
+        "summary": "scene_type: motion_graphic renders a styled HTML/SVG + GSAP clip (`parallax video motion --style ...` or `motion_style` on the scene) or a zero-spend local PIL template (`app-screen`, `end-card`, `diagram`, `text-overlay`) into `clip_path`.",
+        "styles": ["flat-explainer", "neo-brutal", "glass-ui", "editorial-clinical", "kinetic-type"],
+        "commands": [
+            "parallax video motion --list-styles",
+            "parallax video motion --style flat-explainer --brand brand.yaml --text 'Stop phone scams before they reach you' --duration 4 --out scene.mp4",
+            "parallax video motion --from-html scene.html --words words.json --duration 4 --out scene.mp4",
+            "parallax video app-screen --screen shot.jpg --callout '6.3 HRS SLEEP DEBT' --highlight .1,.2,.5,.2 --duration 4 --out app.mp4",
+            "parallax video diagram --preset clock-window --duration 3 --out clock.mp4",
+            "parallax video end-card --logo logo.png --duration 3 --out end.mp4",
+            "parallax video text-overlay --bg-color '#14102A' --text 'SLEEP DEBT' --duration 2 --out type.mp4",
+        ],
+        "brand_note": "For product shots use actual screenshots, never generated UI; complete the sequence with a branded CTA end card.",
         "local_primitives": {
+            "motion": "`parallax video motion --style <flat-explainer|neo-brutal|glass-ui|editorial-clinical|kinetic-type> [--brand brand.yaml] --text '<copy>' [--words words.json] --duration S --out c.mp4` (and `--from-spec c.spec.json` or `--from-html c.html` to re-render/re-time with zero LLM calls).",
             "app_screen": "`parallax video app-screen --screen shot.png --full-bleed --highlight x,y,w,h --callout TEXT [--callout-y 0.6] --duration S --out c.mp4`. Titles and any opening text are fully visible on frame 0 by default; `--title-fade-in S` is an explicit override. --full-bleed for App Store screenshots that already include a device frame + headline (fills 9:16, push-in, glowing highlight, pop callout; pixels as-is). Without it the screenshot sits in a drawn phone frame. Crop marketing text off the bottom first if captions would sit on it.",
             "diagram": "`parallax video diagram --preset clock-window --label .. --sub ..` | `--preset meter --value 6.3 --max 10 --unit \" HRS\" --label ..` | `--preset curve --label .. --peak PEAK --dip DIP`. Brand colors via --colors hex,hex,...",
             "end_card": "`parallax video end-card --logo wordmark.png --icon icon.png --headline .. --cta .. --sub .. --duration 3`: icon pop, wordmark, headline slide-up, pulsing CTA pill.",
@@ -188,14 +195,15 @@ TOPICS: dict[str, dict] = {
             "layout": "Graphics stay above y=0.70 of the frame, so captions at `--caption-y 0.78` never collide. For 1080x1920 social ads use `--caption-style clean --caption-size 78 --words-per-chunk 3` (55 px single words read small).",
         },
         "contract": {
-            "brief_scene": "scene_type: motion_graphic plus clip_path (a rendered MP4 under the project folder). Optional still_path for the poster. `prompt` and `motion_prompt` describe the graphic for review.",
-            "storyboard": "A scene with no existing clip file is storyboarded with advisory `motion_graphic_clip_missing`, and `produce` stays blocked (`blocked_by`) until the clip exists.",
-            "plan_and_produce": "`parallax plan` (without `--stills-only`) and full `plan.yaml` loading reject a motion_graphic scene without clip_path; `produce` fails fast if the clip file is missing. `--stills-only` allows planning and generating non-graphic stills before motion_graphic clips exist. It never falls through to paid image or video generation.",
+            "brief_scene": "scene_type: motion_graphic plus clip_path (a rendered MP4 under the project folder) or motion_style / html_path (rendered automatically after VO alignment). Optional still_path for the poster. `prompt` and `motion_prompt` describe the graphic for review.",
+            "storyboard": "A scene with no existing clip file is storyboarded with advisory `motion_graphic_clip_missing`, and `produce` stays blocked (`blocked_by`) until the clip exists (unless `motion_style` or `html_path` is set).",
+            "plan_and_produce": "`parallax plan` (without `--stills-only`) and full `plan.yaml` loading require either `clip_path` or `motion_style` / `html_path` on a motion_graphic scene; `produce` renders `motion_style` scenes after alignment and writes `html_path` + `clip_path` back into `plan.yaml`. `--stills-only` allows planning and generating non-graphic stills before motion_graphic clips exist.",
             "reference_gate": "motion_graphic scenes are excluded from the editorial reference gate.",
             "animate": "scene_type implies `animate`; setting it inconsistently (a motion_graphic with animate: true) is a validation error.",
         },
         "example_scene": {
             "index": 3, "shot_type": "screen", "scene_type": "motion_graphic",
+            "motion_style": "flat-explainer",
             "vo_text": "On day 14, I finally felt like I had control.",
             "prompt": "The approved illustrated timeline and day-14 milestone.",
             "motion_prompt": "The marker reaches day 14 on the spoken cue.",
@@ -215,11 +223,11 @@ TOPICS: dict[str, dict] = {
         ],
         "workflow": [
             "Before rendering, fix the narration, exact on-screen text, visual hierarchy, aspect, resolution, and frame rate.",
-            "When generating or authoring `scene_type: motion_graphic` layout posters (`still_path`) or animated clips (`clip_path`), use the Remotion skill (`remotion-best-practices` / `create-remotion-geist`) if available in the agent environment, adapting the visual style to the project's supplied references rather than a default template theme.",
+            "When generating or authoring `scene_type: motion_graphic` layout posters (`still_path`) or animated clips (`clip_path`), use `parallax video motion --style <style>` (styles: `flat-explainer`, `neo-brutal`, `glass-ui`, `editorial-clinical`, `kinetic-type`) or the existing PIL templates (`parallax video app-screen`, `parallax video end-card`, `parallax video diagram`, `parallax video text-overlay`), adapting the visual style to the project's supplied references and brand palette.",
             "Review a layout poster first. A silent timing sketch may use estimated duration; label it a preview.",
             "After narration approval, render with measured scene boundaries (`parallax storyboard --timing <folder>/parallax/output/vN/manifest.yaml`, which carries index, start_s, end_s per scene) and scene-relative cue times; keep estimated durations out of duration_s locks.",
-            "Set clip_path in the brief, run `parallax storyboard` again, then plan and validate.",
-            "If narration or scene boundaries change, re-render cue-driven graphics and keep the approved audio unchanged for a visual timing revision.",
+            "Set clip_path (or motion_style) in the brief, run `parallax storyboard` again, then plan and validate.",
+            "If narration or scene boundaries change, re-render cue-driven graphics with `parallax video motion --from-html` and keep the approved audio unchanged for a visual timing revision.",
         ],
         "design_rules": [
             "Use a motion graphic for an exact diagram, timeline, interface schematic, comparison, or typography beat; not as a fallback for every line of narration (advisories motion_graphic_share above 40% of scenes, motion_graphic_run for 3+ consecutive).",
@@ -229,7 +237,7 @@ TOPICS: dict[str, dict] = {
             "Use bounded text layout and inspect rendered frames; fix the template, not one overflowing card.",
             "Do not independently infer a second timing map: reuse the assembler's scene boundaries and word cues.",
         ],
-        "renderer": "Use the Remotion skill (`remotion-best-practices` / `create-remotion-geist`) if available in the agent environment when generating or authoring `scene_type: motion_graphic` layout posters (`still_path`) or animated clips (`clip_path`), adapting the visual style to the project's supplied references rather than a default template theme. Any local renderer that satisfies the output contract works; renderer choice does not dictate aesthetic. If a repeated operation needs engine access, report the missing CLI operation instead of adding a project-specific helper.",
+        "renderer": "Use `parallax video motion --style <style>` (styles: `flat-explainer`, `neo-brutal`, `glass-ui`, `editorial-clinical`, `kinetic-type`) or the existing PIL templates (`parallax video app-screen`, `parallax video end-card`, `parallax video diagram`, `parallax video text-overlay`) when generating or authoring `scene_type: motion_graphic` layout posters (`still_path`) or animated clips (`clip_path`), adapting the visual style to the project's supplied references and brand palette. Any local renderer that satisfies the output contract works; renderer choice does not dictate aesthetic. If a repeated operation needs engine access, report the missing CLI operation instead of adding a project-specific helper.",
         "next": "voiceover_broll",
     },
     "voiceover_broll": {

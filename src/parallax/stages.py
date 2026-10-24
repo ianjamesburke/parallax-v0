@@ -60,6 +60,9 @@ class SceneRuntime:
     animate_resolution: str | None = None
     end_frame_path: str | None = None
     clip_path: str | None = None
+    scene_type: str | None = None
+    motion_style: str | None = None
+    html_path: str | None = None
     clip_trim_start_s: float | str | None = None  # str to carry "auto" until assembly resolves it
     clip_trim_end_s: float | None = None
     zoom_direction: str | None = None
@@ -171,7 +174,14 @@ def _lock_field_in_brief(brief_path: Path, scene_idx: int, field_name: str, lock
         raise
 
 
-def _lock_field_in_plan(plan_path: Path, plan: dict, scene_idx: int, field_name: str, value: str, folder: Path) -> None:
+def _lock_field_in_plan(
+    plan_path: Path,
+    plan: dict,
+    scene_idx: int,
+    field_name: str,
+    value: str,
+    folder: Path,
+) -> None:
     """Write an asset path back into the plan YAML so the scene is locked on future runs.
 
     Reads the current on-disk YAML, patches only the specific scene/field, and writes
@@ -484,13 +494,18 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
                 poster = s.get("still_path")
                 still_paths[idx] = str(Path(poster) if Path(poster).is_absolute() else (settings.folder / poster)) if poster else ""
                 continue
-            clip = Path(s.get("clip_path") or "").expanduser()
+            raw_clip = s.get("clip_path")
+            clip = Path(raw_clip or "").expanduser()
             clip = clip if clip.is_absolute() else settings.folder / clip
-            if not _is_clip_reusable(str(clip), settings.mode):
-                raise ValueError(f"scene {idx}: motion_graphic clip_path is missing or unusable: {clip}. Render the local graphic before producing.")
-            # Assembly consumes the clip directly; no AI still or animation is needed.
-            still_paths[idx] = ""
-            continue
+            if raw_clip and _is_clip_reusable(str(clip), settings.mode):
+                # Assembly consumes the clip directly; no AI still or animation is needed.
+                still_paths[idx] = ""
+                continue
+            if s.get("motion_style") or s.get("html_path"):
+                # HTML/SVG + GSAP motion graphic will be rendered in stage_motion_graphics after stage_align.
+                still_paths[idx] = ""
+                continue
+            raise ValueError(f"scene {idx}: motion_graphic clip_path is missing or unusable: {clip}. Render the local graphic before producing.")
         _locked_still: str | None = s.get("still_path")
         if _locked_still is not None and not (
             settings.mode == ProductionMode.REAL and is_mock_asset(_locked_still)
@@ -551,6 +566,13 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
         if s.get("clip_path"):
             cp = Path(s["clip_path"])
             scene_rt.clip_path = str(cp if cp.is_absolute() else settings.folder / cp)
+        if s.get("scene_type"):
+            scene_rt.scene_type = s["scene_type"]
+        if s.get("motion_style"):
+            scene_rt.motion_style = s["motion_style"]
+        if s.get("html_path"):
+            hp = Path(s["html_path"])
+            scene_rt.html_path = str(hp if hp.is_absolute() else settings.folder / hp)
         if s.get("clip_trim_start_s") is not None:
             scene_rt.clip_trim_start_s = s["clip_trim_start_s"]  # may be "auto" or float
         if s.get("clip_trim_end_s") is not None:
@@ -1110,6 +1132,178 @@ def stage_align(plan: dict[str, Any], settings: Settings, state: PipelineState) 
     return plan
 
 
+def stage_motion_graphics(plan: dict[str, Any], settings: Settings, state: PipelineState) -> dict[str, Any]:
+    """Generate/re-time and render HTML/SVG + GSAP motion_graphic scenes after VO alignment.
+
+    Runs after `stage_align` so per-scene VO word timestamps and durations are known.
+    For `scene_type: motion_graphic` scenes with `motion_style` (or `html_path`) and
+    no reusable `clip_path`:
+    - If `html_path` already exists on disk, re-times `window.__TIMING` with zero LLM calls.
+    - Otherwise generates HTML for `motion_style` (reading `plan.brand`), audits layout,
+      and writes `html_path`.
+    - Renders the HTML to an MP4 clip, writes `html_path` and `clip_path` back into `plan.yaml`,
+      and updates `state.scenes` and `state.aligned` so assembly consumes `clip_path`.
+    """
+    from .ffmpeg_utils import parse_resolution
+    from .html_motion import (
+        LayoutViolationError,
+        _save_rejected_html,
+        audit_and_repair_scene,
+        audit_layout,
+        generate_scene_spec_and_html,
+        inline_gsap_script,
+        patch_html_timing,
+        render_html_to_mp4,
+        save_scene_spec,
+    )
+
+    scenes = state.scenes
+    to_render = [
+        s
+        for s in scenes
+        if (s.scene_type == "motion_graphic" or s.motion_style)
+        and (s.motion_style or s.html_path)
+        and not _is_clip_reusable(s.clip_path, settings.mode)
+    ]
+    if not to_render:
+        return plan
+
+    if not state.assets_dir:
+        raise RuntimeError(
+            "stage_motion_graphics: state.assets_dir is unset; scan_project_folder must run first"
+        )
+    assets_dir = Path(state.assets_dir)
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    aligned_by_idx = {entry.get("index"): entry for entry in (state.aligned or [])}
+    all_words = list((state.vo_result or {}).get("words") or [])
+
+    plan_brand = plan.get("brand")
+    if isinstance(plan_brand, dict) and isinstance(plan_brand.get("logo"), str):
+        logo_str = plan_brand["logo"].strip()
+        if logo_str and not logo_str.startswith("data:") and not Path(logo_str).is_absolute():
+            candidate_logo = (settings.folder / logo_str).resolve()
+            if candidate_logo.is_file():
+                plan_brand = {**plan_brand, "logo": str(candidate_logo)}
+
+    w_out, h_out = parse_resolution(settings.resolution)
+    render_fps = 10 if (is_test_mode() or settings.mode == ProductionMode.TEST) else 30
+
+    _log(settings, f"motion_graphics — rendering {len(to_render)} scene(s)")
+    for s in to_render:
+        aligned_entry = aligned_by_idx.get(s.index) or {}
+        start_s = float(aligned_entry.get("start_s", 0.0) or 0.0)
+        scene_dur = float(
+            aligned_entry.get("duration_s")
+            or s.duration_s
+            or DEFAULT_CLIP_DURATION_S
+        )
+        end_s = float(aligned_entry.get("end_s", start_s + scene_dur) or (start_s + scene_dur))
+
+        # Slice VO words belonging to this scene and shift timestamps relative to scene start
+        scene_words: list[dict[str, Any]] = []
+        for w in all_words:
+            w_start = float(w.get("start", 0.0))
+            w_end = float(w.get("end", w_start))
+            w_mid = 0.5 * (w_start + w_end)
+            if start_s - 0.05 <= w_mid <= end_s + 0.05:
+                scene_words.append(
+                    {
+                        "word": w.get("word", ""),
+                        "start": round(max(0.0, w_start - start_s), 4),
+                        "end": round(max(0.0, min(scene_dur, w_end - start_s)), 4),
+                    }
+                )
+        if not scene_words and s.vo_text:
+            raw_tokens = [tok for tok in s.vo_text.split() if tok.strip()]
+            if raw_tokens:
+                step = scene_dur / max(1, len(raw_tokens))
+                scene_words = [
+                    {
+                        "word": tok,
+                        "start": round(i * step, 4),
+                        "end": round(min(scene_dur, (i + 0.85) * step), 4),
+                    }
+                    for i, tok in enumerate(raw_tokens)
+                ]
+
+        existing_html = Path(s.html_path) if s.html_path else None
+        canonical_html = existing_html if (existing_html is not None) else (assets_dir / f"scene_{s.index:02d}_motion.html")
+        canonical_html.parent.mkdir(parents=True, exist_ok=True)
+        canonical_mp4 = assets_dir / f"scene_{s.index:02d}_motion.mp4"
+
+        if existing_html is not None and existing_html.is_file():
+            _log(settings, f"  [{s.index:02d}] re-timing existing HTML {existing_html.name} ({scene_dur:.2f}s)")
+            raw_html = existing_html.read_text(encoding="utf-8")
+            html_content = inline_gsap_script(
+                patch_html_timing(raw_html, duration=scene_dur, fps=render_fps, words=scene_words)
+            )
+            audit = audit_layout(html_content, duration_s=scene_dur, width=w_out, height=h_out)
+            if not audit.passed:
+                rejected = _save_rejected_html(html_content, canonical_mp4)
+                raise LayoutViolationError(audit.violations, rejected_html_path=rejected)
+            canonical_html.write_text(html_content, encoding="utf-8")
+        else:
+            style_name = s.motion_style or "flat-explainer"
+            _log(settings, f"  [{s.index:02d}] generating HTML motion style={style_name} ({scene_dur:.2f}s)")
+            scene_copy = s.vo_text or s.prompt or "Motion scene"
+            spec, html_content = generate_scene_spec_and_html(
+                scene_text=scene_copy,
+                style=style_name,
+                brand=plan_brand,
+                duration_s=scene_dur,
+                words=scene_words,
+            )
+            spec, html_content, _audit = audit_and_repair_scene(
+                spec,
+                html_content,
+                duration_s=scene_dur,
+                style=style_name,
+                brand=plan_brand,
+                words=scene_words,
+                out_path=canonical_mp4,
+                scene_text=scene_copy,
+            )
+            canonical_html.write_text(html_content, encoding="utf-8")
+            save_scene_spec(spec, canonical_html)
+
+        render_html_to_mp4(
+            canonical_html,
+            canonical_mp4,
+            duration_s=scene_dur,
+            fps=render_fps,
+            width=w_out,
+            height=h_out,
+        )
+        s.html_path = str(canonical_html)
+        s.clip_path = str(canonical_mp4)
+        if not (is_test_mode() or settings.mode == ProductionMode.TEST):
+            _lock_field_in_plan(
+                settings.plan_path,
+                plan,
+                s.index,
+                "html_path",
+                str(canonical_html),
+                settings.folder,
+            )
+            _lock_field_in_plan(
+                settings.plan_path,
+                plan,
+                s.index,
+                "clip_path",
+                str(canonical_mp4),
+                settings.folder,
+            )
+        if aligned_entry:
+            aligned_entry["html_path"] = str(canonical_html)
+            aligned_entry["clip_path"] = str(canonical_mp4)
+        _log(settings, f"  [{s.index:02d}] → {canonical_mp4.name}")
+
+    if state.aligned:
+        state.aligned_json = json.dumps(state.aligned)
+    return plan
+
+
 def stage_manifest(plan: dict[str, Any], settings: Settings, state: PipelineState) -> dict[str, Any]:
     """Write the per-run manifest.yaml to the output dir.
 
@@ -1424,6 +1618,7 @@ def stage_finalize(plan: dict[str, Any], settings: Settings, state: PipelineStat
 _KNOWN_SCENE_FIELDS = {
     "index", "shot_type", "vo_text", "prompt",
     "still_path", "reference", "reference_images", "scene_type",
+    "motion_style", "html_path",
     "animate", "motion_prompt", "clip_path", "animate_resolution",
     "end_frame_path",
     # Per-scene model overrides (image_model / video_model / voice_model
@@ -1585,6 +1780,7 @@ STAGES = [_wrap_stage(s) for s in (
     stage_voice_postprocess,
     stage_speed_adjust,
     stage_align,
+    stage_motion_graphics,
     stage_animate,
     stage_manifest,
     stage_assemble,

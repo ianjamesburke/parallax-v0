@@ -211,3 +211,238 @@ def video_animate(
     except Exception:
         pass
     return 0
+
+
+@video_app.command("motion")
+def video_motion(
+    style: Optional[str] = typer.Option(None, "--style", help="Motion graphic style preset name (see --list-styles)."),
+    brand: Optional[str] = typer.Option(None, "--brand", help="Brand YAML or JSON file path."),
+    text: Optional[str] = typer.Option(None, "--text", "--prompt", help="Scene copy / voiceover text."),
+    words: Optional[str] = typer.Option(None, "--words", help="Word-timestamp JSON file."),
+    duration: Optional[float] = typer.Option(None, "--duration", help="Duration in seconds (default: from --words or 5.0)."),
+    fps: int = typer.Option(30, "--fps", help="Frame rate (default: 30)."),
+    model: Optional[str] = typer.Option(None, "--model", help="OpenRouter LLM model (default: google/gemini-2.5-flash)."),
+    from_html: Optional[str] = typer.Option(None, "--from-html", help="Re-time and re-render an existing HTML scene with zero LLM calls."),
+    from_spec: Optional[str] = typer.Option(None, "--from-spec", help="Re-render an existing SceneSpec JSON file with zero LLM calls ($0)."),
+    out: Optional[str] = typer.Option(None, "--out", help="Output MP4 path."),
+    html_out: Optional[str] = typer.Option(None, "--html-out", help="Output HTML path (default: <out>.html next to the MP4)."),
+    list_styles: bool = typer.Option(False, "--list-styles", help="List available motion graphic style presets and exit."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
+) -> int:
+    """Render a styled HTML/SVG + GSAP motion graphic scene to MP4 (or list styles / re-render from SceneSpec or HTML)."""
+    from pathlib import Path
+    from ..html_motion import (
+        LayoutViolationError,
+        SceneSpecValidationError,
+        _save_rejected_html,
+        audit_and_repair_scene,
+        audit_layout,
+        estimate_motion_cost_usd,
+        generate_scene_spec_and_html,
+        inline_gsap_script,
+        list_style_presets,
+        load_brand_file,
+        load_scene_spec,
+        load_style_preset,
+        normalize_words,
+        patch_html_timing,
+        render_html_to_mp4,
+        render_scene_spec_html,
+        resolve_motion_model,
+        save_scene_spec,
+    )
+    from ..preflight import print_estimate
+    from ..shim import is_test_mode
+
+    if list_styles:
+        presets = list_style_presets()
+        if json_output:
+            print(json.dumps(presets, indent=2))
+        else:
+            for p in presets:
+                pal = p.get("palette") or {}
+                pal_summary = ", ".join(f"{k}={v}" for k, v in pal.items())
+                print(f"{p['name']}: {p.get('description', '')} ({pal_summary})")
+        return 0
+
+    if not out:
+        raise typer.BadParameter("provide --out <scene.mp4> (or use --list-styles)")
+
+    words_list = []
+    inferred_dur: float | None = None
+    if words:
+        words_path = Path(words).expanduser()
+        if not words_path.is_absolute():
+            words_path = Path.cwd() / words_path
+        if not words_path.is_file():
+            raise typer.BadParameter(f"words file not found: {words}")
+        raw_words_data = json.loads(words_path.read_text(encoding="utf-8"))
+        words_list = normalize_words(raw_words_data)
+        if isinstance(raw_words_data, dict) and raw_words_data.get("total_duration_s"):
+            inferred_dur = float(raw_words_data["total_duration_s"])
+        elif words_list:
+            inferred_dur = float(words_list[-1]["end"])
+
+    duration_s = float(duration) if duration is not None else (inferred_dur if inferred_dur and inferred_dur > 0 else 5.0)
+    out_mp4 = Path(out).expanduser()
+    if not out_mp4.is_absolute():
+        out_mp4 = Path.cwd() / out_mp4
+    out_mp4.parent.mkdir(parents=True, exist_ok=True)
+    if html_out:
+        target_html = Path(html_out).expanduser()
+        if not target_html.is_absolute():
+            target_html = Path.cwd() / target_html
+    else:
+        target_html = out_mp4.with_suffix(".html")
+    target_html.parent.mkdir(parents=True, exist_ok=True)
+
+    brand_dict = None
+    if brand:
+        brand_path = Path(brand).expanduser()
+        if not brand_path.is_absolute():
+            brand_path = Path.cwd() / brand_path
+        try:
+            brand_dict = load_brand_file(brand_path)
+        except (FileNotFoundError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+
+    if from_spec:
+        src_spec_path = Path(from_spec).expanduser()
+        if not src_spec_path.is_absolute():
+            src_spec_path = Path.cwd() / src_spec_path
+        if not src_spec_path.is_file():
+            raise typer.BadParameter(f"--from-spec file not found: {from_spec}")
+        try:
+            spec = load_scene_spec(src_spec_path, style=style)
+            resolved_style = style or str(spec.get("style") or "flat-explainer")
+            load_style_preset(resolved_style)
+        except (FileNotFoundError, ValueError, SceneSpecValidationError, json.JSONDecodeError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+
+        rendered_html = render_scene_spec_html(
+            spec,
+            style=resolved_style,
+            brand=brand_dict,
+            duration_s=duration_s,
+            words=words_list,
+            fps=fps,
+        )
+        target_html.write_text(rendered_html, encoding="utf-8")
+        target_spec = save_scene_spec(spec, out_mp4)
+        if target_html.with_suffix(".spec.json") != target_spec:
+            save_scene_spec(spec, target_html)
+        audit = audit_layout(target_html, duration_s=duration_s)
+        if not audit.passed:
+            rejected_path = _save_rejected_html(rendered_html, out_mp4)
+            raise LayoutViolationError(audit.violations, rejected_html_path=rejected_path)
+        render_html_to_mp4(target_html, out_mp4, duration_s=duration_s, fps=fps)
+        if json_output:
+            print(
+                json.dumps(
+                    {
+                        "out": str(out_mp4),
+                        "html_path": str(target_html),
+                        "spec_path": str(target_spec),
+                        "style": resolved_style,
+                        "duration_s": duration_s,
+                        "fps": fps,
+                        "retime_only": True,
+                    }
+                )
+            )
+        else:
+            print(out_mp4)
+        return 0
+
+    if from_html:
+        src_html_path = Path(from_html).expanduser()
+        if not src_html_path.is_absolute():
+            src_html_path = Path.cwd() / src_html_path
+        if not src_html_path.is_file():
+            raise typer.BadParameter(f"--from-html file not found: {from_html}")
+        raw_html = src_html_path.read_text(encoding="utf-8")
+        patched_html = inline_gsap_script(
+            patch_html_timing(raw_html, duration=duration_s, fps=fps, words=words_list)
+        )
+        target_html.write_text(patched_html, encoding="utf-8")
+        audit = audit_layout(target_html, duration_s=duration_s)
+        if not audit.passed:
+            rejected_path = _save_rejected_html(patched_html, out_mp4)
+            raise LayoutViolationError(audit.violations, rejected_html_path=rejected_path)
+        render_html_to_mp4(target_html, out_mp4, duration_s=duration_s, fps=fps)
+        if json_output:
+            print(
+                json.dumps(
+                    {
+                        "out": str(out_mp4),
+                        "html_path": str(target_html),
+                        "duration_s": duration_s,
+                        "fps": fps,
+                        "retime_only": True,
+                    }
+                )
+            )
+        else:
+            print(out_mp4)
+        return 0
+
+    if not style:
+        raise typer.BadParameter("provide --style <name>, --from-spec <scene.spec.json>, or --from-html <scene.html>")
+    if not text:
+        raise typer.BadParameter("provide --text '<scene copy>' when generating a motion scene")
+
+    try:
+        load_style_preset(style)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    resolved_model = resolve_motion_model(model)
+    if not is_test_mode():
+        print_estimate(
+            f"video motion --style {style} --model {resolved_model}",
+            estimate_motion_cost_usd(),
+        )
+
+    spec, html = generate_scene_spec_and_html(
+        scene_text=text,
+        style=style,
+        brand=brand_dict,
+        duration_s=duration_s,
+        words=words_list,
+        model=resolved_model,
+    )
+    spec, html, _audit = audit_and_repair_scene(
+        spec,
+        html,
+        duration_s=duration_s,
+        style=style,
+        brand=brand_dict,
+        words=words_list,
+        model=resolved_model,
+        out_path=out_mp4,
+        scene_text=text,
+    )
+    target_html.write_text(html, encoding="utf-8")
+    target_spec = save_scene_spec(spec, out_mp4)
+    if target_html.with_suffix(".spec.json") != target_spec:
+        save_scene_spec(spec, target_html)
+    render_html_to_mp4(target_html, out_mp4, duration_s=duration_s, fps=fps)
+
+    if json_output:
+        print(
+            json.dumps(
+                {
+                    "out": str(out_mp4),
+                    "html_path": str(target_html),
+                    "spec_path": str(target_spec),
+                    "style": style,
+                    "model": resolved_model,
+                    "duration_s": duration_s,
+                    "fps": fps,
+                    "retime_only": False,
+                }
+            )
+        )
+    else:
+        print(out_mp4)
+    return 0

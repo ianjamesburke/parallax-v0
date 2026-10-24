@@ -108,6 +108,8 @@ class PlanScene(BaseModel):
     # Asset locks
     still_path: str | None = None
     clip_path: str | None = None
+    motion_style: str | None = None
+    html_path: str | None = None
     end_frame_path: str | None = None
     reference: bool | None = None
     reference_images: list[str] | None = None
@@ -170,9 +172,25 @@ class PlanScene(BaseModel):
     def _scene_type_animation(cls, data: Any) -> Any:
         from .scene_types import normalize_scene_type
         data = normalize_scene_type(data)
-        if isinstance(data, dict) and data.get("scene_type") == "motion_graphic" and not data.get("clip_path") and not _stills_only_ctx.get():
+        if (
+            isinstance(data, dict)
+            and data.get("scene_type") == "motion_graphic"
+            and not data.get("clip_path")
+            and not data.get("motion_style")
+            and not data.get("html_path")
+            and not _stills_only_ctx.get()
+        ):
             raise ValueError(f"scene {data.get('index', '?')}: motion_graphic requires a locally rendered clip_path; AI generation is not supported")
         return data
+
+    @field_validator("motion_style")
+    @classmethod
+    def _check_motion_style(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        from .html_motion import load_style_preset
+        load_style_preset(v)
+        return v
 
     @field_validator("aspect")
     @classmethod
@@ -281,7 +299,12 @@ class Plan(BaseModel):
     def _require_motion_graphic_clip(self) -> "Plan":
         if not self.stills_only:
             for scene in self.scenes:
-                if scene.scene_type == "motion_graphic" and not scene.clip_path:
+                if (
+                    scene.scene_type == "motion_graphic"
+                    and not scene.clip_path
+                    and not scene.motion_style
+                    and not scene.html_path
+                ):
                     raise ValueError(
                         f"scene {scene.index}: motion_graphic requires a locally rendered clip_path; AI generation is not supported"
                     )
