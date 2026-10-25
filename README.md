@@ -117,6 +117,23 @@ parallax video motion --from-html scene.html --words updated_words.json --durati
 
 In `brief.yaml` or `plan.yaml`, set `scene_type: motion_graphic` and `motion_style: flat-explainer` (with top-level `brand:`); `parallax produce` generates the `SceneSpec` + HTML (or re-times `html_path`), audits layout safety, renders the MP4 clip after voiceover alignment, and writes `html_path` and `clip_path` back into `plan.yaml`.
 
+### Editor handoff package (Premiere Pro / DaVinci Resolve / Final Cut Pro)
+
+Export a self-contained, portable folder from any produce run's `manifest.yaml` (defaults to the latest `parallax/output/vN/`):
+
+```sh
+parallax export editor --folder ./my-project
+parallax export editor --folder ./my-project --music ./bgm.mp3 --music-db -18 --brand ./my-project/brand.yaml --out ./my-project/editor-handoff
+```
+
+Writes `<folder>/editor-handoff/` (override with `--out`):
+- `timeline.xml` — FCP7-style `xmeml` v4 sequence (imports into Premiere Pro and DaVinci Resolve)
+- `timeline.fcpxml` — FCPXML 1.10 sequence (toggle with `--fcpxml/--no-fcpxml`)
+- `assets/` — portable copies of `voiceover.<ext>`, `scene_NN_<kind>.<ext>` (renders Ken Burns MP4s for still scenes by default; pass `--stills-as-is` to keep still images), optional `music.<ext>`, and optional `logo.<ext>`
+- `captions/captions.srt` — SubRip subtitle file chunked from `vo_words.json`
+- `reference/` — optional copy of the finished MP4 from the produce run
+- `README.txt` & `handoff.json` — import instructions and machine-readable frame/second manifest
+
 ## Storyboard package
 
 `parallax guide` prints the whole workflow as JSON (stages, commands, flags, preconditions, review boundaries, what needs a human decision). `parallax guide storyboard` is the concise storyboard-package topic. An agent needs only `--help`, `parallax schema`, and the guide; there is no separate operator skill.

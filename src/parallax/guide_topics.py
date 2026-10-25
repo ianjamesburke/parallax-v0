@@ -85,6 +85,7 @@ TOPICS: dict[str, dict] = {
             {"step": "plan", "command": "parallax plan --folder F --brief B", "spends": False, "use": "Writes plan.yaml. Inspect and edit it before producing (model picks, locks, caption settings)."},
             {"step": "dry_run", "command": "PARALLAX_TEST_MODE=1 parallax produce --folder F --plan P", "spends": False, "use": "Full pipeline on stub assets with no network; spends nothing."},
             {"step": "produce", "command": "parallax produce --folder F --plan P", "spends": True, "use": "Real run. Prints a pre-flight cost estimate first, then proceeds. Re-running regenerates only unlocked scenes."},
+            {"step": "export", "command": "parallax export editor --folder F", "spends": False, "use": "Export a portable editor handoff folder (Premiere Pro / DaVinci Resolve xmeml v4, FCPXML 1.10, assets, captions.srt, README.txt)."},
         ],
         "one_shot": "`parallax produce --folder F --brief B` plans from the brief then produces in one command. Use the two-step form when the plan needs inspection or edits first.",
         "produce_flags": {
@@ -284,6 +285,20 @@ TOPICS: dict[str, dict] = {
             "words_per_chunk": "Both modes stop at sentence or phrase punctuation. An integer N makes groups of at most N words; 'smart' keeps mostly one-word groups, so use an integer for short phrases.",
             "portrait_start": "caption_style {base: anton, y_expr: \"h*64/100-th\"}, fontsize 44, words_per_chunk 3. y_expr places the text bottom at 64% of frame height; fontsize is the 1080px-wide baseline and scales with output width.",
             "review": "Preserve canonical script punctuation when matching words to timestamps; stop and inspect token mismatches instead of replacing unmatched text. Keep caption boxes clear of faces, UI, and key graphics; a successful burn does not prove readability.",
+        },
+        "next": "export",
+    },
+    "export": {
+        "summary": "Build a self-contained editor handoff package (Premiere Pro / DaVinci Resolve / Final Cut Pro) from a produce run's manifest.yaml.",
+        "command": "parallax export editor --folder <project> [--version N] [--manifest PATH] [--out DIR] [--music FILE] [--music-db -18] [--logo FILE] [--brand brand.yaml] [--fps 30] [--fcpxml/--no-fcpxml] [--render-stills/--stills-as-is] [--json]",
+        "outputs": {
+            "timeline.xml": "FCP7-style XML (xmeml v4) for Premiere Pro, DaVinci Resolve, and Final Cut Pro 7.",
+            "timeline.fcpxml": "FCPXML 1.10 for Final Cut Pro X and DaVinci Resolve (omit with --no-fcpxml).",
+            "assets/": "Portable copies of voiceover, scene clips/stills (Ken Burns MP4s when --render-stills), optional music, and optional brand logo.",
+            "captions/captions.srt": "Word-aligned SubRip subtitle track built via the caption chunker.",
+            "reference/": "Optional copy of the finished MP4 from the output directory.",
+            "README.txt": "Import steps for Premiere Pro, DaVinci Resolve, Final Cut Pro, and CapCut.",
+            "handoff.json": "Machine-readable manifest with relative file paths, frame and second timings, fps, and warnings.",
         },
         "next": None,
     },
