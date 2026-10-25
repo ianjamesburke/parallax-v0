@@ -796,3 +796,63 @@ class TestProduce:
         monkeypatch.setattr(produce_mod, "run_plan", fake_run)
         cli.main(["produce", "--folder", str(tmp_path), "--plan", str(plan), "--debug", "2"])
         assert captured.get("debug_level") == 2
+
+
+# ---------------------------------------------------------------------------
+# export
+# ---------------------------------------------------------------------------
+
+class TestExport:
+    def test_bare_export_shows_help(self):
+        assert cli.main(["export"]) == 0
+
+    def test_editor_help(self):
+        _help_exits_zero("export", "editor")
+
+    def test_editor_folder_required(self):
+        _rejects_args("export", "editor")
+
+    def test_editor_happy_path(self, monkeypatch, tmp_path, capsys):
+        import parallax.editor_export as exp_mod
+        captured: dict = {}
+
+        def fake_export(**kw):
+            captured.update(kw)
+            return {
+                "out_dir": str(tmp_path / "editor-handoff"),
+                "files": ["timeline.xml", "timeline.fcpxml", "README.txt", "handoff.json"],
+                "sequence_duration_frames": 90,
+                "sequence_duration_s": 3.0,
+                "fps": 30,
+                "warnings": [],
+                "problems": [],
+            }
+
+        monkeypatch.setattr(exp_mod, "export_editor_package", fake_export)
+        rc = cli.main(["export", "editor", "--folder", str(tmp_path), "--fps", "24", "--no-fcpxml"])
+        assert rc == 0
+        assert captured["folder"] == str(tmp_path)
+        assert captured["fps"] == 24
+        assert captured["fcpxml"] is False
+        assert "editor-handoff" in capsys.readouterr().out
+
+    def test_editor_json_flag(self, monkeypatch, tmp_path, capsys):
+        import parallax.editor_export as exp_mod
+        monkeypatch.setattr(
+            exp_mod,
+            "export_editor_package",
+            lambda **kw: {
+                "out_dir": str(tmp_path / "editor-handoff"),
+                "files": ["timeline.xml"],
+                "sequence_duration_frames": 60,
+                "sequence_duration_s": 2.0,
+                "fps": 30,
+                "warnings": [],
+                "problems": [],
+            },
+        )
+        rc = cli.main(["export", "editor", "--folder", str(tmp_path), "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["sequence_duration_frames"] == 60
+
