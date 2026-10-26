@@ -16,7 +16,7 @@ audio_app = typer.Typer(
 @audio_app.command("transcribe")
 def audio_transcribe(
     input: str = typer.Argument(..., help="Audio or video file to transcribe."),
-    out: str = typer.Option(..., "--out", help="Output path for words JSON."),
+    out: str = typer.Option(..., "--out", "--output", help="Output path for words JSON."),
     words: Optional[str] = typer.Option(None, "--words", help="Path to existing words JSON — skips transcription."),
 ) -> int:
     from pathlib import Path
@@ -284,7 +284,7 @@ def audio_pad_onsets(
 @audio_app.command("voiceover")
 def audio_voiceover(
     text: Optional[str] = typer.Option(None, "--text", help="Text to synthesize. Reads from stdin if omitted."),
-    out: str = typer.Option(..., "--out", help="Output audio file path (e.g. /tmp/out.mp3)."),
+    out: str = typer.Option(..., "--out", "--output", help="Output audio file path (e.g. /tmp/out.mp3)."),
     voice: str = typer.Option("nova", "--voice", help="Voice name or ElevenLabs voice ID (default: nova)."),
     voice_model: str = typer.Option("tts-mini", "--voice-model", help="TTS backend: tts-mini, tts-gemini, elevenlabs (default: tts-mini)."),
     speed: Optional[float] = typer.Option(None, "--speed", help="atempo multiplier applied after synthesis (e.g. 1.2 = 20% faster)."),
@@ -381,7 +381,7 @@ def audio_voiceover(
 @audio_app.command("speed")
 def audio_speed(
     in_path: str = typer.Option(..., "--in", help="Input audio file."),
-    out_path: str = typer.Option(..., "--out", help="Output audio path."),
+    out_path: str = typer.Option(..., "--out", "--output", help="Output audio path."),
     rate: Optional[float] = typer.Option(None, "--rate", help="atempo multiplier (e.g. 1.3 = 30% faster)."),
     by: Optional[str] = typer.Option(None, "--by", help="Percent change with trailing % — e.g. '30%' (=1.3) or '-20%' (=0.8)."),
 ) -> int:

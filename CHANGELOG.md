@@ -1,6 +1,10 @@
 # Changelog
 
 Newest releases appear first.
+## [0.6.1] — 2026-10-26
+
+### Changes
+- fix: accept --output as alias for --out (#184)
 ## [0.6.0] — 2026-10-26
 
 ### Changes

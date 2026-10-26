@@ -23,7 +23,7 @@ def export_editor(
         None, "--manifest", help="Explicit path to manifest.yaml."
     ),
     out: Optional[str] = typer.Option(
-        None, "--out", help="Output directory (default: <folder>/editor-handoff)."
+        None, "--out", "--output", help="Output directory (default: <folder>/editor-handoff)."
     ),
     music: Optional[str] = typer.Option(
         None, "--music", help="Optional background music audio file."

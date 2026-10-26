@@ -14,14 +14,14 @@ video_app = typer.Typer(
 )
 
 @video_app.command("ken-burns")
-def video_ken_burns(image: str = typer.Option(..., "--image"), duration: float = typer.Option(..., "--duration"), move: str = typer.Option("in", "--move"), zoom: float = typer.Option(1.12, "--zoom"), aspect: str = typer.Option("9:16", "--aspect"), fps: int = typer.Option(30, "--fps"), out: str = typer.Option(..., "--out")) -> int:
+def video_ken_burns(image: str = typer.Option(..., "--image"), duration: float = typer.Option(..., "--duration"), move: str = typer.Option("in", "--move"), zoom: float = typer.Option(1.12, "--zoom"), aspect: str = typer.Option("9:16", "--aspect"), fps: int = typer.Option(30, "--fps"), out: str = typer.Option(..., "--out", "--output")) -> int:
     """Render a smooth, silent Ken Burns clip locally (no provider call)."""
     from ..local_video import ken_burns
     if move not in {"in","out","pan-left","pan-right","pan-up","pan-down"}: raise typer.BadParameter("move must be in, out, pan-left, pan-right, pan-up, or pan-down")
     print(ken_burns(image, duration, out, move=move, zoom=zoom, aspect=aspect, fps=fps)); return 0
 
 @video_app.command("assemble")
-def video_assemble(shot: list[str] = typer.Option([], "--shot", help="clip-or-still[:duration], repeatable"), shots: Optional[str] = typer.Option(None, "--shots", help="JSON shot manifest; clip fields: path, trim_start, duration, speed"), voice: Optional[str] = typer.Option(None,"--voice"), voice_offset: float = typer.Option(0,"--voice-offset"), words: Optional[str] = typer.Option(None,"--words"), captions: bool = typer.Option(False,"--captions/--no-captions"), caption_style: str = typer.Option("anton","--caption-style"), caption_y: float = typer.Option(.65,"--caption-y", min=0., max=1.), report: Optional[str] = typer.Option(None,"--report"), caption_size: int = typer.Option(55,"--caption-size",help="Caption font px at 1080 wide; layout still shrinks to the safe area"), words_per_chunk: str = typer.Option("smart","--words-per-chunk",help="N words per caption, or smart"), aspect: str = typer.Option("9:16","--aspect"), resolution: Optional[str] = typer.Option(None,"--resolution"), out: str = typer.Option(...,"--out")) -> int:
+def video_assemble(shot: list[str] = typer.Option([], "--shot", help="clip-or-still[:duration], repeatable"), shots: Optional[str] = typer.Option(None, "--shots", help="JSON shot manifest; clip fields: path, trim_start, duration, speed"), voice: Optional[str] = typer.Option(None,"--voice"), voice_offset: float = typer.Option(0,"--voice-offset"), words: Optional[str] = typer.Option(None,"--words"), captions: bool = typer.Option(False,"--captions/--no-captions"), caption_style: str = typer.Option("anton","--caption-style"), caption_y: float = typer.Option(.65,"--caption-y", min=0., max=1.), report: Optional[str] = typer.Option(None,"--report"), caption_size: int = typer.Option(55,"--caption-size",help="Caption font px at 1080 wide; layout still shrinks to the safe area"), words_per_chunk: str = typer.Option("smart","--words-per-chunk",help="N words per caption, or smart"), aspect: str = typer.Option("9:16","--aspect"), resolution: Optional[str] = typer.Option(None,"--resolution"), out: str = typer.Option(...,"--out", "--output")) -> int:
     """Normalize and concatenate local shots; optionally mix VO and captions."""
     from ..local_video import assemble
     items = json.loads(open(shots).read()) if shots else [{"path": x.rsplit(":",1)[0], **({"duration":float(x.rsplit(":",1)[1])} if ":" in x and x.rsplit(":",1)[1].replace('.','',1).isdigit() else {})} for x in shot]
@@ -29,13 +29,13 @@ def video_assemble(shot: list[str] = typer.Option([], "--shot", help="clip-or-st
     print(assemble(items,out,aspect=aspect,resolution_=resolution,voice=voice,voice_offset=voice_offset,captions=captions,words=words,caption_style=caption_style,caption_y=caption_y,report=report,caption_size=caption_size,words_per_chunk=(int(words_per_chunk) if words_per_chunk.isdigit() else words_per_chunk))); return 0
 
 @video_app.command("captions")
-def video_captions(video: str = typer.Option(...,"--video"), words: str = typer.Option(...,"--words"), offset: float = typer.Option(0,"--offset"), style: str = typer.Option("anton","--style"), caption_y: float = typer.Option(.65,"--caption-y", min=0., max=1.), report: Optional[str] = typer.Option(None,"--report"), caption_size: int = typer.Option(55,"--caption-size",help="Caption font px at 1080 wide; layout still shrinks to the safe area"), words_per_chunk: str = typer.Option("smart","--words-per-chunk",help="N words per caption, or smart"), out: str = typer.Option(...,"--out")) -> int:
+def video_captions(video: str = typer.Option(...,"--video"), words: str = typer.Option(...,"--words"), offset: float = typer.Option(0,"--offset"), style: str = typer.Option("anton","--style"), caption_y: float = typer.Option(.65,"--caption-y", min=0., max=1.), report: Optional[str] = typer.Option(None,"--report"), caption_size: int = typer.Option(55,"--caption-size",help="Caption font px at 1080 wide; layout still shrinks to the safe area"), words_per_chunk: str = typer.Option("smart","--words-per-chunk",help="N words per caption, or smart"), out: str = typer.Option(...,"--out", "--output")) -> int:
     """Burn safe-area captions over an existing local video."""
     from ..captions import burn_captions
     print(burn_captions(video,words,out,caption_style=style,shift_s=offset,caption_y=caption_y,report_path=report,fontsize=caption_size,words_per_chunk=(int(words_per_chunk) if words_per_chunk.isdigit() else words_per_chunk))); return 0
 
 @video_app.command("text-overlay")
-def video_text_overlay(input: Optional[str] = typer.Option(None,"--in"), bg_color: Optional[str] = typer.Option(None,"--bg-color"), text: str = typer.Option(...,"--text"), preset: str = typer.Option("pop","--preset"), position: str = typer.Option("center","--position"), y: Optional[float] = typer.Option(None,"--y", min=0., max=1.), size: int = typer.Option(64,"--size"), color: str = typer.Option("#ffffff","--color"), duration: float = typer.Option(...,"--duration"), out: str = typer.Option(...,"--out"), aspect: str = typer.Option("9:16","--aspect"), resolution: Optional[str] = typer.Option(None,"--resolution")) -> int:
+def video_text_overlay(input: Optional[str] = typer.Option(None,"--in"), bg_color: Optional[str] = typer.Option(None,"--bg-color"), text: str = typer.Option(...,"--text"), preset: str = typer.Option("pop","--preset"), position: str = typer.Option("center","--position"), y: Optional[float] = typer.Option(None,"--y", min=0., max=1.), size: int = typer.Option(64,"--size"), color: str = typer.Option("#ffffff","--color"), duration: float = typer.Option(...,"--duration"), out: str = typer.Option(...,"--out", "--output"), aspect: str = typer.Option("9:16","--aspect"), resolution: Optional[str] = typer.Option(None,"--resolution")) -> int:
     """Render zero-spend kinetic text over a still or clip; output is silent MP4."""
     from ..local_video import text_overlay
     if preset not in {"pop","count-up","slide-up","typewriter"}: raise typer.BadParameter("preset must be pop, count-up, slide-up, or typewriter")
@@ -50,19 +50,19 @@ def video_text_overlay(input: Optional[str] = typer.Option(None,"--in"), bg_colo
     return 0
 
 @video_app.command("app-screen")
-def video_app_screen(screen:str=typer.Option(...,"--screen"),duration:float=typer.Option(...,"--duration"),out:str=typer.Option(...,"--out"),bg:str=typer.Option("#272137","--bg"),bg_image:Optional[str]=typer.Option(None,"--bg-image"),callout:Optional[str]=typer.Option(None,"--callout"),highlight:Optional[str]=typer.Option(None,"--highlight"),zoom_to_highlight:bool=typer.Option(False,"--zoom-to-highlight"),accent:str=typer.Option("#721CFF","--accent"),title:Optional[str]=typer.Option(None,"--title"),title_fade_in:float=typer.Option(0.0,"--title-fade-in",min=0.,help="Explicit title fade-in seconds (default: 0, visible on frame 0)."),full_bleed:bool=typer.Option(False,"--full-bleed",help="Screenshot fills the frame (App Store shots that already include a device frame)."),callout_y:Optional[float]=typer.Option(None,"--callout-y",min=0.,max=1.),resolution:str=typer.Option("1080x1920","--resolution")):
+def video_app_screen(screen:str=typer.Option(...,"--screen"),duration:float=typer.Option(...,"--duration"),out:str=typer.Option(...,"--out", "--output"),bg:str=typer.Option("#272137","--bg"),bg_image:Optional[str]=typer.Option(None,"--bg-image"),callout:Optional[str]=typer.Option(None,"--callout"),highlight:Optional[str]=typer.Option(None,"--highlight"),zoom_to_highlight:bool=typer.Option(False,"--zoom-to-highlight"),accent:str=typer.Option("#721CFF","--accent"),title:Optional[str]=typer.Option(None,"--title"),title_fade_in:float=typer.Option(0.0,"--title-fade-in",min=0.,help="Explicit title fade-in seconds (default: 0, visible on frame 0)."),full_bleed:bool=typer.Option(False,"--full-bleed",help="Screenshot fills the frame (App Store shots that already include a device frame)."),callout_y:Optional[float]=typer.Option(None,"--callout-y",min=0.,max=1.),resolution:str=typer.Option("1080x1920","--resolution")):
     """Real app screenshot (pixels as-is) with push-in, highlight box and kinetic callout. Zero spend."""
     from ..local_video import app_screen
     box=tuple(map(float,highlight.split(','))) if highlight else None; print(app_screen(screen,duration,out,bg=bg,bg_image=bg_image,callout=callout,highlight=box,zoom_to_highlight=zoom_to_highlight,accent=accent,title=title,title_fade_in_s=title_fade_in,full_bleed=full_bleed,callout_y=callout_y,resolution_=resolution)); return 0
 
 @video_app.command("end-card")
-def video_end_card(logo:str=typer.Option(...,"--logo"),duration:float=typer.Option(...,"--duration"),out:str=typer.Option(...,"--out"),icon:Optional[str]=typer.Option(None,"--icon"),headline:str=typer.Option("Become a morning person","--headline"),cta:str=typer.Option("Try RISE free","--cta"),sub:str=typer.Option("Download on the App Store","--sub"),bg:str=typer.Option("#14102A","--bg"),accent:str=typer.Option("#721CFF","--accent"),colors:Optional[str]=typer.Option(None,"--colors"),resolution:str=typer.Option("1080x1920","--resolution")):
+def video_end_card(logo:str=typer.Option(...,"--logo"),duration:float=typer.Option(...,"--duration"),out:str=typer.Option(...,"--out", "--output"),icon:Optional[str]=typer.Option(None,"--icon"),headline:str=typer.Option("Become a morning person","--headline"),cta:str=typer.Option("Try RISE free","--cta"),sub:str=typer.Option("Download on the App Store","--sub"),bg:str=typer.Option("#14102A","--bg"),accent:str=typer.Option("#721CFF","--accent"),colors:Optional[str]=typer.Option(None,"--colors"),resolution:str=typer.Option("1080x1920","--resolution")):
     """Animated brand CTA end card (icon pop, wordmark, headline, pulsing CTA pill). Zero spend."""
     from ..local_video import end_card
     print(end_card(logo,duration,out,icon=icon,headline=headline,cta=cta,sub=sub,bg=bg,accent=accent,colors=colors,resolution_=resolution)); return 0
 
 @video_app.command("diagram")
-def video_diagram(preset:str=typer.Option(...,"--preset"),duration:float=typer.Option(...,"--duration"),out:str=typer.Option(...,"--out"),label:str=typer.Option("YOUR WINDOW","--label"),value:float=typer.Option(75,"--value"),colors:Optional[str]=typer.Option(None,"--colors"),bg:str=typer.Option("#14102A","--bg"),sub:Optional[str]=typer.Option(None,"--sub",help="clock-window: pill under the clock"),unit:str=typer.Option("","--unit"),display:Optional[str]=typer.Option(None,"--display",help="meter: big number text; may use {v:.1f}"),max_value:float=typer.Option(100.,"--max",help="meter: full-scale value"),peak:str=typer.Option("PEAK","--peak"),dip:str=typer.Option("DIP","--dip"),resolution:str=typer.Option("1080x1920","--resolution")):
+def video_diagram(preset:str=typer.Option(...,"--preset"),duration:float=typer.Option(...,"--duration"),out:str=typer.Option(...,"--out", "--output"),label:str=typer.Option("YOUR WINDOW","--label"),value:float=typer.Option(75,"--value"),colors:Optional[str]=typer.Option(None,"--colors"),bg:str=typer.Option("#14102A","--bg"),sub:Optional[str]=typer.Option(None,"--sub",help="clock-window: pill under the clock"),unit:str=typer.Option("","--unit"),display:Optional[str]=typer.Option(None,"--display",help="meter: big number text; may use {v:.1f}"),max_value:float=typer.Option(100.,"--max",help="meter: full-scale value"),peak:str=typer.Option("PEAK","--peak"),dip:str=typer.Option("DIP","--dip"),resolution:str=typer.Option("1080x1920","--resolution")):
     """Animated explainer diagram: clock-window | meter | curve. Zero spend."""
     if preset not in {'clock-window','meter','curve'}: raise typer.BadParameter('preset must be clock-window, meter, or curve')
     from ..local_video import diagram
@@ -73,7 +73,7 @@ def video_diagram(preset:str=typer.Option(...,"--preset"),duration:float=typer.O
 def video_frame(
     input: str = typer.Argument(..., help="Video file."),
     time: float = typer.Argument(..., help="Timestamp in seconds."),
-    out: Optional[str] = typer.Option(None, "--out", help="Output image path (default: temp file)."),
+    out: Optional[str] = typer.Option(None, "--out", "--output", help="Output image path (default: temp file)."),
 ) -> int:
     from ..video import extract_frame
     out_path = extract_frame(input, time, out)
@@ -81,7 +81,7 @@ def video_frame(
     return 0
 
 @video_app.command("resume")
-def video_resume(job: str = typer.Option(..., "--job"), out: Optional[str] = typer.Option(None, "--out")) -> int:
+def video_resume(job: str = typer.Option(..., "--job"), out: Optional[str] = typer.Option(None, "--out", "--output")) -> int:
     """Resume polling an accepted animation job; never submits a new request."""
     from pathlib import Path
     from ..openrouter import resume_video_job
@@ -110,7 +110,7 @@ def video_animate(
     prompt: str = typer.Option(..., "--prompt", help="Animation prompt."),
     model: str = typer.Option("mid", "--model", help="Video model alias (default: mid)."),
     duration: float = typer.Option(5.0, "--duration", help="Duration in seconds (default: 5)."),
-    out: Optional[str] = typer.Option(None, "--out", help="Output path (default: current directory)."),
+    out: Optional[str] = typer.Option(None, "--out", "--output", help="Output path (default: current directory)."),
     start: Optional[str] = typer.Option(None, "--start", metavar="IMAGE", help="Start frame image path."),
     ref: Optional[List[str]] = typer.Option(None, "--ref", metavar="IMAGE", help="Reference image (repeatable). Mutually exclusive with --start/--end."),
     end: Optional[str] = typer.Option(None, "--end", metavar="IMAGE", help="End frame image path. Requires --start."),
@@ -224,7 +224,7 @@ def video_motion(
     model: Optional[str] = typer.Option(None, "--model", help="OpenRouter LLM model (default: google/gemini-2.5-flash)."),
     from_html: Optional[str] = typer.Option(None, "--from-html", help="Re-time and re-render an existing HTML scene with zero LLM calls."),
     from_spec: Optional[str] = typer.Option(None, "--from-spec", help="Re-render an existing SceneSpec JSON file with zero LLM calls ($0)."),
-    out: Optional[str] = typer.Option(None, "--out", help="Output MP4 path."),
+    out: Optional[str] = typer.Option(None, "--out", "--output", help="Output MP4 path."),
     html_out: Optional[str] = typer.Option(None, "--html-out", help="Output HTML path (default: <out>.html next to the MP4)."),
     list_styles: bool = typer.Option(False, "--list-styles", help="List available motion graphic style presets and exit."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output."),
