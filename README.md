@@ -2,6 +2,18 @@
 
 Agentic creative production CLI. A brief goes in, a finished short-form video comes out — stills, voiceover, animated clips, captions, headline, all routed through OpenRouter.
 
+## Start here (agents)
+
+```sh
+curl -LsSf https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/install.sh | sh   # install
+parallax --help       # every command
+parallax guide        # how to author a brief and drive the pipeline
+PARALLAX_TEST_MODE=1 parallax produce --folder ./my-project --brief ./my-project/brief.yaml   # free stub run, try this first
+parallax update       # upgrade later
+```
+
+`OPENROUTER_API_KEY` is optional. Many commands run without it (see [Setup](#setup)).
+
 ## Install
 
 ```sh
@@ -39,13 +51,23 @@ Shell startup cost: zero Python — just a `source` of the cached file. Tab-time
 
 ## Setup
 
+`OPENROUTER_API_KEY` is **optional**. It only unlocks paid generation: AI images, AI video, TTS voices, and new LLM-written motion scenes. All of that routes through OpenRouter.
+
 ```sh
-export OPENROUTER_API_KEY=sk-or-...
+export OPENROUTER_API_KEY=sk-or-...   # only needed for paid generation
 ```
 
-That is the only required env var. Everything (image, video, TTS, LLM) routes through OpenRouter.
+These work with no key and no provider calls:
 
-For dry runs without spending: `export PARALLAX_TEST_MODE=1` — the pipeline produces stub PNGs / mp4s / mp3s end-to-end with no network calls.
+- `parallax storyboard`: storyboard packages, HTML previews, optional PDF.
+- `parallax ingest`: local WhisperX transcription with word timestamps (the first run may download model weights).
+- `parallax video ...` local tools: `assemble` clips with voiceover and captions, `ken-burns`, `text-overlay`, `app-screen`, `end-card`, `diagram`, and `motion --from-spec` / `--from-html` re-renders.
+- `parallax export editor`: an xmeml v4 and FCPXML 1.10 timeline, assets, and SRT captions for Premiere, Resolve, and Final Cut.
+- `parallax validate`, `plan`, `guide`, and `schema`.
+
+Anything that generates with a provider (`produce`, `image generate`, `video animate`, `audio voiceover`) needs the key, and so does `credits`.
+
+For dry runs of the paid pipeline without spending: `export PARALLAX_TEST_MODE=1` — the pipeline produces stub PNGs / mp4s / mp3s end-to-end with no network calls.
 
 ## Use
 
