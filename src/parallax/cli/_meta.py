@@ -137,8 +137,115 @@ def _print_usage(summary: dict) -> None:
         )
 
 
-def _run_update() -> int:
+def _editable_source() -> str | None:
+    """Return the local repo path if parallax is an editable install, else None.
+
+    Reads PEP 610 ``direct_url.json`` from the installed distribution. Any
+    failure (missing metadata, bad JSON, non-file URL) returns None so the
+    caller falls back to the normal upgrade path.
+    """
+    import json
+    from importlib.metadata import distribution
+    from urllib.parse import unquote, urlparse
+
+    try:
+        raw = distribution("parallax").read_text("direct_url.json")
+        if not raw:
+            return None
+        data = json.loads(raw)
+        if not (data.get("dir_info") or {}).get("editable"):
+            return None
+        parsed = urlparse(data.get("url", ""))
+        if parsed.scheme != "file" or not parsed.path:
+            return None
+        return unquote(parsed.path)
+    except Exception:
+        return None
+
+
+def _git(repo: str, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
+    import os
+
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    return subprocess.run(
+        ["git", "-C", repo, *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=env,
+    )
+
+
+def _repo_version(repo: str) -> str | None:
     import pathlib
+    import re
+
+    try:
+        text = (pathlib.Path(repo) / "pyproject.toml").read_text()
+    except OSError:
+        return None
+    m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    return m.group(1) if m else None
+
+
+def _update_editable(uv: str, repo: str, installed: str) -> int:
+    """Update an editable install: fast-forward the local repo, then reinstall.
+
+    Never forces, stashes, or resets. If the tree is dirty or the pull cannot
+    fast-forward, nothing is touched and the user is told what to do.
+    """
+    def stuck(reason: str) -> int:
+        print(f"Cannot update editable install at {repo}: {reason}", file=sys.stderr)
+        print(f"Run `git pull` in {repo}", file=sys.stderr)
+        return 1
+
+    try:
+        status = _git(repo, "status", "--porcelain")
+        if status.returncode != 0:
+            return stuck(f"not a usable git repo ({status.stderr.strip() or 'git status failed'}).")
+        if status.stdout.strip():
+            return stuck("the working tree has uncommitted changes.")
+
+        branch_r = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+        branch = branch_r.stdout.strip() if branch_r.returncode == 0 else ""
+        if not branch or branch == "HEAD":
+            return stuck("the repo is on a detached HEAD.")
+
+        upstream_r = _git(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+        upstream = upstream_r.stdout.strip() if upstream_r.returncode == 0 else ""
+        if not upstream.startswith("origin/"):
+            return stuck(f"branch '{branch}' does not track an origin branch.")
+
+        before_r = _git(repo, "rev-parse", "HEAD")
+        before_head = before_r.stdout.strip()
+
+        pull = _git(repo, "pull", "--ff-only")
+        if pull.returncode != 0:
+            detail = (pull.stderr.strip() or pull.stdout.strip() or "git pull --ff-only failed").splitlines()
+            return stuck(f"git pull --ff-only failed ({detail[-1]}).")
+
+        after_head = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    except (OSError, subprocess.SubprocessError) as e:
+        return stuck(f"{type(e).__name__}: {e}")
+
+    new_version = _repo_version(repo) or installed
+    if before_head == after_head and new_version == installed:
+        print(f"Already up to date (v{installed}) from {repo} on branch {branch}")
+        return 0
+
+    print(f"Reinstalling parallax from {repo} on branch {branch}…")
+    result = subprocess.run([uv, "tool", "upgrade", "parallax", "--reinstall"])
+    if result.returncode != 0:
+        return result.returncode
+
+    if new_version == installed:
+        print(f"Updated {repo} on branch {branch}; version unchanged (v{installed}).")
+    else:
+        print(f"Updated parallax v{installed} → v{new_version} from {repo} on branch {branch}")
+    return 0
+
+
+def _run_update() -> int:
     import re
     import urllib.request
     from importlib.metadata import version as pkg_version
@@ -153,6 +260,10 @@ def _run_update() -> int:
         return 1
 
     installed = pkg_version("parallax")
+
+    editable = _editable_source()
+    if editable is not None:
+        return _update_editable(uv, editable, installed)
 
     remote: str | None = None
     try:

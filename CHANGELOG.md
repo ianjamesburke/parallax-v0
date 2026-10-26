@@ -1,6 +1,10 @@
 # Changelog
 
 Newest releases appear first.
+## [0.6.2] — 2026-10-26
+
+### Changes
+- fix: parallax update handles editable installs
 ## [0.6.1] — 2026-10-26
 
 ### Changes

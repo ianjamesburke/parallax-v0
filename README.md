@@ -35,6 +35,8 @@ parallax --version    # version of the installed CLI
 parallax update       # uv tool upgrade parallax --reinstall (pulls from the original source)
 ```
 
+If you installed from a local checkout (editable install), `parallax update` runs `git pull --ff-only` in that repo first, then reinstalls. If the checkout has uncommitted changes or can't fast-forward, it touches nothing and tells you to run `git pull` yourself.
+
 Versioning is SemVer 0.x.y: `x` bumps on breaking CLI changes, `y` on additive ones. The DEV_LOG entries tagged `[CHANGED]` / `[FIX]` are the changelog.
 
 ### Shell completion
