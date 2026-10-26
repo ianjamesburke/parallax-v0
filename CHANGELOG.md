@@ -1,6 +1,23 @@
 # Changelog
 
 Newest releases appear first.
+## [0.6.0] — 2026-10-26
+
+### Changes
+- docs(readme): agent start block, OPENROUTER_API_KEY optional
+- feat(export): editor handoff package (xmeml v4 + FCPXML 1.10 timeline, assets, SRT, README) (#204)
+- feat: HTML/SVG + GSAP motion-graphic styles (5 presets, VO-timed, layout guard) (#203)
+- feat: show opening headlines from frame zero (#202)
+- feat: editorial storyboard standard + PDF export + --from-video (#201)
+- fix: on-screen text never cropped (captions newline, zoom rounding) (#200)
+- fix: agent single-shot path + branded motion graphics, full-bleed app screens, caption sizing (#199)
+- chore: untrack .stint and add to .gitignore
+- feat(stages): archive regenerated scene assets into parallax/assets/versions/ and prune intermediate video/tts build files
+- feat(cli): write root storyboard.pdf and exports/ deliverable, hardlink storyboard package assets, document broll_reuse
+- fix(cli): ignore mock stubs in preflight overwrite check, support multi-kind ref layering, and add ready_for_plan
+- fix(cli): run voiceover+align before animate, protect real assets in test mode, improve CLI UX and brand gates
+- docs: add stint 0008 for Rise illustrated stills and minimal graphics
+- docs: mark stint 0007 done
 ## [0.5.50] — 2026-10-16
 
 ### Changes
