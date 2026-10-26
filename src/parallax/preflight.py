@@ -1,12 +1,11 @@
 """Pre-flight cost estimation for `parallax produce`.
 
-Computes a per-scene cost table before any generation runs, then optionally
-prompts the user to confirm before proceeding.
+Computes a per-scene cost table before any generation runs. Nothing here blocks a run;
+the CLI prints the estimate and proceeds.
 
 Public API:
   compute_preflight(plan, balance_usd=None) -> PreflightResult
   format_preflight(result) -> str
-  prompt_proceed(result, yes=False) -> bool
 """
 
 from __future__ import annotations
@@ -18,7 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from .log import get_logger
-from .models import resolve
+from .models import DEFAULT_CLIP_DURATION_S, TTS_MODELS, resolve
+from .shim import is_mock_asset
 
 log = get_logger("preflight")
 
@@ -78,6 +78,7 @@ def compute_preflight(
     image_model = plan.get("image_model", "mid")
     video_model = plan.get("video_model", "mid")
     voice_model = plan.get("voice_model", "tts-mini")
+    stills_only = bool(plan.get("stills_only", False))
     output_resolution = output_resolution or plan.get("resolution") or None
 
     assets_dir = (Path(folder) / "parallax" / "assets") if folder is not None else None
@@ -87,18 +88,42 @@ def compute_preflight(
     for s in plan.get("scenes", []):
         idx = s["index"]
 
+        if s.get("scene_type") == "motion_graphic":
+            has_motion_source = bool(s.get("motion_style") or s.get("html_path"))
+            if not stills_only and not has_motion_source:
+                if not s.get("clip_path"):
+                    raise ValueError(f"scene {idx}: motion_graphic requires a locally rendered clip_path")
+                if folder is not None:
+                    clip = Path(s["clip_path"]).expanduser()
+                    clip = clip if clip.is_absolute() else Path(folder) / clip
+                    if not clip.is_file():
+                        raise ValueError(f"scene {idx}: motion_graphic clip_path is missing: {clip}. Render the local graphic before producing.")
+            elif not stills_only and s.get("clip_path") and folder is not None:
+                clip = Path(s["clip_path"]).expanduser()
+                clip = clip if clip.is_absolute() else Path(folder) / clip
+                if not clip.is_file() and not has_motion_source:
+                    raise ValueError(f"scene {idx}: motion_graphic clip_path is missing: {clip}. Render the local graphic before producing.")
+            scenes.append(PreflightScene(
+                index=idx, kind="clip", model_alias="local",
+                duration_s=float(s.get("duration_s") or 0), locked=True, cost_usd=0.0,
+            ))
+            continue
+
         # --- Still ---
         still_alias = s.get("image_model") or image_model
         still_locked = bool(s.get("still_path"))
         if still_locked:
             still_cost = 0.0
         else:
-            still_cost = resolve(still_alias, kind="image").cost_usd
+            has_refs = bool(s.get("reference_images") or s.get("image_refs"))
+            still_cost = resolve(still_alias, kind="image").cost_usd + (0.01 if has_refs else 0.0)
 
+        still_file = (assets_dir / f"scene_{idx:02d}_still.png") if assets_dir is not None else None
         still_overwrite = (
             not still_locked
-            and assets_dir is not None
-            and (assets_dir / f"scene_{idx:02d}_still.png").exists()
+            and still_file is not None
+            and still_file.exists()
+            and not is_mock_asset(still_file)
         )
 
         scenes.append(PreflightScene(
@@ -113,23 +138,31 @@ def compute_preflight(
         log.info("preflight scene %d: still (%s) locked=%s overwrite=%s ~$%.3f",
                  idx, still_alias, still_locked, still_overwrite, still_cost)
 
-        # --- Clip (only if animate=True) ---
-        if s.get("animate", False):
+        # --- Clip (only if animate=True and not stills_only) ---
+        if s.get("animate", False) and not stills_only:
             clip_alias = s.get("video_model") or video_model
             clip_locked = bool(s.get("clip_path"))
-            duration = float(s.get("duration_s") or 5.0)
+            duration = float(s.get("duration_s") or DEFAULT_CLIP_DURATION_S)
             if clip_locked:
                 clip_cost = 0.0
                 clip_native_res = None
             else:
                 clip_spec = resolve(clip_alias, kind="video")
-                clip_cost = clip_spec.cost_usd * duration
+                # Estimate the billed length (the model's request_duration), not the scene length.
+                duration = float(clip_spec.request_duration(duration))
+                clip_cost = clip_spec.estimate_video_usd(
+                    # stage_animate always supplies the approved still as the
+                    # first frame, so every generated plan clip is image-conditioned.
+                    duration, image_conditioned=True
+                )
                 clip_native_res = clip_spec.native_resolution
 
+            clip_file = (assets_dir / f"scene_{idx:02d}_animated.mp4") if assets_dir is not None else None
             clip_overwrite = (
                 not clip_locked
-                and assets_dir is not None
-                and (assets_dir / f"scene_{idx:02d}_animated.mp4").exists()
+                and clip_file is not None
+                and clip_file.exists()
+                and not is_mock_asset(clip_file)
             )
 
             scenes.append(PreflightScene(
@@ -147,12 +180,21 @@ def compute_preflight(
                      idx, clip_alias, duration, clip_locked, clip_overwrite, clip_cost)
 
     # --- Voiceover ---
-    vo_locked = bool(plan.get("audio_path"))
-    vo_cost = 0.0  # Current TTS models have cost_usd=0
+    audio_path_locked = bool(plan.get("audio_path"))
+    vo_locked = audio_path_locked or stills_only
+    vo_cost = 0.0
+    vo_warnings: list[str] = []
+    if not vo_locked:
+        if voice_model in TTS_MODELS:
+            chars = sum(len(sc.get("vo_text", "")) for sc in plan.get("scenes", []))
+            # No script means no TTS call (stage_voiceover skips it), so no fixed cost either.
+            vo_cost = TTS_MODELS[voice_model].estimate_tts_usd(chars) if chars else 0.0
+        else:
+            vo_warnings.append(f"voiceover cost not estimated: {voice_model!r} is not in the TTS catalog")
 
     # --- Locked-audio warnings ---
     locked_audio_warnings: list[str] = []
-    if vo_locked:
+    if audio_path_locked:
         voice_speed = float(plan.get("voice_speed", 1.0))
         if voice_speed != 1.0:
             locked_audio_warnings.append("voice_speed ignored — audio is locked")
@@ -209,8 +251,14 @@ def compute_preflight(
         estimated_total_usd=estimated_total,
         balance_usd=balance_usd,
         has_overwrites=has_overwrites,
-        warnings=locked_audio_warnings,
+        warnings=locked_audio_warnings + vo_warnings,
     )
+
+
+def print_estimate(command: str, usd: float | None) -> None:
+    """Print one paid command's estimated cost to stderr before its provider call."""
+    price = "no catalog price, cost unknown" if usd is None else f"~${usd:.4f}"
+    print(f"Estimated cost: {price} ({command})", file=sys.stderr, flush=True)
 
 
 def _short_res(res: str) -> str:
@@ -226,8 +274,7 @@ def format_preflight(result: PreflightResult) -> str:
     """Return the formatted pre-flight cost table as a multi-line string.
 
     Includes the header line, per-scene rows, separator, total, and balance.
-    Does NOT include the "proceed?" prompt — that is printed by prompt_proceed.
-    """
+        """
     lines: list[str] = ["==> pre-flight cost estimate"]
 
     if result.has_overwrites:
@@ -246,7 +293,7 @@ def format_preflight(result: PreflightResult) -> str:
         if s.kind == "still":
             row = (
                 f"    scene {s.index} — still ({s.model_alias})"
-                f"       ~${s.cost_usd:.3f}   {status}"
+                f"       ~${s.cost_usd:.4f}   {status}"
             )
         else:
             res_note = ""
@@ -258,7 +305,7 @@ def format_preflight(result: PreflightResult) -> str:
                 res_note = f" {s.native_resolution} → {_short_res(s.output_resolution)}"
             row = (
                 f"    scene {s.index} — clip ({s.model_alias}{res_note}, {s.duration_s:.0f}s)"
-                f"  ~${s.cost_usd:.3f}   {status}"
+                f"  ~${s.cost_usd:.4f}   {status}"
             )
         lines.append(row)
 
@@ -266,30 +313,13 @@ def format_preflight(result: PreflightResult) -> str:
     vo_status = "[locked — skipping]" if result.voiceover_locked else "[will regenerate]"
     lines.append(
         f"    voiceover ({result.voiceover_model})"
-        f"      ~${result.voiceover_cost_usd:.3f}   {vo_status}"
+        f"      ~${result.voiceover_cost_usd:.4f}   {vo_status}"
     )
 
     lines.append("    ─────────────────────────────────────")
-    lines.append(f"    estimated total:             ~${result.estimated_total_usd:.3f}")
+    lines.append(f"    estimated total:             ~${result.estimated_total_usd:.4f}")
 
     if result.balance_usd is not None:
         lines.append(f"    current balance:             ${result.balance_usd:.2f}")
 
     return "\n".join(lines)
-
-
-def prompt_proceed(result: PreflightResult, yes: bool = False) -> bool:
-    """Print the cost table and ask for confirmation.
-
-    Returns True if production should proceed, False if the user cancelled.
-    When `yes=True` or stdout is not a TTY, proceeds immediately without prompting.
-    """
-    print(format_preflight(result), flush=True)
-
-    if yes or not sys.stdout.isatty():
-        print("==> proceeding (--yes / non-interactive)", flush=True)
-        return True
-
-    print("==> proceed? [y/N] ", end="", flush=True)
-    answer = input().strip().lower()
-    return answer == "y"

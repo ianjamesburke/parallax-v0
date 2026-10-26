@@ -34,6 +34,8 @@ CAPTION_STYLES: dict[str, dict] = {
         "uppercase": True,
         "x_expr": "(w-tw)/2",
         "y_expr": "h*65/100-th",
+        "safe_left": 0.08, "safe_right": 0.08, "safe_top": 0.12, "safe_bottom": 0.20,
+        "max_line_width": 0.84, "max_lines": 2,
         "animation": {"type": "pop", "duration_s": 0.05, "scale_keys": [1.10, 1.0]},
     },
     "impact": {
@@ -49,6 +51,8 @@ CAPTION_STYLES: dict[str, dict] = {
         "uppercase": True,
         "x_expr": "(w-tw)/2",
         "y_expr": "h*65/100-th",
+        "safe_left": 0.08, "safe_right": 0.08, "safe_top": 0.12, "safe_bottom": 0.20,
+        "max_line_width": 0.84, "max_lines": 2,
         "animation": {"type": "none"},
     },
     "bebas": {
@@ -63,6 +67,8 @@ CAPTION_STYLES: dict[str, dict] = {
         "uppercase": True,
         "x_expr": "(w-tw)/2",
         "y_expr": "h*65/100-th",
+        "safe_left": 0.08, "safe_right": 0.08, "safe_top": 0.12, "safe_bottom": 0.20,
+        "max_line_width": 0.84, "max_lines": 2,
         "animation": {"type": "pop", "duration_s": 0.05, "scale_keys": [1.12, 1.0]},
     },
     "anton": {
@@ -77,6 +83,8 @@ CAPTION_STYLES: dict[str, dict] = {
         "uppercase": True,
         "x_expr": "(w-tw)/2",
         "y_expr": "h*65/100-th",
+        "safe_left": 0.08, "safe_right": 0.08, "safe_top": 0.12, "safe_bottom": 0.20,
+        "max_line_width": 0.84, "max_lines": 2,
         "animation": {"type": "none"},
     },
     "clean": {
@@ -93,6 +101,8 @@ CAPTION_STYLES: dict[str, dict] = {
         "uppercase": False,
         "x_expr": "(w-tw)/2",
         "y_expr": "h*65/100-th",
+        "safe_left": 0.08, "safe_right": 0.08, "safe_top": 0.12, "safe_bottom": 0.20,
+        "max_line_width": 0.84, "max_lines": 2,
         "animation": {"type": "none"},
     },
 }

@@ -18,6 +18,7 @@ def _log_cmd(
     limit: int = typer.Option(20, "--limit", help="`log list` row cap (default: 20)."),
     since: Optional[str] = typer.Option(None, "--since", help="`log list` time filter, e.g. '1d', '6h', '30m'."),
 ) -> int:
+    """Show a run log: latest, by id, or `list`."""
     if level not in ("info", "debug"):
         typer.echo(f"Error: invalid level '{level}'. Choose: info, debug", err=True)
         return 2

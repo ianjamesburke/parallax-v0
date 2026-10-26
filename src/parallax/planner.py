@@ -35,13 +35,21 @@ from .brief import Brief
 # order makes diffs across iterations readable.
 _TOP_LEVEL_ORDER = (
     "aspect",
+    "resolution",
+    "animate_resolution",
     "voice",
     "voice_speed",
     "trim_pauses",
     "voice_model",
+    "voice_prompt",
+    "style",
+    "style_hint",
+    "brand",
     "image_model",
     "video_model",
     "caption_style",
+    "stills_only",
+    "source_brief",
     "character_image",
     "product_image",
     "scenes",
@@ -84,7 +92,7 @@ def _first_character_ref(brief: Brief, folder: Path) -> str | None:
     relative asset path to an absolute on-disk location.
     """
     for asset in brief.assets.provided:
-        if asset.kind == "character_ref":
+        if asset.kind == "character_ref" and asset.scene_scope is None:
             return str(_resolve_provided_path(folder, asset.path))
     return None
 
@@ -94,7 +102,7 @@ def _first_product_ref(brief: Brief, folder: Path) -> str | None:
     asset, or None if the brief has none.
     """
     for asset in brief.assets.provided:
-        if asset.kind == "product_ref":
+        if asset.kind == "product_ref" and asset.scene_scope is None:
             return str(_resolve_provided_path(folder, asset.path))
     return None
 
@@ -174,6 +182,7 @@ def plan_from_brief(
     video_model: str = "draft",
     voice_model: str = "tts-mini",
     caption_style: str = "anton",
+    stills_only: bool = False,
 ) -> PlanResult:
     """Translate a brief.yaml into a fully-resolved plan.yaml.
 
@@ -220,11 +229,13 @@ def plan_from_brief(
         )
 
     # All assets present — build the plan.
-    plan = brief.to_plan_skeleton()
+    plan = brief.to_plan_skeleton(stills_only=stills_only)
     plan["image_model"] = image_model
     plan["video_model"] = video_model
     plan["voice_model"] = voice_model
     plan["caption_style"] = caption_style
+    resolved_brief = brief_path.expanduser().resolve()
+    plan["source_brief"] = str(resolved_brief.relative_to(folder)) if resolved_brief.is_relative_to(folder) else str(resolved_brief)
 
     character_image = _first_character_ref(brief, folder)
     if character_image is not None:
@@ -238,8 +249,10 @@ def plan_from_brief(
         plan["product_image"] = product_image
 
     # Warn about any provided asset kind that isn't wired into the plan.
+    # A style_ref listed in a scene's image_refs reaches still generation as that scene's reference_images, so it is consumed.
+    used_by_scene = {ref for scene in brief.script.scenes for ref in scene.image_refs}
     for asset in brief.assets.provided:
-        if asset.kind not in _WIRED_ASSET_KINDS:
+        if asset.kind not in _WIRED_ASSET_KINDS and asset.path not in used_by_scene:
             print(
                 f"WARNING: {asset.kind} asset '{asset.path}' provided but not wired into plan"
                 f" — will be ignored",

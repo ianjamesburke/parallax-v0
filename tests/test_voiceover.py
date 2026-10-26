@@ -4,8 +4,8 @@ _mock_voiceover.
 Locks in:
   - generate_voiceover always routes through openrouter.generate_tts with
     alias=tts-mini and the supplied voice name.
-  - _trim_long_pauses collapses gaps > max_gap_s to keep_gap_s and shifts
-    word timestamps by the cumulative removed duration.
+  - _trim_long_pauses caps long gaps with lead-in before the next word,
+    crossfades quiet audio, and shifts timestamps for both cuts and overlap.
   - PARALLAX_TEST_MODE produces a synthetic silence mp3 + word table.
   - voiceover.generate_voiceover does NOT accept a `speed` kwarg — speed
     adjustment lives in `audio.speedup` and runs as `stage_speed_adjust`.
@@ -17,7 +17,10 @@ from __future__ import annotations
 
 import inspect
 import json
+import math
 import subprocess
+import wave
+from array import array
 from pathlib import Path
 
 import pytest
@@ -107,19 +110,63 @@ def test_trim_long_pauses_collapses_2s_gap(tmp_path):
     ]
     out_path = tmp_path / "out.mp3"
     adjusted, dur, gaps, removed = voiceover._trim_long_pauses(
-        audio, words, out_path, max_gap_s=0.4, keep_gap_s=0.1,
+        audio, words, out_path, max_gap_s=0.4,
     )
 
     assert gaps == 1
     assert removed > 1.5
     assert adjusted[0]["start"] == 0.0
     assert adjusted[0]["end"] == 0.5
-    assert abs(adjusted[1]["start"] - 0.6) < 0.01
-    assert abs(adjusted[1]["end"] - 1.1) < 0.01
-    assert abs(adjusted[2]["start"] - 1.1) < 0.01
+    # Gap is split around the join: 0.2s stays before the next aligned word.
+    # The 0.05s crossfade also shifts all later timestamps.
+    assert abs(adjusted[1]["start"] - 0.85) < 0.01
+    assert abs(adjusted[1]["end"] - 1.35) < 0.01
+    assert abs(adjusted[2]["start"] - 1.35) < 0.01
 
     actual_dur = _probe_duration(out_path)
-    assert abs(actual_dur - 2.1) < 0.2
+    assert abs(actual_dur - 2.35) < 0.2
+
+
+def test_trim_long_pauses_preserves_phoneme_before_alignment_onset(tmp_path):
+    """An early audible onset survives the safe pre-roll; the join stays silent."""
+    sample_rate = 16000
+    source = tmp_path / "early_onset.wav"
+    samples = array("h")
+    for index in range(round(2.5 * sample_rate)):
+        t = index / sample_rate
+        if 0.1 <= t < 0.4:
+            start = 0.1
+        elif 1.73 <= t < 2.1:
+            start = 1.73  # audible second-word phoneme precedes alignment by 0.17s
+        else:
+            samples.append(0)
+            continue
+        gain = min(1.0, (t - start) / 0.02)
+        samples.append(round(10000 * gain * math.sin(2 * math.pi * 440 * t)))
+    with wave.open(str(source), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        handle.writeframes(samples.tobytes())
+
+    words = [
+        {"word": "first", "start": 0.1, "end": 0.4},
+        {"word": "second", "start": 1.9, "end": 2.1},
+    ]
+    output = tmp_path / "safe.wav"
+    adjusted, _duration, gaps, _removed = voiceover._trim_long_pauses(
+        source, words, output, max_gap_s=0.5,
+    )
+    assert gaps == 1
+    assert adjusted[1]["start"] == pytest.approx(0.85, abs=0.005)
+    with wave.open(str(output), "rb") as handle:
+        rate = handle.getframerate()
+        rendered = array("h")
+        rendered.frombytes(handle.readframes(handle.getnframes()))
+    early_onset = rendered[round(0.69 * rate):round(0.76 * rate)]
+    quiet_join = rendered[round(0.59 * rate):round(0.65 * rate)]
+    assert max(abs(value) for value in early_onset) > 5000
+    assert max(abs(value) for value in quiet_join) < 10
 
 
 def test_trim_long_pauses_empty_words(tmp_path):

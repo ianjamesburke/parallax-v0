@@ -7,3 +7,7 @@ A `PostToolUse` hook in `~/.claude/settings.json` fires after any `uv tool insta
 ## Skills that depend on the parallax CLI
 
 Skills in `/Users/ianburke/narrative-content/.claude/skills/` may reference parallax commands, flags, or output structure. If you change CLI behavior, check that directory for skills that need updating before closing the branch.
+
+## Chasing rabbits
+
+Before implementing, name the true limiting factor blocking the project's goal and confirm the change addresses that root cause and enables real progress. If it does not, stop. Goal and limiting factor live in TRUTH.md "Goal and limiting factor".

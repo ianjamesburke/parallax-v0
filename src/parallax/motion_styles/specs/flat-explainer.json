@@ -1,0 +1,71 @@
+{
+  "style": "flat-explainer",
+  "layout_slot": "phone-hero",
+  "gap": "md",
+  "bg_variant": "radial",
+  "primitives": [
+    {
+      "type": "BrandHeader",
+      "props": {
+        "align": "center",
+        "logo_plate": "auto"
+      },
+      "motion": {
+        "entrance": "fade-up",
+        "cue": ""
+      }
+    },
+    {
+      "type": "HeadlineBlock",
+      "props": {
+        "headline": "__SCENE_HEADLINE__",
+        "size": "lg",
+        "align": "center"
+      },
+      "motion": {
+        "entrance": "fade-up",
+        "cue": "__CUE_WORD_1__"
+      }
+    },
+    {
+      "type": "PhoneFrame",
+      "props": {
+        "header_label": "LIVE CALL PROTECTION",
+        "bezel": "preset",
+        "children": [
+          {
+            "type": "FeatureCard",
+            "props": {
+              "title": "__CARD_TITLE__",
+              "body": "__CARD_BODY__",
+              "icon": "shield",
+              "tone": "accent",
+              "tilt": "none"
+            },
+            "motion": {
+              "entrance": "pop",
+              "cue": "__CUE_WORD_1__"
+            }
+          },
+          {
+            "type": "PillBadge",
+            "props": {
+              "label": "VERIFIED CALL SHIELD",
+              "icon": "lock",
+              "tone": "surface",
+              "pulse": false
+            },
+            "motion": {
+              "entrance": "fade-up",
+              "cue": "__CUE_WORD_2__"
+            }
+          }
+        ]
+      },
+      "motion": {
+        "entrance": "slide-up",
+        "cue": "__CUE_WORD_1__"
+      }
+    }
+  ]
+}

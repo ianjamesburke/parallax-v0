@@ -17,3 +17,10 @@ fixtures/**/parallax/
 
 # Live test sandbox — real assets and API runs, not for version control.
 sandbox/
+
+# Local tool state
+.agents/
+.playwright-cli/
+.plexi-beta/
+.stint/
+.plexi/

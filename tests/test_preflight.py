@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from parallax.preflight import compute_preflight, format_preflight, prompt_proceed
+from parallax.preflight import compute_preflight, format_preflight
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +124,7 @@ def test_format_preflight_contains_model_and_cost():
     assert "mid" in text
     # Should contain the cost of a mid image
     cost = resolve("mid", kind="image").cost_usd
-    assert f"${cost:.3f}" in text
+    assert f"${cost:.4f}" in text
     # Should contain the header marker
     assert "pre-flight cost estimate" in text
 
@@ -144,37 +144,6 @@ def test_format_preflight_shows_balance_when_provided():
     result = compute_preflight(plan, balance_usd=12.20)
     text = format_preflight(result)
     assert "12.20" in text
-
-
-# ---------------------------------------------------------------------------
-# 6. prompt_proceed with yes=True returns True without prompting
-# ---------------------------------------------------------------------------
-
-def test_prompt_proceed_yes_flag_returns_true(capsys):
-    plan = _make_plan(scenes=[{"index": 0}])
-    result = compute_preflight(plan)
-    ret = prompt_proceed(result, yes=True)
-    assert ret is True
-    captured = capsys.readouterr()
-    assert "proceeding" in captured.out
-
-
-# ---------------------------------------------------------------------------
-# 7. prompt_proceed with stdout not a TTY returns True
-# ---------------------------------------------------------------------------
-
-def test_prompt_proceed_non_tty_returns_true():
-    plan = _make_plan(scenes=[{"index": 0}])
-    result = compute_preflight(plan)
-    with patch("sys.stdout") as mock_stdout:
-        mock_stdout.isatty.return_value = False
-        # We need write/flush to work so the output is captured
-        import io
-        buf = io.StringIO()
-        mock_stdout.write = buf.write
-        mock_stdout.flush = buf.flush
-        ret = prompt_proceed(result, yes=False)
-    assert ret is True
 
 
 # ---------------------------------------------------------------------------
@@ -262,16 +231,14 @@ def test_format_preflight_shows_overwrite_warning(tmp_path):
     assert "overwrite" in text.lower()
 
 
-def test_prompt_proceed_shows_overwrite_warning(tmp_path, capsys):
+def test_format_preflight_shows_overwrite_warning(tmp_path):
     assets = tmp_path / "parallax" / "assets"
     assets.mkdir(parents=True)
     (assets / "scene_00_still.png").touch()
 
     plan = _make_plan(scenes=[{"index": 0}])
     result = compute_preflight(plan, folder=tmp_path)
-    prompt_proceed(result, yes=True)
-    captured = capsys.readouterr()
-    assert "overwrite" in captured.out.lower()
+    assert "overwrite" in format_preflight(result).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -390,13 +357,99 @@ def test_warnings_appear_in_format_preflight():
     assert "WARNING" in text
 
 
-def test_warnings_visible_in_non_interactive_run(capsys):
+def test_locked_audio_warnings_in_table():
     plan = _make_plan(
         scenes=[{"index": 0}],
         audio_path="audio.mp3",
         voice_speed=1.5,
     )
     result = compute_preflight(plan)
-    prompt_proceed(result, yes=True)
-    captured = capsys.readouterr()
-    assert "voice_speed" in captured.out
+    assert "voice_speed" in format_preflight(result)
+
+
+# ---------------------------------------------------------------------------
+# Billed-duration and voiceover estimates (cost accuracy)
+# ---------------------------------------------------------------------------
+
+def test_clip_estimate_uses_billed_duration_not_scene_length():
+    """A 3 s scene on seedance (min 4 s) is billed for 4 s; the estimate must say so."""
+    from parallax.models import resolve
+    plan = _make_plan([{"index": 0, "animate": True, "duration_s": 3.0, "still_path": "s.png"}], video_model="seedance")
+    clip = [s for s in compute_preflight(plan).scenes if s.kind == "clip"][0]
+    assert clip.duration_s == 4.0
+    assert clip.cost_usd == pytest.approx(
+        resolve("seedance", kind="video").cost_usd * 4 * 2.1473
+    )
+
+
+def test_clip_estimate_defaults_to_default_clip_duration():
+    from parallax.models import DEFAULT_CLIP_DURATION_S
+    plan = _make_plan([{"index": 0, "animate": True, "still_path": "s.png"}], video_model="seedance")
+    clip = [s for s in compute_preflight(plan).scenes if s.kind == "clip"][0]
+    assert clip.duration_s == DEFAULT_CLIP_DURATION_S
+
+
+def test_image_conditioned_clip_estimate_uses_catalog_measured_multiplier():
+    """2026-10-20 evidence: Seedance start-frame-only and start+end cost alike."""
+    plan = _make_plan([{"index": 0, "animate": True, "duration_s": 5,
+                        "still_path": "start.png", "end_frame_path": "end.png"}], video_model="draft")
+    clip = [s for s in compute_preflight(plan).scenes if s.kind == "clip"][0]
+    assert clip.cost_usd == pytest.approx(0.45738, rel=0.01)
+
+
+def test_start_frame_only_clip_estimate_uses_catalog_measured_multiplier():
+    plan = _make_plan([{"index": 0, "animate": True, "duration_s": 4,
+                        "still_path": "start.png"}], video_model="draft")
+    clip = [s for s in compute_preflight(plan).scenes if s.kind == "clip"][0]
+    assert clip.cost_usd == pytest.approx(0.3667, rel=0.01)
+
+
+def test_voiceover_cost_scales_with_characters():
+    from parallax.models import resolve
+    text = "x" * 2000
+    plan = _make_plan([{"index": 0, "still_path": "s.png", "vo_text": text}], voice_model="tts-gemini")
+    result = compute_preflight(plan)
+    assert result.voiceover_cost_usd == pytest.approx(resolve("tts-gemini", kind="tts").estimate_tts_usd(2000))
+    assert result.voiceover_cost_usd > 0
+    assert result.estimated_total_usd == pytest.approx(result.voiceover_cost_usd)
+
+
+def test_voiceover_cost_unknown_model_warns_instead_of_guessing():
+    plan = _make_plan([{"index": 0, "still_path": "s.png", "vo_text": "hello"}], voice_model="elevenlabs")
+    result = compute_preflight(plan)
+    assert result.voiceover_cost_usd == 0.0
+    assert any("elevenlabs" in w for w in result.warnings)
+
+
+def test_tts_mini_estimate_matches_billed_short_and_long_scripts():
+    """Billed 2026-10-14: 72 chars -> $0.000451..$0.000467; 180 chars -> $0.000674."""
+    from parallax.models import resolve
+    spec = resolve("tts-mini", kind="tts")
+    assert spec.estimate_tts_usd(72) == pytest.approx(0.000459, rel=0.10)
+    assert spec.estimate_tts_usd(180) == pytest.approx(0.000674, rel=0.10)
+
+
+def test_no_trim_pauses_warning_when_stills_only_without_audio_path():
+    plan = _make_plan(
+        scenes=[{"index": 0}],
+        stills_only=True,
+        trim_pauses=True,
+    )
+    result = compute_preflight(plan)
+    assert result.voiceover_locked is True
+    assert not any("trim_pauses" in w for w in result.warnings)
+
+
+def test_still_with_reference_images_includes_vision_estimate():
+    from parallax.models import resolve
+    plan = _make_plan(
+        scenes=[
+            {"index": 0},
+            {"index": 1, "reference_images": ["ref.png"]},
+        ],
+        stills_only=True,
+    )
+    result = compute_preflight(plan)
+    base = resolve("mid", kind="image").cost_usd
+    assert result.scenes[0].cost_usd == pytest.approx(base)
+    assert result.scenes[1].cost_usd == pytest.approx(base + 0.01)

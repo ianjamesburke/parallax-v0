@@ -64,3 +64,56 @@ def test_brewforge_line_chunks_as_expected():
     # 'of the' = 5 → too long; 'of' alone (2) then 'the' alone (3)
     # 'Tired' (5), 'same' (4), 'flat' (4), 'coffee' (6) all alone
     assert out == ["Tired", "of", "the", "same", "flat", "coffee"]
+
+
+import pytest
+from parallax.captions.chunker import _fixed_chunk_words
+
+
+def _words(text):
+    return [_w(word, i * 0.2, i * 0.2 + 0.15) for i, word in enumerate(text.split())]
+
+
+@pytest.mark.parametrize('chunker', [
+    lambda words: _fixed_chunk_words(words, 3),
+    lambda words: _smart_chunk_words(words, 30),
+])
+@pytest.mark.parametrize('ending', ['go.', 'go!', 'go?', 'go.”', 'go!"', 'go?)'])
+def test_sentence_end_never_mixes_with_next_sentence(chunker, ending):
+    words = _words(f'We {ending} A new start.')
+    chunks = chunker(words)
+    assert chunks[0]['text'] == f'We {ending}'
+    assert chunks[0]['end'] == words[1]['end']
+    assert chunks[1]['start'] == words[2]['start']
+    assert ' '.join(c['text'] for c in chunks) == ' '.join(w['word'] for w in words)
+
+
+def test_short_smart_sentence_cannot_swallow_next_short_word():
+    assert [c['text'] for c in _smart_chunk_words(_words('Go. I'), 4)] == ['Go.', 'I']
+
+
+@pytest.mark.parametrize('separator', [',', ';', ':', '—', '…'])
+def test_phrase_punctuation_ends_chunk(separator):
+    chunks = _fixed_chunk_words(_words(f'Pause{separator} then breathe'), 3)
+    assert [c['text'] for c in chunks] == [f'Pause{separator}', 'then breathe']
+
+
+def test_abbreviations_and_numbers_do_not_create_false_boundaries():
+    for text in ('Dr. Jane arrives.', 'J. Smith arrives.', 'The U.S. market', 'Wait approx. five', 'At 3.5 percent', 'Over 1,000 users'):
+        assert [c['text'] for c in _fixed_chunk_words(_words(text), 3)] == [text]
+    assert [c['text'] for c in _fixed_chunk_words(_words('Bread etc. Next sentence.'), 4)] == ['Bread etc.', 'Next sentence.']
+
+
+def test_fixed_count_is_maximum_and_preserves_timing():
+    words = _words('It feels hard. You can start today.')
+    chunks = _fixed_chunk_words(words, 3)
+    assert [c['text'] for c in chunks] == ['It feels hard.', 'You can start', 'today.']
+    assert chunks[-1]['end'] == words[-1]['end']
+    assert _fixed_chunk_words([], 3) == []
+    with pytest.raises(ValueError, match='positive'):
+        _fixed_chunk_words(words, 0)
+
+
+def test_fixed_limit_keeps_trailing_connector_with_following_phrase():
+    chunks = _fixed_chunk_words(_words('Pause now and breathe again.'), 3)
+    assert [c['text'] for c in chunks] == ['Pause now', 'and breathe again.']

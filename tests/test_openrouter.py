@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 import pytest
 
 from parallax import openrouter, runlog
@@ -45,7 +46,7 @@ def test_kind_mismatch_raises(tmp_path):
         openrouter.generate_image("x", alias="kling", out_dir=tmp_path)
     # `seedream` is image-only — surfaces a kind mismatch when called via video.
     with pytest.raises(ValueError, match="video"):
-        openrouter.generate_video("x", alias="seedream", out_dir=tmp_path)
+        openrouter.generate_video("x", alias="seedream", duration_s=4.0, out_dir=tmp_path)
     # `seedream` is image-only — surfaces a kind mismatch when called via tts.
     with pytest.raises(ValueError, match="tts"):
         openrouter.generate_tts("x", alias="seedream", out_dir=tmp_path)
@@ -59,15 +60,32 @@ def test_unknown_alias_raises(tmp_path):
 def test_real_mode_raises_not_implemented(monkeypatch, tmp_path):
     monkeypatch.setenv("PARALLAX_TEST_MODE", "0")
     monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
-    with pytest.raises(RuntimeError, match="all fallbacks exhausted"):
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("fake provider failure")))
+    with pytest.raises(RuntimeError, match="skipped fallback .*Re-run with --allow-fallback"):
         openrouter.generate_image("x", alias="mid", out_dir=tmp_path)
 
 
 def test_real_mode_missing_key_raises(monkeypatch, tmp_path):
     monkeypatch.setenv("PARALLAX_TEST_MODE", "0")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="all fallbacks exhausted"):
+    with pytest.raises(RuntimeError, match="skipped fallback .*Re-run with --allow-fallback"):
         openrouter.generate_image("x", alias="mid", out_dir=tmp_path)
+
+
+def test_allow_fallback_exhausts_the_full_image_chain(monkeypatch, tmp_path):
+    """Explicit opt-in retains the old exhaustive-chain behavior."""
+    monkeypatch.setenv("PARALLAX_TEST_MODE", "0")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+    calls = []
+
+    def fail(*args, **kwargs):
+        calls.append(args[0])
+        raise RuntimeError("fake provider failure")
+
+    monkeypatch.setattr(httpx, "post", fail)
+    with pytest.raises(RuntimeError, match="all fallbacks exhausted"):
+        openrouter.generate_image("x", alias="mid", out_dir=tmp_path, allow_fallback=True)
+    assert len(calls) > 1
 
 
 @pytest.mark.skipif(
@@ -89,12 +107,11 @@ def test_image_real_mode_round_trip(monkeypatch, tmp_path):
     assert head[:4] == b"\x89PNG" or head[:3] == b"\xff\xd8\xff"
 
 
-def test_video_real_mode_with_bad_key_falls_back_through_chain(monkeypatch, tmp_path):
-    """Video real-mode actually hits OpenRouter `/api/v1/videos`. With a fake key
-    the submit fails, the dispatcher walks the fallback chain, and once exhausted
-    raises a `RuntimeError` wrapping the last HTTP error."""
+def test_video_real_mode_with_bad_key_exhausts_when_only_cheaper_fallback_exists(monkeypatch, tmp_path):
+    """A cheaper fallback remains permitted without an explicit opt-in."""
     monkeypatch.setenv("PARALLAX_TEST_MODE", "0")
     monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("fake provider failure")))
     with pytest.raises(RuntimeError, match="all fallbacks exhausted"):
         openrouter.generate_video("x", alias="kling", duration_s=2.0, out_dir=tmp_path)
 

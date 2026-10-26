@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 
-from parallax.assembly import align_scenes, align_scenes_obj
+from parallax.assembly import align_scenes, align_scenes_obj, _scene_frame_budgets
 
 
 def _word(w: str, start: float, end: float) -> dict:
@@ -53,7 +53,39 @@ def test_scenes_are_contiguous_no_gaps():
     out = json.loads(align_scenes(json.dumps(scenes), json.dumps(payload)))
     assert out[0]["start_s"] == 0.0
     assert out[1]["start_s"] == out[0]["end_s"]   # contiguous
+    assert out[1]["start_s"] == 1.5               # cut on incoming first word
     assert out[-1]["end_s"] == 3.0                # extended to total
+
+
+def test_inter_scene_pause_belongs_to_outgoing_visual():
+    scenes = [
+        {"index": 0, "vo_text": "I waited."},
+        {"index": 1, "vo_text": "On day fourteen."},
+    ]
+    words = [
+        _word("I", 0.2, 0.4), _word("waited", 0.6, 1.0),
+        _word("On", 1.56, 1.7), _word("day", 1.72, 1.9),
+        _word("fourteen", 1.92, 2.3),
+    ]
+    out = align_scenes_obj(scenes, {"words": words, "total_duration_s": 2.5})
+    assert out[0]["end_s"] == out[1]["start_s"] == 1.56
+    assert out[1]["start_s"] - words[1]["end"] == 0.56
+    assert words[2]["start"] == 1.56  # absolute caption/audio timestamps untouched
+
+
+def test_overlapping_aligned_words_keep_outgoing_word(caplog):
+    scenes = [
+        {"index": 0, "vo_text": "First line."},
+        {"index": 1, "vo_text": "Second line."},
+    ]
+    words = [
+        _word("First", 0.1, 0.4), _word("line", 0.5, 1.2),
+        _word("Second", 1.15, 1.4), _word("line", 1.45, 1.8),
+    ]
+    out = align_scenes_obj(scenes, {"words": words, "total_duration_s": 2.0})
+    assert out[0]["end_s"] == out[1]["start_s"] == 1.2
+    assert any("overlaps previous last word" in r.message for r in caplog.records)
+    assert words[2]["start"] == 1.15
 
 
 def test_durations_sum_to_total_audio():
@@ -354,11 +386,9 @@ def test_second_to_last_fallback_when_last_word_mangled():
 
 
 def _scene_boundary_word(words: list[dict], scene: dict) -> str | None:
-    """Return the TTS word text at a scene's end_s (pre-contiguous boundary)."""
-    for w in words:
-        if abs(w["end"] - scene["end_s"]) < 0.005:
-            return w["word"]
-    return None
+    """Return the last completed TTS word before a first-word scene cut."""
+    completed = [w["word"] for w in words if w["end"] <= scene["end_s"] + 0.005]
+    return completed[-1] if completed else None
 
 
 # ─── Bug 1: duration_s pin — next scene cursor anchoring ─────────────────
@@ -408,18 +438,21 @@ def test_duration_s_pin_cascade_to_timing():
         _word("Goodbye", 2.1, 2.5), _word("now", 2.6, 2.9),
     ]
     payload = {"words": words, "total_duration_s": 3.0}
-    out = align_scenes_obj(scenes, payload)
+    out = align_scenes_obj([dict(s) for s in scenes], payload)
 
     # Scene 0 word matching ends at 1.0s but duration pin is 2.0s.
     # Cursor should advance past 2.0s so scene 1 gets "Goodbye"/"now".
-    # After contiguous fix: scene 0 = [0, 1.0], scene 1 = [1.0, 3.0].
-    # After _apply_timing_overrides (not called here — just align_scenes_obj):
-    # The word-based end is 1.0; contiguous/snapped end for scene 1 is 3.0.
-    assert out[0]["end_s"] == 1.0, "scene 0 word end before contiguous snap"
+    # First-word alignment gives scene 0 the pause through 2.1s.
+    assert out[0]["end_s"] == 2.1
     assert out[1]["end_s"] == 3.0, "scene 1 extends to total"
     # Crucially: scene 1 was assigned "Goodbye"/"now", not empty (cursor advanced past 2.0s)
     assert out[0]["start_s"] == 0.0
-    assert out[1]["start_s"] == 1.0
+    assert out[1]["start_s"] == 2.1
+
+    from parallax.stages import _apply_timing_overrides
+    overridden = _apply_timing_overrides(out, scenes)
+    assert overridden[0]["end_s"] == overridden[1]["start_s"] == 2.0
+    assert words[2]["start"] == 2.1  # visual pin never rewrites caption/audio time
 
 
 # ─── Bug 2: shared vocabulary — adjacent scene word stealing ─────────────
@@ -447,9 +480,9 @@ def test_shared_vocabulary_no_word_stealing():
     payload = {"words": words, "total_duration_s": 3.0}
     out = align_scenes_obj(scenes, payload)
 
-    # Scene 0 must end on its own "back" (idx 2, end=0.5), not scene 1's (idx 5)
+    # Scene 0 owns the pause after its own "back" and cuts on scene 1's "He".
     assert _scene_boundary_word(words, out[0]) == "back"
-    assert abs(out[0]["end_s"] - 0.5) < 0.01, f"scene 0 end should be ~0.5s, got {out[0]['end_s']}"
+    assert out[0]["end_s"] == out[1]["start_s"] == 0.7
 
     # Scene 1 must capture "He came back later" (end on "later" at 1.5s)
     assert _scene_boundary_word(words, out[1]) == "later"
@@ -494,6 +527,72 @@ def test_duration_s_written_with_2_decimal_places():
         dur = s["duration_s"]
         # Must be 2dp: str representation should have at most 2 decimal digits
         assert round(dur, 2) == dur, f"duration_s {dur} is not 2dp"
+
+
+def test_absolute_frame_budgets_do_not_accumulate_rounding_error():
+    scenes = [
+        {"index": 0, "start_s": 0.0, "end_s": 0.31, "duration_s": 0.31},
+        {"index": 1, "start_s": 0.31, "end_s": 0.62, "duration_s": 0.31},
+        {"index": 2, "start_s": 0.62, "end_s": 0.93, "duration_s": 0.31},
+    ]
+    assert _scene_frame_budgets(scenes) == [9, 10, 9]
+    assert sum(_scene_frame_budgets(scenes)) == round(0.93 * 30)
+
+
+def test_subframe_scene_is_rejected_instead_of_adding_drift():
+    import pytest
+
+    scenes = [
+        {"index": 0, "start_s": 0.0, "end_s": 0.004},
+        {"index": 1, "start_s": 0.004, "end_s": 1.0},
+    ]
+    with pytest.raises(ValueError, match="zero frames"):
+        _scene_frame_budgets(scenes)
+
+
+def test_encoded_hard_cuts_follow_absolute_frame_edges(tmp_path, monkeypatch):
+    """The mixed still/clip assembler must cut on shared 30 fps boundaries."""
+    import subprocess
+
+    from PIL import Image
+    import parallax.assembly as assembly
+
+    monkeypatch.setattr(assembly, "is_test_mode", lambda: True)
+    red = tmp_path / "red.png"
+    blue = tmp_path / "blue.png"
+    green_clip = tmp_path / "green.mp4"
+    Image.new("RGB", (64, 128), (230, 20, 20)).save(red)
+    Image.new("RGB", (64, 128), (20, 20, 230)).save(blue)
+    subprocess.run(
+        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+         "-i", "color=c=0x14e614:s=64x128:r=30:d=1", "-an", str(green_clip)],
+        check=True, capture_output=True,
+    )
+
+    scenes = [
+        {"index": 0, "start_s": 0.0, "end_s": 0.31, "duration_s": 0.31,
+         "still_path": str(red)},
+        {"index": 1, "start_s": 0.31, "end_s": 0.62, "duration_s": 0.31,
+         "clip_path": str(green_clip)},
+        {"index": 2, "start_s": 0.62, "end_s": 0.93, "duration_s": 0.31,
+         "still_path": str(blue)},
+    ]
+    video = tmp_path / "cuts.mp4"
+    assembly.ken_burns_assemble(
+        json.dumps(scenes), audio_path=None, output_path=str(video), resolution="64x128",
+    )
+    decoded = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(video), "-f", "rawvideo",
+         "-pix_fmt", "rgb24", "-fps_mode", "passthrough", "-"],
+        check=True, capture_output=True,
+    ).stdout
+    frame_bytes = 64 * 128 * 3
+    assert len(decoded) == 28 * frame_bytes
+    for frame_index, expected_channel in [(8, 0), (9, 1), (18, 1), (19, 2)]:
+        pixel = decoded[frame_index * frame_bytes + (64 * 128 // 2) * 3:][:3]
+        assert pixel[expected_channel] > max(
+            pixel[(expected_channel + 1) % 3], pixel[(expected_channel + 2) % 3]
+        ) + 70
 
 
 # ─── Word coverage check ─────────────────────────────────────────────────

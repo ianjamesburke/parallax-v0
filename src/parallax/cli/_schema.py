@@ -10,6 +10,28 @@ from typing import Any, Optional
 import typer
 
 
+def _command_info(command: Any) -> dict:
+    """Command tree as plain data. Duck-typed: typer >= 0.27 vendors click and has no `to_info_dict`."""
+    info: dict = {
+        "name": command.name,
+        "help": command.help,
+        "params": [
+            {
+                "name": p.name,
+                "param_type_name": p.param_type_name,
+                "opts": p.opts,
+                "required": p.required,
+                "is_flag": getattr(p, "is_flag", False),
+                "help": getattr(p, "help", None),
+            }
+            for p in command.params
+        ],
+    }
+    if getattr(command, "commands", None):
+        info["commands"] = {name: _command_info(sub) for name, sub in command.commands.items()}
+    return info
+
+
 class SchemaTarget(str, Enum):
     brief = "brief"
     plan = "plan"
@@ -24,6 +46,7 @@ def _schema_cmd(
     target: Optional[SchemaTarget] = typer.Argument(default=None, help="Which schema to emit. Omit to print a human-readable field overview of both."),
     output: Optional[str] = typer.Option(None, "--output", metavar="FILE", help="Write schema to FILE instead of stdout (requires a target)."),
 ) -> int:
+    """Print the brief, plan, or CLI schema (`schema brief`, `schema plan`, `schema cli`)."""
     from ..brief import Brief
     from ..plan import Plan
 
@@ -35,15 +58,9 @@ def _schema_cmd(
         return 1
 
     if target == SchemaTarget.cli:
-        import json as _json
-        import click as _click
-        import typer as _typer
         # Lazy import to avoid circular dependency
         from parallax import cli as _cli_mod
-        click_group = _typer.main.get_group(_cli_mod.app)
-        with _click.Context(click_group) as ctx:
-            info = click_group.to_info_dict(ctx)
-        print(_json.dumps(info, indent=2))
+        print(json.dumps(_command_info(typer.main.get_group(_cli_mod.app)), indent=2))
         return 0
 
     if target is not None:

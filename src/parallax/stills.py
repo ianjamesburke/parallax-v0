@@ -227,12 +227,17 @@ def normalize_aspect(still_path: str | Path, target_resolution: str) -> Path:
         y0 = (src_h - new_h) // 2
 
     img = Image.open(src)
+    pnginfo = None
+    if img.info.get("parallax_mock") == "1":
+        from PIL.PngImagePlugin import PngInfo
+        pnginfo = PngInfo()
+        pnginfo.add_text("parallax_mock", "1")
     cropped = img.crop((x0, y0, x0 + new_w, y0 + new_h))
     if (cropped.width, cropped.height) != (target_w, target_h):
         cropped = cropped.resize((target_w, target_h), Image.Resampling.LANCZOS)
     if cropped.mode != "RGB":
         cropped = cropped.convert("RGB")
-    cropped.save(out, format="PNG")
+    cropped.save(out, format="PNG", pnginfo=pnginfo)
 
     # Delete the un-normalized source — the normalized file is the
     # canonical output and the original is just disk noise.

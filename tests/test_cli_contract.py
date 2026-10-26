@@ -8,6 +8,7 @@ This is the regression harness for issue #100 (argparse → Typer rewrite).
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -215,19 +216,39 @@ class TestCredits:
 # ---------------------------------------------------------------------------
 
 class TestCompletions:
-    def test_print_zsh(self, capsys):
-        rc = cli.main(["completions", "print", "zsh"])
+    @pytest.mark.parametrize("shell", ["zsh", "bash"])
+    def test_print_uses_source_shell_instruction(self, capsys, shell):
+        rc = cli.main(["completions", "print", shell])
         assert rc == 0
+        out = capsys.readouterr().out
+        assert f"_PARALLAX_COMPLETE=source_{shell} parallax" in out
+        assert f"{shell}_source" not in out
 
-    def test_print_bash(self, capsys):
-        rc = cli.main(["completions", "print", "bash"])
-        assert rc == 0
+    @pytest.mark.parametrize("shell,marker", [("zsh", "#compdef parallax"), ("bash", "_parallax_completion()")])
+    def test_install_writes_working_instruction(self, tmp_path, shell, marker):
+        import shutil
+        import subprocess
+        import sys
 
-    def test_install_writes_file(self, tmp_path):
-        out = tmp_path / "completion.zsh"
-        rc = cli.main(["completions", "install", "--shell", "zsh", "--path", str(out)])
+        out = tmp_path / f"completion.{shell}"
+        rc = cli.main(["completions", "install", "--shell", shell, "--path", str(out)])
         assert rc == 0
-        assert out.exists()
+        content = out.read_text()
+        assert f"_PARALLAX_COMPLETE=source_{shell} parallax" in content
+        assert f"{shell}_source" not in content
+
+        # Run the generated instruction for real: the env var plus the CLI must
+        # emit a shell completion definition, not "Shell source not supported.".
+        # The instruction is `eval "$(VAR=value parallax)"`; take VAR=value from it.
+        assignment = content.split("$(", 1)[1].split(" parallax)", 1)[0]
+        var, _, value = assignment.partition("=")
+        parallax_bin = shutil.which("parallax", path=str(Path(sys.executable).parent))
+        assert parallax_bin, "parallax entry point missing from the test interpreter's bin dir"
+        env = {**os.environ, var: value}
+        result = subprocess.run([parallax_bin], env=env, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert marker in result.stdout, result.stdout or result.stderr
+        assert "not supported" not in result.stdout + result.stderr
 
     def test_invalid_shell_rejected(self):
         _rejects_args("completions", "print", "fish")
@@ -383,13 +404,51 @@ class TestAudio:
     def test_voiceover_happy_path(self, monkeypatch, tmp_path, capsys):
         import parallax.voiceover as vo_mod
         src = tmp_path / "src.mp3"
-        src.write_bytes(b"")
+        src.write_bytes(b"provider audio")
         out = tmp_path / "out.mp3"
-        monkeypatch.setattr(vo_mod, "generate_voiceover_dict", lambda **kw: {
-            "audio_path": str(src), "total_duration_s": 2.0,
-        })
+        called = []
+
+        def fake_voiceover(**kw):
+            called.append(kw)
+            return {"raw_audio_path": str(src), "audio_path": str(src), "total_duration_s": 2.0}
+
+        monkeypatch.setattr(vo_mod, "generate_voiceover_dict", fake_voiceover)
         rc = cli.main(["audio", "voiceover", "--text", "hello world", "--out", str(out)])
         assert rc == 0
+        assert called[0]["trim_pauses"] is False
+        assert out.read_bytes() == src.read_bytes()
+        assert "output preserves provider audio" in capsys.readouterr().out
+
+        rc = cli.main([
+            "audio", "voiceover", "--text", "hello world", "--out", str(out),
+            "--trim-pauses",
+        ])
+        assert rc == 0
+        assert called[1]["trim_pauses"] is True
+        assert (tmp_path / "out.provider-raw.mp3").read_bytes() == b"provider audio"
+        assert "provider raw:" in capsys.readouterr().out
+
+    def test_voiceover_speed_keeps_provider_raw(self, monkeypatch, tmp_path, capsys):
+        import parallax.voiceover as vo_mod
+        import parallax.audio as audio_mod
+        import parallax.ffmpeg_utils as ffmpeg_mod
+        raw = tmp_path / "raw.mp3"
+        raw.write_bytes(b"original provider bytes")
+        processed = tmp_path / "processed.mp3"
+        processed.write_bytes(b"speed input")
+        out = tmp_path / "out.mp3"
+        monkeypatch.setattr(vo_mod, "generate_voiceover_dict", lambda **kw: {
+            "raw_audio_path": str(raw), "audio_path": str(processed), "total_duration_s": 2.0,
+        })
+        monkeypatch.setattr(audio_mod, "speedup", lambda _src, dst, _speed: dst.write_bytes(b"sped up"))
+        monkeypatch.setattr(ffmpeg_mod, "run_ffmpeg", lambda *_args, **_kwargs: type("Probe", (), {"stdout": "1.667"})())
+        rc = cli.main([
+            "audio", "voiceover", "--text", "hello", "--out", str(out), "--speed", "1.2",
+        ])
+        assert rc == 0
+        assert out.read_bytes() == b"sped up"
+        assert (tmp_path / "out.provider-raw.mp3").read_bytes() == raw.read_bytes()
+        assert "output speed-adjusted" in capsys.readouterr().out
 
     def test_speed_help(self):
         _help_exits_zero("audio", "speed")
@@ -537,6 +596,19 @@ class TestImage:
         rc = cli.main(["image", "generate", "a lion at sunset", "--out", str(tmp_path)])
         assert rc == 0
         assert str(out) in capsys.readouterr().out
+
+    def test_generate_prints_estimate_before_the_provider_call(self, monkeypatch, tmp_path, capsys):
+        import parallax.openrouter as or_mod
+        monkeypatch.delenv("PARALLAX_TEST_MODE", raising=False)
+        seen = []
+
+        def fake_generate(*a, **kw):
+            seen.append(capsys.readouterr().err)
+            return tmp_path / "img.png"
+
+        monkeypatch.setattr(or_mod, "generate_image", fake_generate)
+        assert cli.main(["image", "generate", "a lion", "--out", str(tmp_path)]) == 0
+        assert "Estimated cost: ~$" in seen[0] and "image generate" in seen[0]
 
     def test_analyze_help(self):
         _help_exits_zero("image", "analyze")
@@ -694,7 +766,7 @@ class TestProduce:
         plan = tmp_path / "plan.yaml"
         plan.write_text("scenes: []\n")
         monkeypatch.setattr(produce_mod, "run_plan", lambda **kw: self._fake_result(tmp_path))
-        rc = cli.main(["produce", "--folder", str(tmp_path), "--plan", str(plan), "--yes"])
+        rc = cli.main(["produce", "--folder", str(tmp_path), "--plan", str(plan)])
         assert rc == 0
 
     def test_hq_flag_accepted(self, monkeypatch, tmp_path, capsys):
@@ -708,7 +780,7 @@ class TestProduce:
             return self._fake_result(tmp_path)
 
         monkeypatch.setattr(produce_mod, "run_plan", fake_run)
-        cli.main(["produce", "--folder", str(tmp_path), "--plan", str(plan), "--yes", "--hq"])
+        cli.main(["produce", "--folder", str(tmp_path), "--plan", str(plan), "--hq"])
         assert captured.get("hq") is True
 
     def test_debug_level_passed(self, monkeypatch, tmp_path):
@@ -722,5 +794,65 @@ class TestProduce:
             return self._fake_result(tmp_path)
 
         monkeypatch.setattr(produce_mod, "run_plan", fake_run)
-        cli.main(["produce", "--folder", str(tmp_path), "--plan", str(plan), "--yes", "--debug", "2"])
+        cli.main(["produce", "--folder", str(tmp_path), "--plan", str(plan), "--debug", "2"])
         assert captured.get("debug_level") == 2
+
+
+# ---------------------------------------------------------------------------
+# export
+# ---------------------------------------------------------------------------
+
+class TestExport:
+    def test_bare_export_shows_help(self):
+        assert cli.main(["export"]) == 0
+
+    def test_editor_help(self):
+        _help_exits_zero("export", "editor")
+
+    def test_editor_folder_required(self):
+        _rejects_args("export", "editor")
+
+    def test_editor_happy_path(self, monkeypatch, tmp_path, capsys):
+        import parallax.editor_export as exp_mod
+        captured: dict = {}
+
+        def fake_export(**kw):
+            captured.update(kw)
+            return {
+                "out_dir": str(tmp_path / "editor-handoff"),
+                "files": ["timeline.xml", "timeline.fcpxml", "README.txt", "handoff.json"],
+                "sequence_duration_frames": 90,
+                "sequence_duration_s": 3.0,
+                "fps": 30,
+                "warnings": [],
+                "problems": [],
+            }
+
+        monkeypatch.setattr(exp_mod, "export_editor_package", fake_export)
+        rc = cli.main(["export", "editor", "--folder", str(tmp_path), "--fps", "24", "--no-fcpxml"])
+        assert rc == 0
+        assert captured["folder"] == str(tmp_path)
+        assert captured["fps"] == 24
+        assert captured["fcpxml"] is False
+        assert "editor-handoff" in capsys.readouterr().out
+
+    def test_editor_json_flag(self, monkeypatch, tmp_path, capsys):
+        import parallax.editor_export as exp_mod
+        monkeypatch.setattr(
+            exp_mod,
+            "export_editor_package",
+            lambda **kw: {
+                "out_dir": str(tmp_path / "editor-handoff"),
+                "files": ["timeline.xml"],
+                "sequence_duration_frames": 60,
+                "sequence_duration_s": 2.0,
+                "fps": 30,
+                "warnings": [],
+                "problems": [],
+            },
+        )
+        rc = cli.main(["export", "editor", "--folder", str(tmp_path), "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["sequence_duration_frames"] == 60
+

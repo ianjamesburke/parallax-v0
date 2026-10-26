@@ -24,6 +24,8 @@ from .text_expand import expand_digits
 
 log = get_logger(__name__)
 
+_ASSEMBLY_FPS = 30
+
 
 def _norm_word(w: str) -> str:
     """Strip punctuation and lowercase for TTS↔plan word comparison."""
@@ -237,9 +239,18 @@ def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> li
         end_idx = _find_scene_end(words, cursor, plan_words, window_cap=window_cap, freq_map=freq_map)
         if end_idx is None:
             if cursor + content_count > len(words):
-                log.warning("Scene %s: no match and only %d words remain; extending to end",
-                            scene.get("index", "?"), len(words) - cursor)
-                content_count = len(words) - cursor
+                remaining = len(words) - cursor
+                if remaining == 0 and content_count > 0:
+                    log.warning(
+                        "Scene %s: TTS audio ended early (0 words remain in transcript for %d planned words) — "
+                        "the TTS model likely abridged or truncated the script. Switch to `voice_model: tts-gemini` "
+                        "(e.g. `voice: Kore` or `Aoede`) or regenerate voiceover.",
+                        scene.get("index", "?"), content_count,
+                    )
+                else:
+                    log.warning("Scene %s: no match and only %d words remain; extending to end",
+                                scene.get("index", "?"), remaining)
+                content_count = remaining
             if content_count == 0:
                 continue
             end_idx = cursor + content_count - 1
@@ -306,13 +317,29 @@ def align_scenes_obj(scenes: list[dict], words_payload: list[dict] | dict) -> li
     else:
         total = float(words[-1]["end"]) if words else 0.0
 
-    # Make scenes contiguous: each scene starts where the previous one ended.
-    # Scene 0 starts at 0 to absorb leading silence; the last scene's end is
-    # snapped to total audio duration to absorb trailing silence.
+    # Make scenes contiguous at the incoming scene's first spoken word.  The
+    # search above already assigned that start, but replacing it with the
+    # previous scene's last-word end makes every new visual lead its narration
+    # by the whole inter-scene pause.  Let the outgoing visual hold that pause.
+    # If word alignments actually overlap, do not cut away the outgoing word;
+    # place the cut at its end and log the unavoidable late incoming visual.
+    # Scene 0 absorbs leading silence; the final scene absorbs trailing silence.
     if scenes:
         scenes[0]["start_s"] = 0.0
         for i in range(1, len(scenes)):
-            scenes[i]["start_s"] = scenes[i - 1]["end_s"]
+            outgoing = scenes[i - 1]
+            incoming = scenes[i]
+            outgoing_last_end = float(outgoing.get("end_s", outgoing["start_s"]))
+            incoming_first_start = float(incoming.get("start_s", outgoing_last_end))
+            boundary = max(outgoing_last_end, incoming_first_start)
+            if incoming_first_start < outgoing_last_end:
+                log.warning(
+                    "Scene %s: first word %.3fs overlaps previous last word %.3fs; "
+                    "cutting after the outgoing word",
+                    incoming.get("index", i), incoming_first_start, outgoing_last_end,
+                )
+            outgoing["end_s"] = round(boundary, 3)
+            incoming["start_s"] = outgoing["end_s"]
         scenes[-1]["end_s"] = round(total, 3)
         for s in scenes:
             s["duration_s"] = round(s["end_s"] - s["start_s"], 2)
@@ -526,6 +553,45 @@ def _apply_debug_overlay(
     )
 
 
+def _scene_frame_budgets(scenes: list[dict], fps: int = _ASSEMBLY_FPS) -> list[int]:
+    """Give a contiguous hard-cut timeline one shared frame grid.
+
+    Rounding each duration independently can accumulate whole-frame drift at
+    later word onsets.  Quantize absolute scene boundaries once, then take
+    differences.  Explicit start offsets may intentionally make a timeline
+    noncontiguous; retain legacy duration-based allocation for that case.
+    """
+    contiguous = bool(scenes) and all(
+        s.get("start_s") is not None and s.get("end_s") is not None for s in scenes
+    )
+    if contiguous:
+        contiguous = abs(float(scenes[0]["start_s"])) < 0.001 and all(
+            abs(float(a["end_s"]) - float(b["start_s"])) < 0.001
+            for a, b in zip(scenes, scenes[1:])
+        )
+
+    if contiguous:
+        edges = [round(float(s["start_s"]) * fps) for s in scenes]
+        edges.append(round(float(scenes[-1]["end_s"]) * fps))
+        budgets = [end - start for start, end in zip(edges, edges[1:])]
+    else:
+        budgets = [round(float(s.get("duration_s", 5.0)) * fps) for s in scenes]
+
+    for scene, frames in zip(scenes, budgets):
+        if frames < 1:
+            vo_words = len((scene.get("vo_text") or "").split())
+            tts_hint = (
+                " (if TTS audio ended early and left trailing scenes with 0.00s, "
+                "switch to `voice_model: tts-gemini` with `voice: Kore` or `Aoede` and regenerate voiceover)"
+                if vo_words >= 2 else ""
+            )
+            raise ValueError(
+                f"scene {scene.get('index', '?')}: duration rounds to zero frames "
+                f"at {fps} fps; merge or lengthen this scene{tts_hint}"
+            )
+    return budgets
+
+
 def ken_burns_assemble(
     scenes_json: str,
     audio_path: str | None,
@@ -548,6 +614,7 @@ def ken_burns_assemble(
     if not scenes:
         raise ValueError("No scenes provided")
     scenes = _resolve_auto_trim(scenes)
+    frame_budgets = _scene_frame_budgets(scenes)
 
     out = Path(output_path or str(output_dir() / "ken_burns_draft.mp4"))
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -558,8 +625,8 @@ def ken_burns_assemble(
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         clip_paths: list[str] = []
-        for i, scene in enumerate(scenes):
-            dur = float(scene.get("duration_s", 5.0))
+        for i, (scene, target_frames) in enumerate(zip(scenes, frame_budgets)):
+            dur = target_frames / _ASSEMBLY_FPS
             clip_out = str(Path(tmp_dir) / f"scene_{i:04d}.mp4")
 
             zoom_dir = scene.get("zoom_direction")
@@ -603,8 +670,9 @@ def ken_burns_assemble(
                     src = pp_path
                 run_ffmpeg(
                     [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-                     "-stream_loop", "-1", "-i", src, "-t", str(dur),
+                     "-stream_loop", "-1", "-i", src,
                      "-vf", vf,
+                     "-frames:v", str(target_frames),
                      "-an", "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
                      clip_out],
                     check=True,
@@ -729,15 +797,15 @@ def _zoom_filter(
     zexpr = f"1+{zd:.4f}*t/{dur}"  # zoom factor expression: 1.0 → zoom_amount over clip
 
     if direction == "up":
-        cx, cy = "(iw-1080)/2", "0"
+        cx, cy = f"(iw-{wi})/2", "0"
     elif direction == "down":
-        cx, cy = "(iw-1080)/2", f"(ih-{hi})"
+        cx, cy = f"(iw-{wi})/2", f"(ih-{hi})"
     elif direction == "left":
         cx, cy = "0", f"(ih-{hi})/2"
     elif direction == "right":
         cx, cy = f"(iw-{wi})", f"(ih-{hi})/2"
     else:  # "in" — centered
-        cx, cy = "(iw-1080)/2", f"(ih-{hi})/2"
+        cx, cy = f"(iw-{wi})/2", f"(ih-{hi})/2"
 
     # First scale: fit-to-fill (force_original_aspect_ratio=increase) + center-crop
     # so non-9:16 sources don't get stretched into the target frame. The

@@ -22,11 +22,14 @@ names do NOT silently work.
 
 from __future__ import annotations
 
+import contextvars
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+_stills_only_ctx: contextvars.ContextVar[bool] = contextvars.ContextVar("_stills_only_ctx", default=False)
 
 
 _ALLOWED_ASPECTS = ("9:16", "16:9", "1:1", "4:3", "3:4")
@@ -98,12 +101,15 @@ class PlanScene(BaseModel):
 
     index: int
     shot_type: Literal["character", "broll", "screen"] = "broll"
+    scene_type: Literal["still", "animation", "motion_graphic"] | None = None
     vo_text: str = ""
     prompt: str = ""
 
     # Asset locks
     still_path: str | None = None
     clip_path: str | None = None
+    motion_style: str | None = None
+    html_path: str | None = None
     end_frame_path: str | None = None
     reference: bool | None = None
     reference_images: list[str] | None = None
@@ -161,6 +167,31 @@ class PlanScene(BaseModel):
                 data["clip_trim_start_s"] = data.pop("clip_offset_s")
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def _scene_type_animation(cls, data: Any) -> Any:
+        from .scene_types import normalize_scene_type
+        data = normalize_scene_type(data)
+        if (
+            isinstance(data, dict)
+            and data.get("scene_type") == "motion_graphic"
+            and not data.get("clip_path")
+            and not data.get("motion_style")
+            and not data.get("html_path")
+            and not _stills_only_ctx.get()
+        ):
+            raise ValueError(f"scene {data.get('index', '?')}: motion_graphic requires a locally rendered clip_path; AI generation is not supported")
+        return data
+
+    @field_validator("motion_style")
+    @classmethod
+    def _check_motion_style(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        from .html_motion import load_style_preset
+        load_style_preset(v)
+        return v
+
     @field_validator("aspect")
     @classmethod
     def _check_aspect(cls, v: str | None) -> str | None:
@@ -185,6 +216,8 @@ class Plan(BaseModel):
     voice: str = "nova"
     voice_speed: float = 1.0
     voice_model: str = "tts-mini"
+    voice_prompt: str | None = None
+    brand: dict[str, Any] | None = None
     style: str | None = None
     style_hint: str | None = None
     pronunciations: dict[str, str] = Field(default_factory=dict)
@@ -204,11 +237,19 @@ class Plan(BaseModel):
     # Headline
     headline: str | None = None
     headline_fontsize: int | None = None
+    headline_y_position: str | None = None  # ffmpeg expression for top of text block
+    headline_font: Literal["bangers", "impact", "bebas", "anton", "clean"] | None = None
     headline_bg: str | None = None
     headline_color: str | None = None
+    # Opening overlays are opaque from frame 0 unless explicitly opted into a fade.
+    headline_fade_in_s: float = Field(default=0.0, ge=0.0)
 
     # Video generation resolution (plan-level default; per-scene overrides allowed)
     animate_resolution: str | None = None
+
+    # Brief this plan was materialized from (path relative to the project folder when inside it).
+    # produce re-checks that brief's reference gates, so a plan cannot bypass them.
+    source_brief: str | None = None
 
     # Character / avatar / product
     character_image: str | None = None
@@ -224,9 +265,11 @@ class Plan(BaseModel):
 
     # Pipeline behavior
     stills_only: bool = False
-    trim_pauses: bool | float = True  # Remove overlong inter-word gaps in the raw TTS audio during voiceover generation. True uses the default threshold (0.4s); pass a float to override; False skips entirely. Does NOT touch scene boundaries.
+    trim_pauses: bool | float = True  # Safely cap long inter-word gaps with bilateral lead-in and crossfade. True caps at 0.75s; a float >=0.4 sets the cap; False preserves provider audio. Does NOT touch scene boundaries.
     voice_postprocess: VoicePostprocess | None = None
     titles: list[dict[str, Any]] | None = None
+    animate_opening_s: float = 15.0
+    allow_fallback: bool = False
 
     # Transitions
     default_transition: str | None = None
@@ -235,12 +278,44 @@ class Plan(BaseModel):
     # Scenes
     scenes: list[PlanScene]
 
+    @model_validator(mode="wrap")
+    @classmethod
+    def _validate_with_stills_only_context(cls, data: Any, handler: Any) -> "Plan":
+        stills_only = bool(data.get("stills_only")) if isinstance(data, dict) else False
+        token = _stills_only_ctx.set(stills_only)
+        try:
+            return handler(data)
+        finally:
+            _stills_only_ctx.reset(token)
+
     @model_validator(mode="before")
     @classmethod
     def _reject_renamed_top_level(cls, data: Any) -> Any:
         if isinstance(data, dict):
             _check_renamed(data, scope="plan")
         return data
+
+    @model_validator(mode="after")
+    def _require_motion_graphic_clip(self) -> "Plan":
+        if not self.stills_only:
+            for scene in self.scenes:
+                if (
+                    scene.scene_type == "motion_graphic"
+                    and not scene.clip_path
+                    and not scene.motion_style
+                    and not scene.html_path
+                ):
+                    raise ValueError(
+                        f"scene {scene.index}: motion_graphic requires a locally rendered clip_path; AI generation is not supported"
+                    )
+        return self
+
+    @field_validator("trim_pauses")
+    @classmethod
+    def _validate_trim_pauses(cls, value: bool | float) -> bool | float:
+        if isinstance(value, float) and value < 0.4:
+            raise ValueError("trim_pauses gap cap must be at least 0.4s to retain word lead-in")
+        return value
 
     # ---------------------------------------------------------------- I/O
 

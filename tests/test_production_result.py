@@ -103,6 +103,20 @@ def test_full_run_returns_ok_result(monkeypatch, tmp_path):
     assert result.error is None
 
 
+def test_animated_plan_without_voiceover_skips_captions_and_delivers(monkeypatch, tmp_path):
+    monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
+    folder = tmp_path / "silent_animation"
+    folder.mkdir()
+    plan_path = folder / "plan.yaml"
+    plan_path.write_text(yaml.safe_dump({"video_model": "draft", "scenes": [
+        {"index": 0, "prompt": "A still", "motion_prompt": "A subtle move", "animate": True},
+    ]}))
+    result = run_plan(folder=folder, plan_path=plan_path)
+    assert result.status == "ok", result.error
+    assert result.final_video and result.final_video.is_file()
+    assert "no voiceover, skipping captions" in (result.output_dir / "run.log").read_text()
+
+
 def test_stills_only_run_returns_ok_with_stills_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
 
@@ -128,6 +142,7 @@ def test_stills_only_run_returns_ok_with_stills_dir(monkeypatch, tmp_path):
     assert result.run_id is not None
     assert result.output_dir is not None
     assert result.stills_dir is not None
+    assert (result.stills_dir / "scene_00_still.png").is_file()
     assert result.final_video is None
     assert result.cost_usd == 0.0
     assert result.error is None

@@ -41,6 +41,8 @@ Plan YAML schema:
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sys
 import traceback
 from dataclasses import dataclass
@@ -78,7 +80,7 @@ def _apply_regenerate_flags(plan: dict, plan_path: Path) -> None:
     Only per-scene asset lock fields are cleared: still_path, clip_path, end_frame_path.
     Top-level audio_path/words_path are NOT cleared — those are plan-wide locks.
     """
-    _SCENE_LOCK_FIELDS = ("still_path", "clip_path", "end_frame_path")
+    _SCENE_LOCK_FIELDS = ("still_path", "clip_path", "end_frame_path", "html_path")
     changed = False
     for scene in plan.get("scenes", []):
         if scene.get("regenerate"):
@@ -108,6 +110,28 @@ def _apply_regenerate_flags(plan: dict, plan_path: Path) -> None:
     with plan_path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(disk_plan, f, default_flow_style=False, allow_unicode=True,
                        sort_keys=False, width=10000)
+
+    source_brief = plan.get("source_brief") or disk_plan.get("source_brief")
+    if source_brief:
+        brief_path = Path(source_brief).expanduser()
+        if not brief_path.is_absolute():
+            brief_path = plan_path.parent.parent.parent / brief_path
+        if brief_path.is_file():
+            try:
+                brief_data = yaml.safe_load(brief_path.read_text(encoding="utf-8")) or {}
+                brief_changed = False
+                for b_scene in (brief_data.get("script") or {}).get("scenes", []):
+                    if b_scene.get("regenerate"):
+                        for f in _SCENE_LOCK_FIELDS:
+                            b_scene.pop(f, None)
+                        b_scene.pop("regenerate", None)
+                        brief_changed = True
+                if brief_changed:
+                    with brief_path.open("w", encoding="utf-8") as bf:
+                        yaml.safe_dump(brief_data, bf, default_flow_style=False, allow_unicode=True,
+                                       sort_keys=False, width=10000)
+            except Exception:
+                pass
 
 
 def _init_vo_text_hashes(plan: dict, plan_path: Path) -> None:
@@ -143,12 +167,31 @@ def _init_vo_text_hashes(plan: dict, plan_path: Path) -> None:
                        sort_keys=False, width=10000)
 
 
+def _refresh_storyboard_package(plan: dict[str, Any], settings: Any) -> None:
+    """Refresh <folder>/storyboard-package/ from source_brief after real-mode asset generation."""
+    if settings.mode != ProductionMode.REAL:
+        return
+    source_brief = plan.get("source_brief")
+    if not source_brief:
+        return
+    brief_path = Path(source_brief).expanduser()
+    if not brief_path.is_absolute():
+        brief_path = settings.folder / brief_path
+    if not brief_path.is_file():
+        return
+    from .storyboard_package import write_package
+
+    try:
+        write_package(brief_path, settings.folder, settings.folder / "storyboard-package")
+    except Exception as exc:
+        log.warning("failed to refresh storyboard-package from %s: %s", brief_path, exc)
+
+
 def run_plan(
     folder: str | Path,
     plan_path: str | Path,
     aspect: str | None = None,
     mode: "ProductionMode | None" = None,
-    yes: bool = False,
     hq: bool = False,
     debug_level: int = 0,
 ) -> ProductionResult:
@@ -176,6 +219,13 @@ def run_plan(
                                 final_video=None, stills_dir=None, cost_usd=0.0,
                                 error=f"invalid plan {plan_path}:\n{e}")
 
+    missing = [tool for tool in ("ffmpeg", "ffprobe") if shutil.which(tool) is None]
+    if missing:
+        return ProductionResult(status="error", run_id=None, output_dir=None,
+                                final_video=None, stills_dir=None, cost_usd=0.0,
+                                error=f"{' and '.join(missing)} not found on PATH. produce needs ffmpeg (with ffprobe) even in PARALLAX_TEST_MODE. "
+                                      "Install: macOS `brew install ffmpeg-full`, Debian/Ubuntu `sudo apt install ffmpeg`, then re-run.")
+
     # The mutable stage blackboard stays dict-shaped so stages can write
     # _runtime without touching the frozen Pydantic model.
     plan: dict[str, Any] = typed_plan.to_dict()
@@ -188,12 +238,13 @@ def run_plan(
         plan["video_model"] = "mid"
 
     if aspect is not None:
+        old_aspect = plan.get("aspect", "9:16")
         plan["aspect"] = aspect
-        # CLI override means "render at this aspect" — drop any plan-pinned
-        # `resolution` so it gets re-derived from the new aspect. Otherwise
-        # a 16:9 override against a `resolution: 1080x1920` plan would mix
-        # the new aspect into a portrait frame.
-        plan.pop("resolution", None)
+        # CLI override to a different aspect means "render at this aspect" —
+        # drop any plan-pinned `resolution` so it gets re-derived from the new
+        # aspect. Keep `resolution` when aspect is unchanged.
+        if aspect != old_aspect:
+            plan.pop("resolution", None)
 
     scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
     if not scenes_raw:
@@ -217,15 +268,19 @@ def run_plan(
     _tmo_token = _tmo.set(settings.mode == ProductionMode.TEST)
 
     try:
+        # Print the estimate before anything touches a provider.
+        from .preflight import compute_preflight, format_preflight
+        _pf_result = compute_preflight(plan, folder=folder, output_resolution=settings.resolution)
+        print(format_preflight(_pf_result), flush=True)
+
         # Pre-flight: in real-mode, check OpenRouter credits before any work runs.
         # 402 mid-pipeline is brutal (partial spend on stills, then dies on i2v);
         # checking once at the top fails loud, fails early.
-        _credits_balance: float | None = None
         if settings.mode == ProductionMode.REAL:
             from . import openrouter
             try:
                 balance = openrouter.check_credits(min_balance_usd=0.50)
-                _credits_balance = balance.remaining
+                _pf_result.balance_usd = balance.remaining
                 settings.events("log", {
                     "msg": f"openrouter credits: ${balance.remaining:.2f} remaining "
                            f"(${balance.total:.2f} total, ${balance.used:.2f} used)"
@@ -239,14 +294,6 @@ def run_plan(
                     "msg": f"WARNING: credits pre-flight check failed ({type(e).__name__}: {e}); "
                            f"continuing — first OpenRouter call will surface the real error"
                 })
-
-        from .preflight import compute_preflight, prompt_proceed as _prompt_proceed
-        _pf_result = compute_preflight(plan, balance_usd=_credits_balance, folder=folder, output_resolution=settings.resolution)
-        if not _prompt_proceed(_pf_result, yes=yes):
-            return ProductionResult(
-                status="cancelled", run_id=None, output_dir=None,
-                final_video=None, stills_dir=None, cost_usd=0.0, error=None,
-            )
 
         import uuid as _uuid
         current_session_id.set(f"produce-{_uuid.uuid4().hex[:8]}")
@@ -293,6 +340,7 @@ def run_plan(
                 plan = _wrap_stage(stage_scan)(plan, settings, state)
                 plan = _wrap_stage(stage_stills)(plan, settings, state)
                 settings.events("log", {"msg": "stills_only — skipping audio, video, and assembly stages"})
+                _refresh_storyboard_package(plan, settings)
                 run_cost = settings.usage.total_cost_usd
                 cost_data = {
                     "run_id": run_id,
@@ -301,13 +349,14 @@ def run_plan(
                     "version": state.version,
                 }
                 (Path(state.out_dir) / "cost.json").write_text(json.dumps(cost_data, indent=2) + "\n")
-                runlog.end_run(status="ok", final_video=state.stills_dir)
+                final_stills_dir = state.assets_dir or state.stills_dir
+                runlog.end_run(status="ok", final_video=final_stills_dir)
                 return ProductionResult(
                     status="ok",
                     run_id=run_id,
                     output_dir=Path(state.out_dir),
                     final_video=None,
-                    stills_dir=Path(state.stills_dir),
+                    stills_dir=Path(final_stills_dir),
                     cost_usd=run_cost,
                     error=None,
                 )
@@ -317,6 +366,17 @@ def run_plan(
             for stage in STAGES:
                 plan = stage(plan, settings, state)
 
+            _refresh_storyboard_package(plan, settings)
+            if settings.mode == ProductionMode.REAL and state.current_video and Path(state.current_video).is_file():
+                exports_dir = settings.folder / "exports"
+                exports_dir.mkdir(parents=True, exist_ok=True)
+                export_dst = exports_dir / Path(state.current_video).name
+                try:
+                    if export_dst.exists():
+                        export_dst.unlink()
+                    os.link(state.current_video, export_dst)
+                except OSError:
+                    shutil.copy2(state.current_video, export_dst)
             runlog.end_run(status="ok", final_video=str(state.current_video))
             return ProductionResult(
                 status="ok",
@@ -336,6 +396,9 @@ def run_plan(
                 traceback=traceback.format_exc(),
             )
             runlog.end_run(status="error")
+            # Preserve recovery context for the CLI while retaining the original
+            # exception type and traceback for library callers and run.log.
+            setattr(_exc, "parallax_run_id", run_id)
             raise
     finally:
         _tmo.reset(_tmo_token)

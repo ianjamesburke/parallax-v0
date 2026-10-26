@@ -115,6 +115,146 @@ def audio_cap_pauses(
     return 0
 
 
+@audio_app.command(name="cap-sentence-silence")
+def audio_cap_sentence_silence(
+    input: str = typer.Option(..., "--input", "-i", help="Source audio; preserved unchanged."),
+    output: str = typer.Option(..., "--output", "-o", help="Edited WAV output path."),
+    words: str = typer.Option(..., "--words", help="Canonical word-timing JSON with sentence punctuation."),
+    words_out: str = typer.Option(..., "--words-out", help="Output JSON with adjusted canonical word timings."),
+    report: Optional[str] = typer.Option(None, "--report", help="Detailed acoustic cuts and provenance JSON."),
+    max_silence: float = typer.Option(0.075, "--max-silence", help="Maximum continuous acoustic quiet at sentence boundaries, seconds (default: 0.075)."),
+    crossfade: float = typer.Option(0.010, "--crossfade", help="Quiet-only join crossfade in seconds (default: 0.010)."),
+    noise_db: float = typer.Option(-40.0, "--noise-db", help="Acoustic quiet threshold in dB (default: -40)."),
+    min_silence: float = typer.Option(0.040, "--min-silence", help="Minimum detected quiet segment, seconds (default: 0.040)."),
+    first_word_by: Optional[float] = typer.Option(None, "--first-word-by", help="Optionally trim verified opening quiet so the first aligned word starts by this second (e.g. 0.100)."),
+) -> int:
+    """Shorten measured quiet between sentences while preserving audible edges.
+
+    Unlike cap-pauses, this uses punctuation only to select boundaries and
+    measured acoustic quiet to place cuts. It always writes revised timestamps
+    for downstream captions, scene timing, and graphics.
+    """
+    import json
+    import tempfile
+    from contextlib import nullcontext
+    from pathlib import Path
+    from ..audio import cap_sentence_silence, trim_leading_quiet
+
+    paths = [Path(p).expanduser().resolve() for p in (input, output, words, words_out)]
+    if report:
+        paths.append(Path(report).expanduser().resolve())
+    if len(set(paths)) != len(paths):
+        raise typer.BadParameter("input, output, words, words-out, and report must be distinct paths")
+
+    word_data = json.loads(Path(words).read_text())
+    word_list = word_data if isinstance(word_data, list) else word_data.get("words", [])
+    with (tempfile.TemporaryDirectory() if first_word_by is not None else nullcontext(None)) as tmpdir:
+        sentence_output = str(Path(tmpdir) / "sentence-capped.wav") if tmpdir else output
+        result = cap_sentence_silence(
+            input_path=input,
+            output_path=sentence_output,
+            words=word_list,
+            max_silence_s=max_silence,
+            crossfade_s=crossfade,
+            noise_db=noise_db,
+            min_silence_s=min_silence,
+        )
+        if first_word_by is not None:
+            opening = trim_leading_quiet(
+                input_path=sentence_output, output_path=output,
+                words=result["adjusted_words"], first_word_by_s=first_word_by,
+                noise_db=noise_db,
+            )
+            result["sentence_stage_duration_s"] = result["new_duration_s"]
+            result["output"] = str(Path(output).resolve())
+            result["new_duration_s"] = opening["new_duration_s"]
+            result["seconds_removed"] = round(
+                result["original_duration_s"] - opening["new_duration_s"], 4
+            )
+            result["adjusted_words"] = opening["adjusted_words"]
+            for edit in result["edits"]:
+                edit["sentence_stage_verified_quiet_start_s"] = edit["verified_quiet_start_s"]
+                edit["verified_quiet_start_s"] = round(
+                    edit["verified_quiet_start_s"] - opening["seconds_removed"], 4
+                )
+            result["source_cut_coordinate_system"] = "original input audio"
+            result["verified_quiet_coordinate_system"] = "final output audio"
+            result["opening_trim"] = {
+                key: value for key, value in opening.items()
+                if key not in ("input", "output", "adjusted_words")
+            }
+    adjusted = result.pop("adjusted_words")
+    words_path = Path(words_out)
+    words_path.parent.mkdir(parents=True, exist_ok=True)
+    words_path.write_text(json.dumps({"words": adjusted, "total_duration_s": result["new_duration_s"]}, indent=2))
+    result["words_input"] = str(Path(words).resolve())
+    result["words_output"] = str(words_path.resolve())
+    if report:
+        report_path = Path(report)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(result, indent=2))
+    print(
+        f"cap-sentence-silence: {result['quiet_segments_capped']} quiet segments at "
+        f"{result['sentence_boundaries']} sentence boundaries; "
+        f"{result['seconds_removed']:.3f}s removed"
+    )
+    print(f"  audio  → {output}")
+    print(f"  words  → {words_out}")
+    if report:
+        print(f"  report → {report}")
+    return 0
+
+
+@audio_app.command(name="trim-leading-quiet")
+def audio_trim_leading_quiet(
+    input: str = typer.Option(..., "--input", "-i", help="Source audio; preserved unchanged."),
+    output: str = typer.Option(..., "--output", "-o", help="Edited WAV output path."),
+    words: str = typer.Option(..., "--words", help="Canonical word-timing JSON."),
+    words_out: str = typer.Option(..., "--words-out", help="Output JSON with shifted canonical word timings."),
+    report: Optional[str] = typer.Option(None, "--report", help="Detailed measured opening trim JSON."),
+    first_word_by: float = typer.Option(0.100, "--first-word-by", help="Latest allowed first-word start, seconds (default: 0.100)."),
+    min_leading_quiet: float = typer.Option(0.020, "--min-leading-quiet", help="Protected acoustic quiet before detectable speech, seconds (default: 0.020)."),
+    fade: float = typer.Option(0.005, "--fade", help="Fade-in wholly inside retained quiet, seconds (default: 0.005)."),
+    noise_db: float = typer.Option(-40.0, "--noise-db", help="Acoustic quiet threshold in dB (default: -40)."),
+) -> int:
+    """Trim proven opening quiet without touching the first spoken phoneme."""
+    import json
+    from pathlib import Path
+    from ..audio import trim_leading_quiet
+
+    paths = [Path(p).expanduser().resolve() for p in (input, output, words, words_out)]
+    if report:
+        paths.append(Path(report).expanduser().resolve())
+    if len(set(paths)) != len(paths):
+        raise typer.BadParameter("input, output, words, words-out, and report must be distinct paths")
+    word_data = json.loads(Path(words).read_text())
+    word_list = word_data if isinstance(word_data, list) else word_data.get("words", [])
+    result = trim_leading_quiet(
+        input_path=input, output_path=output, words=word_list,
+        first_word_by_s=first_word_by, min_leading_quiet_s=min_leading_quiet,
+        fade_s=fade, noise_db=noise_db,
+    )
+    adjusted = result.pop("adjusted_words")
+    words_path = Path(words_out)
+    words_path.parent.mkdir(parents=True, exist_ok=True)
+    words_path.write_text(json.dumps({"words": adjusted, "total_duration_s": result["new_duration_s"]}, indent=2))
+    result["words_input"] = str(Path(words).resolve())
+    result["words_output"] = str(words_path.resolve())
+    if report:
+        report_path = Path(report)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(result, indent=2))
+    print(
+        f"trim-leading-quiet: {result['seconds_removed']:.4f}s removed; "
+        f"first word {result['first_word_before_s']:.4f}s → {result['first_word_after_s']:.4f}s"
+    )
+    print(f"  audio  → {output}")
+    print(f"  words  → {words_out}")
+    if report:
+        print(f"  report → {report}")
+    return 0
+
+
 @audio_app.command(name="pad-onsets")
 def audio_pad_onsets(
     input: str = typer.Option(..., "--input", "-i", help="Audio (or m4a/mp3) file to process."),
@@ -149,11 +289,18 @@ def audio_voiceover(
     voice_model: str = typer.Option("tts-mini", "--voice-model", help="TTS backend: tts-mini, tts-gemini, elevenlabs (default: tts-mini)."),
     speed: Optional[float] = typer.Option(None, "--speed", help="atempo multiplier applied after synthesis (e.g. 1.2 = 20% faster)."),
     style: Optional[str] = typer.Option(None, "--style", help="Delivery style preset: rapid_fire, fast, calm, natural."),
+    voice_prompt: Optional[str] = typer.Option(None, "--voice-prompt", help="Natural-language voice description (required for seed-audio)."),
+    trim_pauses: bool = typer.Option(False, "--trim-pauses", help="Opt in to timestamp-based pause trimming. By default, preserve the provider's original audio."),
+    no_verify: bool = typer.Option(False, "--no-verify", help="Skip local transcript verification of synthesized speech."),
 ) -> int:
+    """Synthesize speech. Spends money; prints the estimated cost first."""
     import shutil
     import tempfile
     from pathlib import Path as _P
 
+    from ..models import TTS_MODELS
+    from ..preflight import print_estimate
+    from ..shim import is_test_mode
     from ..voiceover import generate_voiceover_dict
 
     text_val = text or sys.stdin.read().strip()
@@ -161,9 +308,17 @@ def audio_voiceover(
         print("ERROR: provide --text or pipe text via stdin.", file=sys.stderr)
         return 1
 
+    spec = TTS_MODELS.get(voice_model)
+    if not is_test_mode():
+        print_estimate(f"audio voiceover --voice-model {voice_model}", spec.estimate_tts_usd(len(text_val)) if spec else None)
     out_path = _P(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    speed_applied = speed is not None and speed != 1.0
+    raw_saved = None
 
+    import os as _os
+    # Rejected (paid) takes must survive the temp dir: keep them next to --out.
+    _os.environ.setdefault("PARALLAX_REJECT_DIR", str(out_path.parent))
     with tempfile.TemporaryDirectory() as tmp:
         result = generate_voiceover_dict(
             text=text_val,
@@ -171,17 +326,54 @@ def audio_voiceover(
             out_dir=tmp,
             style=style,
             voice_model=voice_model,
+            trim_pauses=trim_pauses,
+            verify=not no_verify,
+            voice_prompt=voice_prompt,
         )
         audio_src = _P(result["audio_path"])
-        if speed and speed != 1.0:
+        if trim_pauses or speed_applied:
+            raw_src = _P(result["raw_audio_path"])
+            raw_saved = out_path.with_name(out_path.stem + ".provider-raw" + raw_src.suffix)
+            shutil.copy2(raw_src, raw_saved)
+        if speed_applied:
             from ..audio import speedup
+            assert speed is not None
             speedup(audio_src, out_path, speed)
         else:
             shutil.copy2(audio_src, out_path)
 
     duration = result["total_duration_s"]
+    if speed_applied:
+        from ..ffmpeg_utils import run_ffmpeg
+        probe = run_ffmpeg(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(out_path)],
+            capture_output=True, text=True,
+        )
+        if probe.stdout.strip():
+            duration = float(probe.stdout.strip())
+    # Persist word timings next to the audio so `video captions --words` works without re-transcribing.
+    try:
+        import json as _json
+        k = float(speed) if speed_applied else 1.0
+        ws = [{**w, "start": round(w["start"] / k, 3), "end": round(w["end"] / k, 3)} for w in result.get("words") or []]
+        words_out = out_path.with_name(out_path.stem + ".words.json")
+        words_out.write_text(_json.dumps({"words": ws, "total_duration_s": duration}, indent=2))
+    except Exception:
+        words_out = None
     print(f"voiceover: {duration:.2f}s → {out_path}")
-    if speed and speed != 1.0:
+    if words_out is not None:
+        print(f"  words: {words_out}")
+    if trim_pauses:
+        print("  pause trimming: enabled")
+    elif speed_applied:
+        print("  pause trimming: disabled; output speed-adjusted")
+    else:
+        print("  pause trimming: disabled (output preserves provider audio)")
+    if raw_saved is not None:
+        print(f"  provider raw: {raw_saved}")
+    if speed_applied:
+        assert speed is not None
         print(f"  speed: {speed:.2f}x applied")
     return 0
 

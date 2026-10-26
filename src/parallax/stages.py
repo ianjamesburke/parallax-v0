@@ -33,11 +33,12 @@ from .avatar import burn_avatar, key_avatar_track
 from .captions import burn_captions
 from .headline import burn_headline, burn_titles
 from .manifest import write_manifest
+from .models import DEFAULT_CLIP_DURATION_S
 from .project import scan_project_folder
 from .settings import ProductionMode, Settings
-from .shim import is_mock_asset
+from .shim import is_mock_asset, is_test_mode
 from .text_expand import expand_digits
-from .voiceover import generate_voiceover_dict
+from .voiceover import generate_voiceover_dict, mock_words
 
 
 # --------------------------------------------------------------------------
@@ -59,12 +60,18 @@ class SceneRuntime:
     animate_resolution: str | None = None
     end_frame_path: str | None = None
     clip_path: str | None = None
+    scene_type: str | None = None
+    motion_style: str | None = None
+    html_path: str | None = None
     clip_trim_start_s: float | str | None = None  # str to carry "auto" until assembly resolves it
     clip_trim_end_s: float | None = None
     zoom_direction: str | None = None
     zoom_amount: float | None = None
     video_references: list[str] | None = None
     reference_images: list[str] | None = None
+    # Plan-pinned scene length. When unset, clips are generated at DEFAULT_CLIP_DURATION_S
+    # (scene length is only known after voiceover alignment, which runs after animation).
+    duration_s: float | None = None
 
 
 @dataclass
@@ -132,23 +139,74 @@ def _is_clip_reusable(clip: str | None, mode: ProductionMode) -> bool:
     return Path(clip).exists()
 
 
-def _lock_field_in_plan(plan_path: Path, plan: dict, scene_idx: int, field_name: str, value: str, folder: Path) -> None:
+def _lock_field_in_brief(brief_path: Path, scene_idx: int, field_name: str, locked_path: str) -> None:
+    """Write a locked scene asset path (still_path or clip_path) back into brief.yaml, preserving comments."""
+    import os
+    import tempfile
+    from ruamel.yaml import YAML
+
+    ryaml = YAML()
+    ryaml.preserve_quotes = True
+    ryaml.indent(mapping=2, sequence=4, offset=2)
+    try:
+        with brief_path.open("r", encoding="utf-8") as fp:
+            doc = ryaml.load(fp)
+    except OSError:
+        return
+    if not isinstance(doc, dict):
+        return
+    scenes = (doc.get("script") or {}).get("scenes") or []
+    patched = False
+    for scene in scenes:
+        if isinstance(scene, dict) and scene.get("index") == scene_idx:
+            scene[field_name] = locked_path
+            patched = True
+            break
+    if not patched:
+        return
+    fd, tmp = tempfile.mkstemp(dir=brief_path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fp:
+            ryaml.dump(doc, fp)
+        os.replace(tmp, brief_path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def _lock_field_in_plan(
+    plan_path: Path,
+    plan: dict,
+    scene_idx: int,
+    field_name: str,
+    value: str,
+    folder: Path,
+) -> None:
     """Write an asset path back into the plan YAML so the scene is locked on future runs.
 
     Reads the current on-disk YAML, patches only the specific scene/field, and writes
     back with yaml.safe_dump — preserving any user edits made during or between runs.
+    When `source_brief` is set on the plan and `field_name` is `still_path` or `clip_path`,
+    also updates the matching scene in `brief.yaml` via ruamel.yaml.
     """
     import yaml
     try:
         locked_path = str(Path(value).relative_to(folder))
     except ValueError:
-        locked_path = value
+        try:
+            locked_path = str(Path(value).expanduser().resolve().relative_to(Path(folder).expanduser().resolve()))
+        except ValueError:
+            locked_path = value
     with _plan_lock:
         # Patch the in-memory dict so downstream stages in this run see the new value.
         for scene in plan.get("scenes", []):
             if scene.get("index") == scene_idx:
                 scene[field_name] = locked_path
                 break
+
+        # A dry run's stubs must never become locks in the real plan: later real runs and cost estimates would treat them as approved assets.
+        if is_test_mode():
+            return
 
         # Read current on-disk state to avoid overwriting concurrent user edits.
         try:
@@ -176,6 +234,14 @@ def _lock_field_in_plan(plan_path: Path, plan: dict, scene_idx: int, field_name:
             runlog.event("plan.lock.error", level="ERROR", scene=scene_idx, field=field_name, error=str(exc))
             raise RuntimeError(f"plan lock failed: could not write {plan_path}: {exc}") from exc
 
+        source_brief = plan.get("source_brief") or disk_plan.get("source_brief")
+        if field_name in ("still_path", "clip_path") and source_brief:
+            brief_path = Path(source_brief).expanduser()
+            if not brief_path.is_absolute():
+                brief_path = Path(folder).expanduser() / brief_path
+            if brief_path.is_file():
+                _lock_field_in_brief(brief_path, scene_idx, field_name, locked_path)
+
 
 def _lock_plan_fields(plan_path: Path, plan: dict, folder: Path, **fields: str) -> None:
     """Write plan-level asset paths back into plan.yaml (e.g. audio_path, words_path)."""
@@ -189,6 +255,8 @@ def _lock_plan_fields(plan_path: Path, plan: dict, folder: Path, **fields: str) 
 
     with _plan_lock:
         plan.update(normalized)
+        if is_test_mode():  # see _lock_field_in_plan
+            return
         try:
             with plan_path.open("r", encoding="utf-8") as f:
                 disk_plan = yaml.safe_load(f) or {}
@@ -321,6 +389,21 @@ def _resolve_still_refs(s: dict[str, Any], settings: Settings) -> list[str] | No
     return refs
 
 
+def _archive_existing_asset(canonical: Path, assets_dir: Path) -> Path | None:
+    """Move an existing real asset at `canonical` into `assets_dir/versions/<stem>_vN<suffix>` before overwriting."""
+    if not canonical.is_file() or is_mock_asset(canonical):
+        return None
+    versions_dir = assets_dir / "versions"
+    versions_dir.mkdir(parents=True, exist_ok=True)
+    stem, suffix = canonical.stem, canonical.suffix
+    v = 1
+    while (versions_dir / f"{stem}_v{v}{suffix}").exists():
+        v += 1
+    archived = versions_dir / f"{stem}_v{v}{suffix}"
+    shutil.move(str(canonical), str(archived))
+    return archived
+
+
 def _generate_one_still(s: dict[str, Any], settings: Settings, state: PipelineState, plan: dict[str, Any]) -> str:
     """Generate (with retry) one still for scene `s`. Thread-safe. Returns normalized still path."""
     from .openrouter import generate_image
@@ -361,7 +444,17 @@ def _generate_one_still(s: dict[str, Any], settings: Settings, state: PipelineSt
         raise last_err if last_err else RuntimeError("stage_stills: no still produced")
 
     normalized = normalize_aspect(raw_still_path, settings.resolution)
-    canonical = Path(state.assets_dir) / f"scene_{idx:02d}_still.png"
+    if not state.assets_dir:
+        raise RuntimeError("stage_stills: state.assets_dir is unset; scan_project_folder must run first (an empty path would write into the current directory)")
+    assets_dir = Path(state.assets_dir)
+    canonical = assets_dir / f"scene_{idx:02d}_still.png"
+    if (is_test_mode() or settings.mode == ProductionMode.TEST) and canonical.exists() and not is_mock_asset(canonical):
+        canonical = Path(state.out_dir or state.stills_dir) / f"mock_scene_{idx:02d}_still.png"
+        canonical.parent.mkdir(parents=True, exist_ok=True)
+    elif settings.mode == ProductionMode.REAL:
+        archived = _archive_existing_asset(canonical, assets_dir)
+        if archived is not None:
+            _log(settings, f"  [{idx:02d}] archived previous still → versions/{archived.name}")
     Path(normalized).rename(canonical)
     if str(normalized) != str(raw_still_path):
         Path(raw_still_path).unlink(missing_ok=True)
@@ -380,7 +473,8 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
     from .settings import VALID_ASPECTS
 
     scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
-    _log(settings, f"generating {len(scenes_raw)} stills — image_model={settings.image_model} aspect={settings.aspect}")
+    still_count = sum(1 for s in scenes_raw if s.get("scene_type") != "motion_graphic")
+    _log(settings, f"generating {still_count} stills — image_model={settings.image_model} aspect={settings.aspect}")
     _warn_unknown_scene_fields(scenes_raw)
     Path(state.stills_dir).mkdir(exist_ok=True)
 
@@ -395,6 +489,23 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
                 f"scene {idx}: aspect={scene_aspect!r} is not a supported aspect "
                 f"ratio. Choices: {sorted(VALID_ASPECTS)}"
             )
+        if s.get("scene_type") == "motion_graphic":
+            if getattr(settings, "stills_only", False):
+                poster = s.get("still_path")
+                still_paths[idx] = str(Path(poster) if Path(poster).is_absolute() else (settings.folder / poster)) if poster else ""
+                continue
+            raw_clip = s.get("clip_path")
+            clip = Path(raw_clip or "").expanduser()
+            clip = clip if clip.is_absolute() else settings.folder / clip
+            if raw_clip and _is_clip_reusable(str(clip), settings.mode):
+                # Assembly consumes the clip directly; no AI still or animation is needed.
+                still_paths[idx] = ""
+                continue
+            if s.get("motion_style") or s.get("html_path"):
+                # HTML/SVG + GSAP motion graphic will be rendered in stage_motion_graphics after stage_align.
+                still_paths[idx] = ""
+                continue
+            raise ValueError(f"scene {idx}: motion_graphic clip_path is missing or unusable: {clip}. Render the local graphic before producing.")
         _locked_still: str | None = s.get("still_path")
         if _locked_still is not None and not (
             settings.mode == ProductionMode.REAL and is_mock_asset(_locked_still)
@@ -439,6 +550,7 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
             prompt=s.get("prompt", ""),
             still_path=still_paths[idx],
             aspect=s.get("aspect", settings.aspect),
+            duration_s=s.get("duration_s"),
         )
         if s.get("animate"):
             scene_rt.animate = True
@@ -454,6 +566,13 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
         if s.get("clip_path"):
             cp = Path(s["clip_path"])
             scene_rt.clip_path = str(cp if cp.is_absolute() else settings.folder / cp)
+        if s.get("scene_type"):
+            scene_rt.scene_type = s["scene_type"]
+        if s.get("motion_style"):
+            scene_rt.motion_style = s["motion_style"]
+        if s.get("html_path"):
+            hp = Path(s["html_path"])
+            scene_rt.html_path = str(hp if hp.is_absolute() else settings.folder / hp)
         if s.get("clip_trim_start_s") is not None:
             scene_rt.clip_trim_start_s = s["clip_trim_start_s"]  # may be "auto" or float
         if s.get("clip_trim_end_s") is not None:
@@ -468,6 +587,9 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
             scene_rt.reference_images = s["reference_images"]
         scenes.append(scene_rt)
 
+    stills_tmp = Path(state.stills_dir)
+    if stills_tmp.is_dir() and not any(stills_tmp.iterdir()):
+        stills_tmp.rmdir()
     state.scenes = scenes
     return plan
 
@@ -512,6 +634,8 @@ def _animate_one_scene(
     # Per-scene temp dir isolates hash-named downloads so concurrent scenes
     # with identical prompts don't race on the same filename.
     import shutil as _shutil
+    if not state.assets_dir:
+        raise RuntimeError("stage_animate: state.assets_dir is unset; scan_project_folder must run first (an empty path would write into the current directory)")
     scene_tmp = Path(state.assets_dir) / f"_anim_{s.index:02d}"
     scene_tmp.mkdir(exist_ok=True)
     raw_clip = _openrouter.generate_video(
@@ -520,11 +644,20 @@ def _animate_one_scene(
         image_path=Path(still),
         end_image_path=Path(end_frame) if end_frame else None,
         input_references=input_references,
+        duration_s=s.duration_s or DEFAULT_CLIP_DURATION_S,
         out_dir=scene_tmp,
         aspect_ratio=s.aspect,
         size=scene_animate_res,
     )
-    canonical = Path(state.assets_dir) / f"scene_{s.index:02d}_animated.mp4"
+    assets_dir = Path(state.assets_dir)
+    canonical = assets_dir / f"scene_{s.index:02d}_animated.mp4"
+    if (is_test_mode() or settings.mode == ProductionMode.TEST) and canonical.exists() and not is_mock_asset(canonical):
+        canonical = Path(state.out_dir or state.video_dir) / f"mock_scene_{s.index:02d}_animated.mp4"
+        canonical.parent.mkdir(parents=True, exist_ok=True)
+    elif settings.mode == ProductionMode.REAL:
+        archived = _archive_existing_asset(canonical, assets_dir)
+        if archived is not None:
+            _log(settings, f"  [{s.index:02d}] archived previous clip → versions/{archived.name}")
     Path(raw_clip).rename(canonical)
     _shutil.rmtree(scene_tmp, ignore_errors=True)
     return str(canonical)
@@ -585,6 +718,14 @@ def stage_animate(plan: dict[str, Any], settings: Settings, state: PipelineState
         locked = sum(1 for s in scenes if s.clip_path)
         if locked:
             _log(settings, f"reusing {locked} animated clip(s)")
+
+    if state.aligned:
+        clip_by_idx = {s.index: s.clip_path for s in scenes if s.clip_path}
+        for entry in state.aligned:
+            idx = entry.get("index")
+            if idx in clip_by_idx:
+                entry["clip_path"] = clip_by_idx[idx]
+        state.aligned_json = json.dumps(state.aligned)
     return plan
 
 
@@ -630,9 +771,14 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
                 else float(words[-1]["end"]) if words else 0.0
             )
         else:
-            from . import forced_align
-            _log(settings, f"forced_align → {Path(audio_path).name} (whisperx)")
-            words = forced_align.align_words(audio_path)
+            if is_test_mode():
+                # WhisperX cannot align the silent stub audio; use synthetic timings.
+                _log(settings, f"test mode: synthetic word timings → {Path(audio_path).name}")
+                words = mock_words(" ".join(s.get("vo_text", "") for s in plan.get("scenes", [])))
+            else:
+                from . import forced_align
+                _log(settings, f"forced_align → {Path(audio_path).name} (whisperx)")
+                words = forced_align.align_words(audio_path)
             import wave as _wave
             with _wave.open(audio_path, "rb") as _w:
                 total = _w.getnframes() / float(_w.getframerate())
@@ -672,12 +818,18 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
             voice_model=voice_model,
             pronunciations=pronunciations or None,
             trim_pauses=settings.trim_pauses,
+            verify=True,
+            voice_prompt=plan.get("voice_prompt"),
         )
         audio_path = vo_result["audio_path"]
         words_path = vo_result["words_path"]
 
-        from . import forced_align
-        aligned_words = forced_align.align_words(audio_path)
+        if is_test_mode():
+            # The mock voiceover already carries synthetic word timings.
+            aligned_words = vo_result["words"]
+        else:
+            from . import forced_align
+            aligned_words = forced_align.align_words(audio_path)
         vo_result["words"] = aligned_words
         Path(words_path).write_text(
             json.dumps({"words": aligned_words, "total_duration_s": vo_result["total_duration_s"]}, indent=2)
@@ -854,7 +1006,8 @@ def stage_speed_adjust(plan: dict[str, Any], settings: Settings, state: Pipeline
     if abs(rate - 1.0) <= 1e-3:
         return plan
 
-    assert state.words_path is not None
+    if state.words_path is None:
+        raise RuntimeError("voice speed adjustment needs word timings, but no words file was produced")
     audio_path = Path(state.audio_path)
     words_path = Path(state.words_path)
     tmp_out = audio_path.with_name(f"{audio_path.stem}_sped{audio_path.suffix}")
@@ -899,6 +1052,14 @@ def stage_speed_adjust(plan: dict[str, Any], settings: Settings, state: Pipeline
     return plan
 
 
+def _report_opening_pacing(aligned: list[dict[str, Any]], settings: Settings, basis: str, first_word_start_s: float | None = None) -> None:
+    from .pacing import review_opening_pacing
+    report = review_opening_pacing(aligned, basis, first_word_start_s=first_word_start_s)
+    runlog.event("qa.opening_pacing", level="INFO", **report)
+    for warning in report["warnings"]:
+        _log(settings, f"[pacing advisory] {warning['message']}")
+
+
 def stage_align(plan: dict[str, Any], settings: Settings, state: PipelineState) -> dict[str, Any]:
     """Assign per-scene start/end/duration from the aligned words.
 
@@ -924,6 +1085,7 @@ def stage_align(plan: dict[str, Any], settings: Settings, state: PipelineState) 
             _log(settings, f"  [{s['index']:02d}] {s.get('start_s', 0):.2f}s – {s.get('end_s', 0):.2f}s ({s.get('duration_s', 0):.2f}s)")
         state.aligned = aligned
         state.aligned_json = json.dumps(aligned)
+        _report_opening_pacing(aligned, settings, "declared no-voiceover timeline")
         return plan
 
     vo_result = state.vo_result
@@ -953,6 +1115,8 @@ def stage_align(plan: dict[str, Any], settings: Settings, state: PipelineState) 
         _log(settings, f"  [{s['index']:02d}] {s.get('start_s', 0):.2f}s – {s.get('end_s', 0):.2f}s ({s.get('duration_s', 0):.2f}s)")
     state.aligned = aligned
     state.aligned_json = json.dumps(aligned)
+    _report_opening_pacing(aligned, settings, "aligned narration timeline (including explicit overrides)",
+                           first_word_start_s=float(vo_result["words"][0]["start"]) if vo_result["words"] else None)
 
     # Write corrected words back — cross-check may have patched TTS
     # hallucinations (e.g. "sweatsh" → "switch") in the words list.
@@ -963,6 +1127,180 @@ def stage_align(plan: dict[str, Any], settings: Settings, state: PipelineState) 
             "words": vo_result["words"],
             "total_duration_s": words_payload["total_duration_s"],
         }, indent=2))
+    from .assembly import _scene_frame_budgets
+    _scene_frame_budgets(aligned)
+    return plan
+
+
+def stage_motion_graphics(plan: dict[str, Any], settings: Settings, state: PipelineState) -> dict[str, Any]:
+    """Generate/re-time and render HTML/SVG + GSAP motion_graphic scenes after VO alignment.
+
+    Runs after `stage_align` so per-scene VO word timestamps and durations are known.
+    For `scene_type: motion_graphic` scenes with `motion_style` (or `html_path`) and
+    no reusable `clip_path`:
+    - If `html_path` already exists on disk, re-times `window.__TIMING` with zero LLM calls.
+    - Otherwise generates HTML for `motion_style` (reading `plan.brand`), audits layout,
+      and writes `html_path`.
+    - Renders the HTML to an MP4 clip, writes `html_path` and `clip_path` back into `plan.yaml`,
+      and updates `state.scenes` and `state.aligned` so assembly consumes `clip_path`.
+    """
+    from .ffmpeg_utils import parse_resolution
+    from .html_motion import (
+        LayoutViolationError,
+        _save_rejected_html,
+        audit_and_repair_scene,
+        audit_layout,
+        generate_scene_spec_and_html,
+        inline_gsap_script,
+        patch_html_timing,
+        render_html_to_mp4,
+        save_scene_spec,
+    )
+
+    scenes = state.scenes
+    to_render = [
+        s
+        for s in scenes
+        if (s.scene_type == "motion_graphic" or s.motion_style)
+        and (s.motion_style or s.html_path)
+        and not _is_clip_reusable(s.clip_path, settings.mode)
+    ]
+    if not to_render:
+        return plan
+
+    if not state.assets_dir:
+        raise RuntimeError(
+            "stage_motion_graphics: state.assets_dir is unset; scan_project_folder must run first"
+        )
+    assets_dir = Path(state.assets_dir)
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    aligned_by_idx = {entry.get("index"): entry for entry in (state.aligned or [])}
+    all_words = list((state.vo_result or {}).get("words") or [])
+
+    plan_brand = plan.get("brand")
+    if isinstance(plan_brand, dict) and isinstance(plan_brand.get("logo"), str):
+        logo_str = plan_brand["logo"].strip()
+        if logo_str and not logo_str.startswith("data:") and not Path(logo_str).is_absolute():
+            candidate_logo = (settings.folder / logo_str).resolve()
+            if candidate_logo.is_file():
+                plan_brand = {**plan_brand, "logo": str(candidate_logo)}
+
+    w_out, h_out = parse_resolution(settings.resolution)
+    render_fps = 10 if (is_test_mode() or settings.mode == ProductionMode.TEST) else 30
+
+    _log(settings, f"motion_graphics — rendering {len(to_render)} scene(s)")
+    for s in to_render:
+        aligned_entry = aligned_by_idx.get(s.index) or {}
+        start_s = float(aligned_entry.get("start_s", 0.0) or 0.0)
+        scene_dur = float(
+            aligned_entry.get("duration_s")
+            or s.duration_s
+            or DEFAULT_CLIP_DURATION_S
+        )
+        end_s = float(aligned_entry.get("end_s", start_s + scene_dur) or (start_s + scene_dur))
+
+        # Slice VO words belonging to this scene and shift timestamps relative to scene start
+        scene_words: list[dict[str, Any]] = []
+        for w in all_words:
+            w_start = float(w.get("start", 0.0))
+            w_end = float(w.get("end", w_start))
+            w_mid = 0.5 * (w_start + w_end)
+            if start_s - 0.05 <= w_mid <= end_s + 0.05:
+                scene_words.append(
+                    {
+                        "word": w.get("word", ""),
+                        "start": round(max(0.0, w_start - start_s), 4),
+                        "end": round(max(0.0, min(scene_dur, w_end - start_s)), 4),
+                    }
+                )
+        if not scene_words and s.vo_text:
+            raw_tokens = [tok for tok in s.vo_text.split() if tok.strip()]
+            if raw_tokens:
+                step = scene_dur / max(1, len(raw_tokens))
+                scene_words = [
+                    {
+                        "word": tok,
+                        "start": round(i * step, 4),
+                        "end": round(min(scene_dur, (i + 0.85) * step), 4),
+                    }
+                    for i, tok in enumerate(raw_tokens)
+                ]
+
+        existing_html = Path(s.html_path) if s.html_path else None
+        canonical_html = existing_html if (existing_html is not None) else (assets_dir / f"scene_{s.index:02d}_motion.html")
+        canonical_html.parent.mkdir(parents=True, exist_ok=True)
+        canonical_mp4 = assets_dir / f"scene_{s.index:02d}_motion.mp4"
+
+        if existing_html is not None and existing_html.is_file():
+            _log(settings, f"  [{s.index:02d}] re-timing existing HTML {existing_html.name} ({scene_dur:.2f}s)")
+            raw_html = existing_html.read_text(encoding="utf-8")
+            html_content = inline_gsap_script(
+                patch_html_timing(raw_html, duration=scene_dur, fps=render_fps, words=scene_words)
+            )
+            audit = audit_layout(html_content, duration_s=scene_dur, width=w_out, height=h_out)
+            if not audit.passed:
+                rejected = _save_rejected_html(html_content, canonical_mp4)
+                raise LayoutViolationError(audit.violations, rejected_html_path=rejected)
+            canonical_html.write_text(html_content, encoding="utf-8")
+        else:
+            style_name = s.motion_style or "flat-explainer"
+            _log(settings, f"  [{s.index:02d}] generating HTML motion style={style_name} ({scene_dur:.2f}s)")
+            scene_copy = s.vo_text or s.prompt or "Motion scene"
+            spec, html_content = generate_scene_spec_and_html(
+                scene_text=scene_copy,
+                style=style_name,
+                brand=plan_brand,
+                duration_s=scene_dur,
+                words=scene_words,
+            )
+            spec, html_content, _audit = audit_and_repair_scene(
+                spec,
+                html_content,
+                duration_s=scene_dur,
+                style=style_name,
+                brand=plan_brand,
+                words=scene_words,
+                out_path=canonical_mp4,
+                scene_text=scene_copy,
+            )
+            canonical_html.write_text(html_content, encoding="utf-8")
+            save_scene_spec(spec, canonical_html)
+
+        render_html_to_mp4(
+            canonical_html,
+            canonical_mp4,
+            duration_s=scene_dur,
+            fps=render_fps,
+            width=w_out,
+            height=h_out,
+        )
+        s.html_path = str(canonical_html)
+        s.clip_path = str(canonical_mp4)
+        if not (is_test_mode() or settings.mode == ProductionMode.TEST):
+            _lock_field_in_plan(
+                settings.plan_path,
+                plan,
+                s.index,
+                "html_path",
+                str(canonical_html),
+                settings.folder,
+            )
+            _lock_field_in_plan(
+                settings.plan_path,
+                plan,
+                s.index,
+                "clip_path",
+                str(canonical_mp4),
+                settings.folder,
+            )
+        if aligned_entry:
+            aligned_entry["html_path"] = str(canonical_html)
+            aligned_entry["clip_path"] = str(canonical_mp4)
+        _log(settings, f"  [{s.index:02d}] → {canonical_mp4.name}")
+
+    if state.aligned:
+        state.aligned_json = json.dumps(state.aligned)
     return plan
 
 
@@ -1054,7 +1392,11 @@ def stage_captions(plan: dict[str, Any], settings: Settings, state: PipelineStat
     """
     if settings.skip_captions:
         return plan
-    assert state.current_video is not None and state.words_path is not None
+    if state.words_path is None:
+        _log(settings, "no voiceover, skipping captions")
+        return plan
+    if state.current_video is None:
+        raise RuntimeError("captions need an assembled video, but assembly did not produce one")
     captioned_path = str(Path(state.video_dir) / f"{settings.concept_prefix}captioned.mp4")
     _log(settings, f"burn_captions → {captioned_path}")
     burn_captions(
@@ -1092,7 +1434,8 @@ def stage_titles(plan: dict[str, Any], settings: Settings, state: PipelineState)
         elif "start_s" in t and "end_s" in t:
             resolved_titles.append({"text": t["text"], "start_s": t["start_s"], "end_s": t["end_s"]})
     if resolved_titles:
-        assert state.current_video is not None
+        if state.current_video is None:
+            raise RuntimeError("titles need an assembled video, but assembly did not produce one")
         titled_path = str(Path(state.video_dir) / f"{settings.concept_prefix}titled.mp4")
         _log(settings, f"burn_titles → {titled_path}")
         burn_titles(
@@ -1124,7 +1467,12 @@ def stage_headline(plan: dict[str, Any], settings: Settings, state: PipelineStat
         "text": headline_text,
         "output_path": final_path,
         "fontsize": h_fontsize,
+        "fade_in_s": settings.headline_fade_in_s,
     }
+    if settings.headline_y_position is not None:
+        headline_kwargs["y_position"] = settings.headline_y_position
+    if settings.headline_font is not None:
+        headline_kwargs["font_name"] = settings.headline_font
     if settings.headline_bg:
         headline_kwargs["bg_color"] = settings.headline_bg
     if settings.headline_color:
@@ -1232,9 +1580,20 @@ def stage_finalize(plan: dict[str, Any], settings: Settings, state: PipelineStat
 
     final_out = str(Path(state.out_dir) / state.convention_name)
     if state.current_video != final_out:
-        assert state.current_video is not None
+        if state.current_video is None:
+            raise RuntimeError("finalize needs an assembled video, but no video was produced")
         Path(state.current_video).rename(final_out)
         state.current_video = final_out
+
+    # Remove intermediate render artifacts (ken_burns_draft.mp4, captioned.mp4, titled.mp4)
+    # from state.video_dir once the final video is finalized, preserving any avatar_track_keyed.mov.
+    video_tmp = Path(state.video_dir)
+    if video_tmp.is_dir():
+        for f in video_tmp.iterdir():
+            if f.is_file() and f.name != "avatar_track_keyed.mov":
+                f.unlink(missing_ok=True)
+        if not any(video_tmp.iterdir()):
+            video_tmp.rmdir()
 
     # Snapshot the on-disk plan into the output dir — _lock_field_in_plan
     # has already written every locked path back to plan_path during the run.
@@ -1258,7 +1617,8 @@ def stage_finalize(plan: dict[str, Any], settings: Settings, state: PipelineStat
 
 _KNOWN_SCENE_FIELDS = {
     "index", "shot_type", "vo_text", "prompt",
-    "still_path", "reference", "reference_images",
+    "still_path", "reference", "reference_images", "scene_type",
+    "motion_style", "html_path",
     "animate", "motion_prompt", "clip_path", "animate_resolution",
     "end_frame_path",
     # Per-scene model overrides (image_model / video_model / voice_model
@@ -1416,11 +1776,12 @@ def _wrap_stage(fn):
 STAGES = [_wrap_stage(s) for s in (
     stage_scan,
     stage_stills,
-    stage_animate,
     stage_voiceover,
     stage_voice_postprocess,
     stage_speed_adjust,
     stage_align,
+    stage_motion_graphics,
+    stage_animate,
     stage_manifest,
     stage_assemble,
     stage_captions,

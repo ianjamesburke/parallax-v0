@@ -38,12 +38,14 @@ def register_meta(app: typer.Typer) -> None:
 def _usage_cmd(
     include_test: bool = typer.Option(False, "--include-test", help="Include PARALLAX_TEST_MODE records (excluded by default)."),
 ) -> int:
+    """Summarize recorded generation spend."""
     from .. import usage
     _print_usage(usage.summarize(include_test=include_test))
     return 0
 
 
 def _credits_cmd() -> int:
+    """Show the OpenRouter credit balance."""
     from ..openrouter import InsufficientCreditsError, check_credits
     try:
         balance = check_credits(min_balance_usd=0.0)
@@ -64,6 +66,7 @@ def _credits_cmd() -> int:
 
 
 def _update_cmd() -> int:
+    """Upgrade the installed parallax from its original source."""
     return _run_update()
 
 
@@ -125,10 +128,11 @@ def _print_usage(summary: dict) -> None:
     if not by_alias:
         print("(no records)")
         return
-    print(f"{'alias':<14}{'tier':<10}{'calls':>7}{'cost_usd':>12}{'duration_ms':>14}")
+    alias_w = max(14, max((len(a) for a in by_alias), default=0) + 2)
+    print(f"{'alias':<{alias_w}}{'tier':<10}{'calls':>7}{'cost_usd':>12}{'duration_ms':>14}")
     for alias, slot in sorted(by_alias.items()):
         print(
-            f"{alias:<14}{slot['tier']:<10}{slot['calls']:>7}"
+            f"{alias:<{alias_w}}{slot['tier']:<10}{slot['calls']:>7}"
             f"{slot['cost_usd']:>12.4f}{slot['duration_ms']:>14}"
         )
 
@@ -174,29 +178,7 @@ def _run_update() -> int:
     if result.returncode != 0:
         return result.returncode
 
-    _update_skill()
     return 0
-
-
-def _update_skill() -> None:
-    import pathlib
-    skill_dir = pathlib.Path.home() / ".claude" / "skills" / "parallax"
-    if not skill_dir.is_dir():
-        return
-    git = shutil.which("git")
-    if not git:
-        return
-    print("Updating parallax skill…")
-    result = subprocess.run(
-        [git, "-C", str(skill_dir), "pull", "--ff-only"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode == 0:
-        msg = result.stdout.strip() or result.stderr.strip()
-        print(f"  Skill: {msg}")
-    else:
-        print(f"  Skill update failed: {result.stderr.strip()}", file=sys.stderr)
 
 
 def _detect_shell() -> str:
@@ -207,12 +189,14 @@ def _detect_shell() -> str:
     return "zsh"
 
 
+# Click's completion instruction is `source_<shell>` (verified click 8.1.8-8.3.3 with
+# typer 0.12.5-0.25.1; `<shell>_source` prints "Shell source not supported.").
 def _run_completions_print(shell: str) -> int:
     prog = "parallax"
     if shell == "zsh":
-        print(f'eval "$(_PARALLAX_COMPLETE=zsh_source {prog})"')
+        print(f'eval "$(_PARALLAX_COMPLETE=source_zsh {prog})"')
     elif shell == "bash":
-        print(f'eval "$(_PARALLAX_COMPLETE=bash_source {prog})"')
+        print(f'eval "$(_PARALLAX_COMPLETE=source_bash {prog})"')
     return 0
 
 
@@ -232,9 +216,9 @@ def _run_completions_install(shell: str | None, path: str | None) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     prog = "parallax"
     var = f"_{prog.upper()}_COMPLETE"
-    content = f'eval "$({var}={target_shell}_source {prog})"'
+    content = f'eval "$({var}=source_{target_shell} {prog})"'
     out.write_text(content + "\n")
     print(f"Wrote {target_shell} completion to {out}")
     print(f"\nAdd to your ~/.{target_shell}rc:\n  source {out}")
-    print(f"\nOr source completion directly:\n  eval \"$({var}={target_shell}_source {prog})\"")
+    print(f"\nOr source completion directly:\n  eval \"$({var}=source_{target_shell} {prog})\"")
     return 0

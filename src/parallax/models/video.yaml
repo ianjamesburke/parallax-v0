@@ -1,29 +1,41 @@
-# Video generation models. All routed through OpenRouter.
+# Video generation models. All routed through OpenRouter's async /api/v1/videos endpoint.
+#
+# Slugs verified live against `/api/v1/videos/models` on 2026-10-14.
+# `durations` is the exact list of whole-second clip lengths the model accepts
+# (from the live list); the request length is the shortest one covering the scene,
+# and both the pre-flight estimate and the real request use it.
+#
+# `cost` is USD per second. "Measured" entries are the billed `usage.cost` of a
+# real 4 s 9:16 image-to-video call divided by 4 (2026-10-14); "list" entries come
+# from the live per-second pricing and were not run.
 #
 # Defaults are image-to-video; `capabilities.start_frame` flags i2v support
-# and `capabilities.end_frame` flags end-frame conditioning. Models without
-# either capability are text-to-video only.
+# and `capabilities.end_frame` flags end-frame conditioning.
 #
-# Pricing note: Seedance 2.0 Fast is resolution-tiered. Parallax defaults to
-# generating at 480p (animate_resolution) and upscaling to the output
-# resolution during ffmpeg assembly. The `cost` below reflects the 480p rate.
-# Override animate_resolution: in the plan to change the generation resolution.
-#   Seedance 2.0 Fast:        480p = $0.054/s | 720p = $0.121/s | 1080p = $0.272/s
-#   Grok Imagine Video:       480p/720p = from $0.05/s
-#   Kling Video O1:           flat = $0.112/s (no resolution tiers)
-#   Veo 3.1:                  1080p+audio = $0.40/s | 1080p no-audio = $0.20/s | 4K = $0.60/s
-#   Wan 2.7:                  flat = $0.10/s
-#   Sora 2 Pro:               720p = $0.30/s | 1080p = $0.50/s
+# `request:` holds extra explicit API parameters. veo-lite sets generate_audio:false
+# because parallax strips clip audio at assembly; paying for it would cost 67% more.
+#
+# Seedance and Grok generate at 480p by default (animate_resolution) and are upscaled
+# at assembly. The `size` sent comes from the plan's animate_resolution, so a model
+# whose live `supported_sizes` lacks it (e.g. veo-lite) needs `animate_resolution:
+# 720x1280` in the plan; the API rejects an unsupported size.
+# Seedance 2.0 Fast image-conditioned measurement (2026-10-20): 4 s 720x1280
+# clips with either a start frame only or start+end frames both billed $0.3667,
+# versus the base $0.1704 (2.1473x). The provider delivered 720p despite the
+# 480p default; use this multiplier for any image-conditioned request until
+# OpenRouter publishes a price card.
 
 - alias: draft
   model_id: openrouter/bytedance/seedance-2.0-fast
   tier: draft
-  cost: 0.054
+  cost: 0.0426
+  image_conditioned_cost_multiplier: 2.1473
   unit: second
-  description: "ByteDance Seedance 2.0 Fast. Resolution-tiered: $0.054/s at 480p (default), $0.121/s at 720p, $0.272/s at 1080p."
+  description: "ByteDance Seedance 2.0 Fast at 480p. Measured $0.0426/s (4 s clip = $0.170, output 496x864). Token-priced, so higher resolutions cost more."
   fallback: mid
+  durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
   capabilities:
-    aspect_ratios: ["9:16", "16:9", "1:1"]
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
     resolutions: ["480p", "720p", "1080p"]
     native_resolution: "480p"
     start_frame: true
@@ -33,13 +45,15 @@
 - alias: mid
   model_id: openrouter/x-ai/grok-imagine-video
   tier: mid
-  cost: 0.05
+  cost: 0.0505
   unit: second
-  description: "xAI Grok Imagine Video. Strong prompt adherence. From $0.05/s at 480p/720p."
+  description: "xAI Grok Imagine Video at 480p. Measured $0.0505/s (4 s clip = $0.202, output 400x736). Strong prompt adherence; no end frame."
   fallback: kling
+  durations: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
   capabilities:
-    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4", "3:2", "2:3"]
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
     resolutions: ["480p", "720p"]
+    native_resolution: "480p"
     start_frame: true
     end_frame: false
   inputs: []
@@ -47,12 +61,14 @@
 - alias: premium
   model_id: openrouter/google/veo-3.1
   tier: premium
-  cost: 0.40
+  cost: 0.2
   unit: second
-  description: "Google Veo 3.1. $0.40/s at 1080p with audio, $0.20/s without audio, $0.60/s at 4K."
+  description: "Google Veo 3.1 at 1080p without audio, list price $0.20/s (not run; $0.40/s with audio, which parallax strips). Needs animate_resolution 1080x1920."
   fallback: mid
+  request: {generate_audio: false}
+  durations: [4, 6, 8]
   capabilities:
-    aspect_ratios: ["9:16", "16:9", "1:1"]
+    aspect_ratios: ["9:16", "16:9"]
     resolutions: ["1080p", "4K"]
     start_frame: true
     end_frame: true
@@ -63,16 +79,83 @@
 - alias: seedance
   model_id: openrouter/bytedance/seedance-2.0-fast
   tier: default
-  cost: 0.054
+  cost: 0.0426
+  image_conditioned_cost_multiplier: 2.1473
   unit: second
-  description: "ByteDance Seedance 2.0 Fast. Resolution-tiered: $0.054/s at 480p (default), $0.121/s at 720p, $0.272/s at 1080p."
+  description: "ByteDance Seedance 2.0 Fast at 480p. Measured $0.0426/s."
   fallback: kling
+  durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
   capabilities:
-    aspect_ratios: ["9:16", "16:9", "1:1"]
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
     resolutions: ["480p", "720p", "1080p"]
     native_resolution: "480p"
     start_frame: true
     end_frame: true
+  inputs: []
+
+- alias: seedance-mini
+  model_id: openrouter/bytedance/seedance-2.0-mini
+  tier: default
+  cost: 0.0355
+  unit: second
+  description: "ByteDance Seedance 2.0 Mini at 480p. Measured $0.0355/s (4 s clip = $0.142, output 496x864). Cheaper than seedance, similar look in tests."
+  fallback: seedance
+  durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
+    resolutions: ["480p", "720p"]
+    native_resolution: "480p"
+    start_frame: true
+    end_frame: true
+  inputs: []
+
+- alias: grok-video-lite
+  model_id: openrouter/x-ai/grok-imagine-video-1.5-lite
+  tier: default
+  cost: 0.0225
+  unit: second
+  description: "xAI Grok Imagine Video 1.5 Lite at 480p. Measured $0.0225/s (4 s clip = $0.090, output 400x736). Cheapest tested; lowest resolution; no end frame."
+  fallback: grok-video
+  durations: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
+    resolutions: ["480p", "720p", "1080p"]
+    native_resolution: "480p"
+    start_frame: true
+    end_frame: false
+  inputs: []
+
+- alias: veo-lite
+  model_id: openrouter/google/veo-3.1-lite
+  tier: default
+  cost: 0.03
+  unit: second
+  description: "Google Veo 3.1 Lite at 720p without audio. Measured $0.030/s (4 s clip = $0.120, output 720x1280): cheaper than seedance and native 720p. Set animate_resolution: 720x1280 in the plan."
+  fallback: seedance
+  request: {generate_audio: false}
+  durations: [8, 4, 6]
+  capabilities:
+    aspect_ratios: ["9:16", "16:9"]
+    resolutions: ["720p", "1080p"]
+    native_resolution: "720p"
+    start_frame: true
+    end_frame: true
+  inputs: []
+
+- alias: grok-video
+  model_id: openrouter/x-ai/grok-imagine-video
+  tier: default
+  cost: 0.0505
+  unit: second
+  description: "xAI Grok Imagine Video at 480p. Measured $0.0505/s."
+  fallback: kling
+  durations: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+  capabilities:
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
+    resolutions: ["480p", "720p"]
+    native_resolution: "480p"
+    start_frame: true
+    end_frame: false
   inputs: []
 
 - alias: kling
@@ -80,8 +163,9 @@
   tier: default
   cost: 0.112
   unit: second
-  description: Kling Video O1. Strong motion and prompt adherence. Flat $0.112/s regardless of resolution.
+  description: "Kling Video O1. List price $0.112/s (not run). Strong motion and prompt adherence."
   fallback: seedance
+  durations: [5, 10]
   capabilities:
     aspect_ratios: ["9:16", "16:9", "1:1"]
     start_frame: true
@@ -91,12 +175,14 @@
 - alias: veo
   model_id: openrouter/google/veo-3.1
   tier: default
-  cost: 0.40
+  cost: 0.2
   unit: second
-  description: "Google Veo 3.1. $0.40/s at 1080p with audio, $0.20/s without audio, $0.60/s at 4K."
+  description: "Google Veo 3.1 at 1080p without audio, list price $0.20/s (not run)."
   fallback: kling
+  request: {generate_audio: false}
+  durations: [4, 6, 8]
   capabilities:
-    aspect_ratios: ["9:16", "16:9", "1:1"]
+    aspect_ratios: ["9:16", "16:9"]
     resolutions: ["1080p", "4K"]
     start_frame: true
     end_frame: true
@@ -105,39 +191,13 @@
 - alias: wan
   model_id: openrouter/alibaba/wan-2.7
   tier: default
-  cost: 0.10
+  cost: 0.1
   unit: second
-  description: Alibaba Wan 2.7. Open-weights baseline. Flat $0.10/s.
+  description: "Alibaba Wan 2.7. List price $0.10/s (not run)."
   fallback: seedance
+  durations: [2, 3, 4, 5, 6, 7, 8, 9, 10]
   capabilities:
-    aspect_ratios: ["9:16", "16:9", "1:1"]
+    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4"]
     start_frame: true
     end_frame: true
-  inputs: []
-
-- alias: grok-video
-  model_id: openrouter/x-ai/grok-imagine-video
-  tier: default
-  cost: 0.05
-  unit: second
-  description: "xAI Grok Imagine Video. From $0.05/s at 480p/720p."
-  fallback: kling
-  capabilities:
-    aspect_ratios: ["9:16", "16:9", "1:1", "4:3", "3:4", "3:2", "2:3"]
-    resolutions: ["480p", "720p"]
-    start_frame: true
-    end_frame: false
-  inputs: []
-
-- alias: sora
-  model_id: openrouter/openai/sora-2-pro
-  tier: default
-  cost: 0.50
-  unit: second
-  description: "OpenAI Sora 2 Pro. Text-to-video only — no frame conditioning. $0.30/s at 720p, $0.50/s at 1080p."
-  fallback: kling
-  capabilities:
-    aspect_ratios: ["9:16", "16:9", "1:1"]
-    start_frame: false
-    end_frame: false
   inputs: []

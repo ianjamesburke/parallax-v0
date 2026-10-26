@@ -1,9 +1,20 @@
 test:
     uv run pytest -v
 
+# Create a hermetic fixture project and start Codex in it. The fixture contains
+# only index-tracked files plus the inputs passed to this command.
+e2e-agent *args:
+    LC_ALL=C bash scripts/start-e2e-agent.sh {{args}}
+
 # Install CLI from current directory (works from any worktree)
+# Pins every dependency to uv.lock (as constraints), so users run the versions the tests ran.
 install:
-    uv tool install --python python3.11 --reinstall .
+    #!/usr/bin/env bash
+    set -euo pipefail
+    constraints="$(mktemp)"
+    trap 'rm -f "$constraints"' EXIT
+    uv export --frozen --no-hashes --no-emit-project --no-dev -o "$constraints"
+    uv tool install --python python3.11 --reinstall --constraints "$constraints" .
 
 # Install PR as isolated CLI: parallax-pr<N> (run from feature worktree)
 pr-install pr:
@@ -11,9 +22,12 @@ pr-install pr:
     set -euo pipefail
     install_dir="$HOME/.parallax-pr-{{pr}}"
     bin_path="$HOME/.local/bin/parallax-pr{{pr}}"
+    constraints="$(mktemp)"
+    trap 'rm -f "$constraints"' EXIT
     mkdir -p "$(dirname "$bin_path")"
+    uv export --frozen --no-hashes --no-emit-project --no-dev -o "$constraints"
     uv venv "$install_dir"
-    uv pip install --python "$install_dir/bin/python" .
+    uv pip install --python "$install_dir/bin/python" --constraints "$constraints" .
     printf '#!/usr/bin/env bash\nexec "%s/bin/parallax" "$@"\n' "$install_dir" > "$bin_path"
     chmod +x "$bin_path"
     echo "Installed parallax-pr{{pr}}"

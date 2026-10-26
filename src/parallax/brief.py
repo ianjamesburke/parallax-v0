@@ -56,6 +56,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 import warnings
 from typing import Any
@@ -74,6 +75,37 @@ class ProvidedAsset(BaseModel):
     path: str
     kind: Literal["style_ref", "product_ref", "character_ref"]
     description: str | None = None
+    source_url: str | None = None
+    # None: global wiring (planner uses it for every matching scene). A list: used only for these scenes, via image_refs.
+    scene_scope: list[int] | None = None
+    origin: Literal["supplied", "generated", "official"] = "supplied"
+    review_status: Literal["pending", "approved"] = "pending"
+
+    @field_validator("source_url")
+    @classmethod
+    def _check_source_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        parsed = urlsplit(value)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError("source_url must be an http(s) URL with a hostname")
+        return value
+
+
+
+class ReferenceDecision(BaseModel):
+    """Audit record of how a storyboard reference gate was resolved.
+
+    Written by `parallax reference resolve`. A `no_reference` decision is what
+    closes a gate for scenes that intentionally have no image reference.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    gate: Literal["editorial-reference", "product-reference"]
+    choice: Literal["supplied", "official", "generated_anchor", "no_reference"]
+    scenes: list[int]
+    note: str  # no_reference: reason; generated_anchor: who authorized the spend; else provenance
+    asset: str | None = None  # generated_anchor only: None means authorized but not yet generated
 
 
 class GeneratedAsset(BaseModel):
@@ -98,6 +130,7 @@ class BriefScene(BaseModel):
 
     index: int
     shot_type: Literal["character", "broll", "screen"] = "broll"
+    scene_type: Literal["still", "animation", "motion_graphic"] | None = None
     vo_text: str
     prompt: str
     animate: bool = False
@@ -105,6 +138,27 @@ class BriefScene(BaseModel):
     aspect: str | None = None  # per-scene override; defaults to brief.aspect
     image_refs: list[str] = Field(default_factory=list)
     still_path: str | None = None  # approved still from a prior version — skips generation
+    clip_path: str | None = None  # reusable locally rendered or previously generated clip
+    motion_style: str | None = None  # HTML/SVG + GSAP motion style preset name (for motion_graphic scenes)
+    html_path: str | None = None  # generated or authored HTML motion scene path
+    on_screen_text: str | None = None  # storyboard copy; not automatically burned into video
+    regenerate: bool = False  # when true, clears locks on produce and archives the previous version to parallax/assets/versions/
+    # Presentation-only fields used by an imported finished-cut storyboard.  They
+    # deliberately do not participate in planning or production.
+    storyboard_id: str | None = None
+    storyboard_title: str | None = None
+    storyboard_kicker: str | None = None
+    storyboard_treatment: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _scene_type_animation(cls, data: Any) -> Any:
+        from .scene_types import normalize_scene_type
+        return normalize_scene_type(data)
+
+    @property
+    def resolved_scene_type(self) -> str:
+        return self.scene_type or ("animation" if self.animate else "still")
 
     @model_validator(mode="before")
     @classmethod
@@ -132,6 +186,15 @@ class BriefScene(BaseModel):
             )
         return v
 
+    @field_validator("motion_style")
+    @classmethod
+    def _check_motion_style(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        from .html_motion import load_style_preset
+        load_style_preset(v)
+        return v
+
 
 class Script(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -144,19 +207,28 @@ class Brief(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     goal: str
+    concept_name: str | None = None
+    concept_id: str | None = None
+    headline: str | None = None  # opening overlay, never included in voiceover
     aspect: Literal["9:16", "16:9", "1:1", "4:3", "3:4"] = "9:16"
     voice: str = "nova"
+    voice_prompt: str | None = None
+    brand: dict[str, Any] | None = None
     voice_speed: float = 1.0
     # Video-gen resolution — upscaled to the output resolution during assembly.
     # Lower is cheaper. Seedance 2.0 Fast: 480p=$0.054/s, 720p=$0.121/s, 1080p=$0.272/s.
     # Defaults are aspect-aware (9:16→480x854, 16:9→854x480, 1:1→480x480).
     animate_resolution: str | None = None  # None = use aspect-derived default
+    animate_opening_s: float = 15.0  # social default: opening beats must move
     # When true, the planner auto-sets `reference: true` on every character scene
     # so the engine uses `character_image` as the reference for still generation.
     character_reference: bool = False
+    # True when the narration text is final: pacing advisories are flagged locked_by_narration. They still stand.
+    narration_locked: bool = False
     pronunciations: dict[str, str] = Field(default_factory=dict)
     success_criteria: list[str] = Field(default_factory=list)
     assets: Assets = Field(default_factory=Assets)
+    reference_decisions: list[ReferenceDecision] = Field(default_factory=list)
     script: Script
 
     # ---------------------------------------------------------------- I/O
@@ -182,7 +254,7 @@ class Brief(BaseModel):
     # --------------------------------------------------------- Validation
 
     def validate_assets(self, folder: str | Path) -> list[str]:
-        """Check every `provided` asset and scene-level `still_path` exists.
+        """Check provided assets, scene references, and still/clip locks exist.
 
         Returns a list of missing absolute paths (empty = all good).
         Generated assets are NOT checked — they're an inventory hint, not
@@ -196,16 +268,17 @@ class Brief(BaseModel):
             if not full.is_file():
                 missing.append(str(full))
         for scene in self.script.scenes:
-            if scene.still_path:
-                sp = Path(scene.still_path)
-                full = sp if sp.is_absolute() else root / sp
-                if not full.is_file():
-                    missing.append(str(full))
+            for asset_path in [scene.still_path, scene.clip_path, scene.html_path, *scene.image_refs]:
+                if asset_path:
+                    sp = Path(asset_path).expanduser()
+                    full = sp if sp.is_absolute() else root / sp
+                    if not full.is_file():
+                        missing.append(str(full))
         return missing
 
     # ----------------------------------------------------- Plan derivation
 
-    def to_plan_skeleton(self) -> dict:
+    def to_plan_skeleton(self, *, stills_only: bool = False) -> dict:
         """Project the brief into a partial plan.yaml dict.
 
         The planner (`parallax plan`) is responsible for filling in
@@ -213,24 +286,50 @@ class Brief(BaseModel):
         provider-specific fields. This method gives it a starting point
         with the brief's deterministic fields already populated.
         """
+        if not stills_only:
+            for scene in self.script.scenes:
+                if (
+                    scene.scene_type == "motion_graphic"
+                    and not scene.clip_path
+                    and not scene.motion_style
+                    and not scene.html_path
+                ):
+                    raise ValueError(
+                        f"scene {scene.index}: motion_graphic needs a locally rendered clip_path before planning. "
+                        "Review the storyboard, render the graphic, then add its clip_path; AI generation is not supported for this scene type."
+                    )
+        # Briefs have no measured timing yet.  Estimate at 2.5 words/s, which
+        # is deliberately conservative: every beat beginning in this window is
+        # animated unless the author explicitly wrote animate: false.
+        cursor = 0.0
+        scenes_out = []
+        for s in self.script.scenes:
+            explicit_false = "animate" in s.model_fields_set and not s.animate
+            auto = self.aspect == "9:16" and cursor < self.animate_opening_s and not explicit_false and s.resolved_scene_type == "still"
+            animate = s.animate or auto
+            item = {
+                "index": s.index, "shot_type": s.shot_type,
+                **({"scene_type": "animation"} if auto else ({"scene_type": s.scene_type} if s.scene_type else {})),
+                "vo_text": s.vo_text, "prompt": s.prompt,
+                **({"animate": True} if animate else {}),
+                **({"motion_prompt": s.motion_prompt or s.prompt} if animate else {}),
+                **({"aspect": s.aspect} if s.aspect else {}), **({"reference_images": s.image_refs} if s.image_refs else {}),
+                **({"reference": True} if self.character_reference and s.shot_type == "character" else {}),
+                **({"still_path": s.still_path} if s.still_path else {}), **({"clip_path": s.clip_path} if s.clip_path else {}),
+                **({"motion_style": s.motion_style} if s.motion_style else {}),
+                **({"html_path": s.html_path} if s.html_path else {}),
+                **({"regenerate": True} if s.regenerate else {}),
+            }
+            scenes_out.append(item); cursor += max(.5, len(s.vo_text.split()) / 2.5)
         return {
             "aspect": self.aspect,
             "voice": self.voice,
+            **({"voice_prompt": self.voice_prompt} if self.voice_prompt else {}),
+            **({"brand": self.brand} if self.brand else {}),
             "voice_speed": self.voice_speed,
+            **({"stills_only": True} if stills_only else {}),
+            **({"headline": self.headline} if self.headline else {}),
             **({"pronunciations": self.pronunciations} if self.pronunciations else {}),
-            "scenes": [
-                {
-                    "index": s.index,
-                    "shot_type": s.shot_type,
-                    "vo_text": s.vo_text,
-                    "prompt": s.prompt,
-                    **({"animate": True} if s.animate else {}),
-                    **({"motion_prompt": s.motion_prompt} if s.motion_prompt else {}),
-                    **({"aspect": s.aspect} if s.aspect else {}),
-                    **({"reference_images": s.image_refs} if s.image_refs else {}),
-                    **({"reference": True} if self.character_reference and s.shot_type == "character" else {}),
-                    **({"still_path": s.still_path} if s.still_path else {}),
-                }
-                for s in self.script.scenes
-            ],
+            "animate_opening_s": self.animate_opening_s,
+            "scenes": scenes_out,
         }

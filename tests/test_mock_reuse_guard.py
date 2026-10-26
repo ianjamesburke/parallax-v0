@@ -50,7 +50,7 @@ def _make_settings(tmp_path: Path, mode: ProductionMode) -> Settings:
         folder=folder,
         plan_path=plan_path,
         concept_prefix="",
-        image_model="flux-schnell",
+        image_model="nano-banana",
         video_model="mid",
         aspect="9:16",
         resolution="1080x1920",
@@ -86,10 +86,12 @@ def _make_state(tmp_path: Path) -> PipelineState:
     out = tmp_path / "output"
     out.mkdir(exist_ok=True)
     (out / "stills").mkdir(exist_ok=True)
+    (out / "assets").mkdir(exist_ok=True)
     (out / "video").mkdir(exist_ok=True)
     (out / "audio").mkdir(exist_ok=True)
     return PipelineState(
         out_dir=str(out),
+        assets_dir=str(out / "assets"),
         stills_dir=str(out / "stills"),
         video_dir=str(out / "video"),
         audio_dir=str(out / "audio"),
@@ -100,7 +102,7 @@ def _make_state(tmp_path: Path) -> PipelineState:
 
 
 def _make_plan(scenes: list[dict[str, Any]]) -> dict[str, Any]:
-    return {"scenes": scenes, "video_model": "mid", "image_model": "flux-schnell"}
+    return {"scenes": scenes, "video_model": "mid", "image_model": "nano-banana"}
 
 
 # ─── stage_stills guard ───────────────────────────────────────────────────────
@@ -237,3 +239,46 @@ def test_stage_animate_real_mode_reuses_real_clip(tmp_path):
     with patch("parallax.openrouter.generate_video") as mock_gen:
         stage_animate(plan, settings, state)
         mock_gen.assert_not_called()
+
+
+def test_is_mock_asset_detects_renamed_mock_png_and_mp4(tmp_path):
+    """is_mock_asset detects mock PNGs/MP4s via embedded metadata even when renamed to scene_00_*."""
+    from parallax.shim import is_mock_asset, render_mock_image, render_mock_video
+
+    raw_png = render_mock_image("test prompt", "mid", out_dir=tmp_path, resolution="480x854")
+    renamed_png = tmp_path / "scene_00_still.png"
+    raw_png.rename(renamed_png)
+    assert is_mock_asset(renamed_png) is True
+
+    raw_mp4 = render_mock_video("test motion", "mid", duration_s=1.0, out_dir=tmp_path, resolution="480x854")
+    renamed_mp4 = tmp_path / "scene_00_animated.mp4"
+    raw_mp4.rename(renamed_mp4)
+    assert is_mock_asset(renamed_mp4) is True
+
+
+def test_stage_stills_test_mode_does_not_overwrite_existing_real_still(tmp_path, monkeypatch):
+    """Dry-run TEST mode must never overwrite an existing real scene_00_still.png in assets_dir."""
+    monkeypatch.setenv("PARALLAX_TEST_MODE", "1")
+    settings = _make_settings(tmp_path, ProductionMode.TEST)
+    state = _make_state(tmp_path)
+    real_still = Path(state.assets_dir) / "scene_00_still.png"
+    _make_png(real_still, 720, 1280)
+    real_bytes = real_still.read_bytes()
+
+    plan = _make_plan([{"index": 0, "vo_text": "hello", "prompt": "a scene"}])
+    plan["image_model"] = "nano-banana"
+    stage_stills(plan, settings, state)
+
+    assert real_still.read_bytes() == real_bytes
+    assert Path(state.scenes[0].still_path).name == "mock_scene_00_still.png"
+
+
+def test_stages_runs_voiceover_and_align_before_animate():
+    """Voiceover and alignment must run before video animation so zero-frame TTS errors fail before video spend."""
+    from parallax.stages import STAGES
+
+    names = [fn.__name__ for fn in STAGES]
+    assert names.index("stage_voiceover") < names.index("stage_animate")
+    assert names.index("stage_align") < names.index("stage_animate")
+    assert names.index("stage_animate") < names.index("stage_manifest")
+

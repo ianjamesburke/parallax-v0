@@ -115,6 +115,86 @@ def test_drawtext_filter_escapes_apostrophe():
     assert "don’t" in f
 
 
+def test_multiline_layout_is_emitted_as_real_per_line_drawtext_filters(tmp_path):
+    """The PA5 regression: a layout newline must never become a literal ``n``.
+
+    ffmpeg's filter parser consumes a backslash before drawtext sees it, so a
+    single multiline text= argument is not a reliable rendering contract.
+    """
+    v = tmp_path / "in.mp4"
+    _make_video_with_audio(v, 0.2, w=1080, h=1920)
+    out = tmp_path / "out.mp4"
+    style = resolve_caption_style("clean")
+    from parallax.captions.layout import layout_caption
+    laid = layout_caption("absolutely exhausted all", 1080, 1920, 78, style, .78)
+    assert "\n" in laid["text"]
+    # A two-line layout must compile to two text= arguments, neither containing
+    # a newline escape. This is also cheap to assert without a fragile OCR test.
+    from unittest.mock import patch
+    with patch("parallax.captions.drawtext.run_ffmpeg") as run:
+        run.return_value = type("Result", (), {"returncode": 0, "stderr": ""})()
+        _burn_captions_drawtext(str(v), [{**laid, "start": 0, "end": .2}], out, 78, style)
+    vf = run.call_args.args[0][run.call_args.args[0].index("-vf") + 1]
+    assert vf.count("drawtext=") == 2
+    assert "\\n" not in vf
+    assert "text='absolutely'" in vf
+    assert "text='exhausted all'" in vf
+
+
+@_requires_drawtext
+def test_clean_multiline_boxes_do_not_cover_preceding_descenders(tmp_path):
+    """Each clean-style line must leave the prior line's descenders visible.
+
+    ``absolutely`` deliberately has a descender.  Compare its white pixels in
+    a single-line render with the same first line in the reported two-line
+    layout: the lower line's background must not paint over any of them.
+    """
+    from PIL import Image
+    from parallax.captions.layout import layout_caption
+
+    source = tmp_path / "solid.mp4"
+    _make_video_with_audio(source, 0.2, w=1080, h=1920)
+    style = resolve_caption_style("clean")
+    one = layout_caption("absolutely", 1080, 1920, 78, style, .78)
+    two = layout_caption("absolutely exhausted all", 1080, 1920, 78, style, .78)
+    assert two["text"] == "absolutely\nexhausted all"
+    # Keep the first line at the same origin so this is a direct pixel test.
+    # The renderer centres each physical line inside the multiline layout's
+    # widest line, so mirror that first-line x origin too.
+    from parallax.captions.layout import _font, _measure
+    font = _font(style, 78)
+    first_width = _measure(font, "absolutely", 0)[0]
+    widest = max(_measure(font, line, 0)[0] for line in two["text"].split("\n"))
+    one["x"], one["y"] = two["x"] + (widest - first_width) // 2, two["y"]
+    single_out, multiline_out = tmp_path / "single.mp4", tmp_path / "multiline.mp4"
+    _burn_captions_drawtext(str(source), [{**one, "start": 0, "end": .2}], single_out, 78, style)
+    _burn_captions_drawtext(str(source), [{**two, "start": 0, "end": .2}], multiline_out, 78, style)
+    single_png, multiline_png = tmp_path / "single.png", tmp_path / "multiline.png"
+    for video, image in ((single_out, single_png), (multiline_out, multiline_png)):
+        subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", "0.05", "-i", str(video),
+                        "-frames:v", "1", str(image)], check=True)
+    single = Image.open(single_png).convert("RGB")
+    multiline = Image.open(multiline_png).convert("RGB")
+    # The descender pixels are the bottommost white pixels of the first line.
+    white = lambda pixel: min(pixel) > 220
+    first_line = [(x, y) for y in range(two["y"], two["y"] + 120) for x in range(1080)
+                  if white(single.getpixel((x, y)))]
+    descender_y = max(y for _, y in first_line)
+    descender_pixels = [(x, y) for x, y in first_line if y >= descender_y - 2]
+    assert descender_pixels
+    assert all(white(multiline.getpixel(pixel)) for pixel in descender_pixels)
+
+
+@pytest.mark.parametrize("size", [78, 96, 120])
+def test_large_caption_layout_never_spills_safe_rectangle(size):
+    from parallax.captions.layout import layout_caption
+    laid = layout_caption("SUPERCALIFRAGILISTICEXPIALIDOCIOUS absolutely exhausted all", 1080, 1920,
+                          size, resolve_caption_style("clean"), .78)
+    box, safe = laid["box"], laid["safe"]
+    assert box["left"] >= safe["left"] and box["right"] <= safe["right"]
+    assert box["top"] >= safe["top"] and box["bottom"] <= safe["bottom"]
+
+
 # ─── _probe_fps ─────────────────────────────────────────────────────────
 
 
@@ -162,6 +242,24 @@ def test_burn_captions_drawtext_produces_video(tmp_path):
     _burn_captions_drawtext(str(v), chunks, out, fontsize=64, style=style)
     assert out.exists() and out.stat().st_size > 0
     assert abs(_probe_dur(out) - 1.0) < 0.2
+
+
+@_requires_drawtext
+def test_burn_captions_drawtext_handles_percent_sign(tmp_path):
+    """A literal '%' (e.g. "25%") must not be parsed as a drawtext expansion."""
+    v = tmp_path / "in.mp4"
+    _make_video_with_audio(v, 1.0)
+    out = tmp_path / "captioned.mp4"
+    chunks = [{"text": "UP 25% NOW", "start": 0.0, "end": 1.0}]
+    style = resolve_caption_style("bangers")
+    _burn_captions_drawtext(str(v), chunks, out, fontsize=64, style=style)
+    assert out.exists() and out.stat().st_size > 0
+
+
+def test_drawtext_filter_escapes_percent():
+    style = resolve_caption_style("bangers")
+    f = _style_drawtext_filter(style, "25%", 0, 1, 50)
+    assert "25\\\\%" in f  # two backslashes: one survives the filtergraph parser
 
 
 # ─── burn_captions orchestrator ─────────────────────────────────────────
@@ -268,3 +366,19 @@ def test_burn_captions_adapts_to_resolution(tmp_path, w, h):
     assert (out_w, out_h) == (w, h), (
         f"caption pass must not change frame size; got {out_w}x{out_h} from {w}x{h}"
     )
+
+
+@pytest.mark.parametrize('mode', [3, 'smart'])
+def test_burn_routes_sentence_safe_chunks_to_renderer(tmp_path, monkeypatch, mode):
+    import parallax.captions.burn as burn_module
+    import parallax.ffmpeg_utils as ffmpeg
+    monkeypatch.setattr(ffmpeg, '_ffmpeg_has_drawtext', lambda: True)
+    captured = []
+    monkeypatch.setattr(burn_module, '_burn_captions_drawtext', lambda video, chunks, *args: captured.extend(chunks))
+    words = [{'word': word, 'start': i * .3, 'end': i * .3 + .2}
+             for i, word in enumerate(['Go.', 'I', 'can', 'start.'])]
+    burn_module.burn_captions(str(tmp_path / 'input.mp4'), json.dumps(words),
+                              words_per_chunk=mode, caption_style='anton', gap_hold_frames=0)
+    assert captured[0]['text'] == 'Go.'
+    assert captured[0]['end'] == .2
+    assert ' '.join(chunk['text'] for chunk in captured) == 'Go. I can start.'
