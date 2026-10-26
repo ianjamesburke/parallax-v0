@@ -21,7 +21,7 @@ def image_generate(
     aspect: Optional[str] = typer.Option(None, "--aspect", help="Aspect ratio, e.g. '9:16', '16:9', '1:1'. Default: model default."),
     size: Optional[str] = typer.Option(None, "--size", help="Explicit WxH, e.g. '1080x1920'. Overrides --aspect for sizing."),
     refs: Optional[List[str]] = typer.Option(None, "--ref", "--reference", metavar="PATH", help="Reference image path (can repeat). Model must support references."),
-    out: Optional[str] = typer.Option(None, "--out", "-o", help="Output path. If it ends with a recognized image extension, written to that exact file. Otherwise treated as output directory."),
+    out: Optional[str] = typer.Option(None, "--out", "--output", "-o", help="Output path. If it ends with a recognized image extension, written to that exact file. Otherwise treated as output directory."),
 ) -> int:
     """Generate one image. Spends money; prints the estimated cost first."""
     return _run_generate(SimpleNamespace(
@@ -56,7 +56,7 @@ def image_crop_grid(
     rows: int = typer.Option(..., "--rows", min=1, help="Grid row count."),
     cols: int = typer.Option(..., "--cols", min=1, help="Grid column count."),
     pick: int = typer.Option(..., "--pick", min=1, help="1-based cell number, row-major."),
-    out: Optional[str] = typer.Option(None, "--out", help="Exact output image for --pick."),
+    out: Optional[str] = typer.Option(None, "--out", "--output", help="Exact output image for --pick."),
     all_: Optional[str] = typer.Option(None, "--all", help="Directory to write every cell."),
 ) -> int:
     """Crop a numbered character-option grid locally; no provider call."""

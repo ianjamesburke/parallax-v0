@@ -63,7 +63,7 @@ def _produce_cmd(
 def _plan_cmd(
     folder: str = typer.Option(..., "--folder", help="Project root."),
     brief: Optional[str] = typer.Option(None, "--brief", help="Path to brief.yaml (default: <folder>/brief.yaml)."),
-    out: Optional[str] = typer.Option(None, "--out", help="Override plan.yaml output path."),
+    out: Optional[str] = typer.Option(None, "--out", "--output", help="Override plan.yaml output path."),
     model: str = typer.Option("mid", "--model", help="Image model alias for the plan (default: mid)."),
     caption_style: str = typer.Option("anton", "--caption-style", help="Caption preset name written into the plan (default: anton)."),
     resolution: Optional[str] = typer.Option(None, "--resolution", help="Set output resolution in the generated plan, e.g. 480x854."),
@@ -151,7 +151,7 @@ def _storyboard_cmd(
 
 def _ingest_cmd(
     path: str = typer.Argument(..., help="Clip file or directory of clips."),
-    out: Optional[str] = typer.Option(None, "--out", help="Override the index.json output path."),
+    out: Optional[str] = typer.Option(None, "--out", "--output", help="Override the index.json output path."),
     visual: bool = typer.Option(False, "--visual", help="Also tag sampled frames via vision (currently not implemented)."),
     estimate: bool = typer.Option(False, "--estimate", help="Dry-run: report duration + cost estimate, no transcription."),
     parallel: int = typer.Option(4, "--parallel", help="Max concurrent transcription workers (default: 4)."),
