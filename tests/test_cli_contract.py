@@ -413,7 +413,7 @@ class TestAudio:
             return {"raw_audio_path": str(src), "audio_path": str(src), "total_duration_s": 2.0}
 
         monkeypatch.setattr(vo_mod, "generate_voiceover_dict", fake_voiceover)
-        rc = cli.main(["audio", "voiceover", "--text", "hello world", "--out", str(out)])
+        rc = cli.main(["audio", "voiceover", "--text", "hello world", "--out", str(out), "--speed", "1.0"])
         assert rc == 0
         assert called[0]["trim_pauses"] is False
         assert out.read_bytes() == src.read_bytes()
@@ -421,7 +421,7 @@ class TestAudio:
 
         rc = cli.main([
             "audio", "voiceover", "--text", "hello world", "--out", str(out),
-            "--trim-pauses",
+            "--trim-pauses", "--speed", "1.0",
         ])
         assert rc == 0
         assert called[1]["trim_pauses"] is True
@@ -437,15 +437,20 @@ class TestAudio:
         processed = tmp_path / "processed.mp3"
         processed.write_bytes(b"speed input")
         out = tmp_path / "out.mp3"
+        speeds_seen = []
         monkeypatch.setattr(vo_mod, "generate_voiceover_dict", lambda **kw: {
             "raw_audio_path": str(raw), "audio_path": str(processed), "total_duration_s": 2.0,
         })
-        monkeypatch.setattr(audio_mod, "speedup", lambda _src, dst, _speed: dst.write_bytes(b"sped up"))
+        def _fake_speedup(_src, dst, _speed):
+            speeds_seen.append(_speed)
+            dst.write_bytes(b"sped up")
+        monkeypatch.setattr(audio_mod, "speedup", _fake_speedup)
         monkeypatch.setattr(ffmpeg_mod, "run_ffmpeg", lambda *_args, **_kwargs: type("Probe", (), {"stdout": "1.667"})())
         rc = cli.main([
-            "audio", "voiceover", "--text", "hello", "--out", str(out), "--speed", "1.2",
+            "audio", "voiceover", "--text", "hello", "--out", str(out),
         ])
         assert rc == 0
+        assert speeds_seen == [1.15]
         assert out.read_bytes() == b"sped up"
         assert (tmp_path / "out.provider-raw.mp3").read_bytes() == raw.read_bytes()
         assert "output speed-adjusted" in capsys.readouterr().out

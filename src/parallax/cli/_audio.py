@@ -287,7 +287,7 @@ def audio_voiceover(
     out: str = typer.Option(..., "--out", "--output", help="Output audio file path (e.g. /tmp/out.mp3)."),
     voice: str = typer.Option("nova", "--voice", help="Voice name or ElevenLabs voice ID (default: nova)."),
     voice_model: str = typer.Option("tts-mini", "--voice-model", help="TTS backend: tts-mini, tts-gemini, elevenlabs (default: tts-mini)."),
-    speed: Optional[float] = typer.Option(None, "--speed", help="atempo multiplier applied after synthesis (e.g. 1.2 = 20% faster)."),
+    speed: Optional[float] = typer.Option(1.15, "--speed", help="atempo multiplier applied after synthesis (default: 1.15; use --speed 1.0 to disable)."),
     style: Optional[str] = typer.Option(None, "--style", help="Delivery style preset: rapid_fire, fast, calm, natural."),
     voice_prompt: Optional[str] = typer.Option(None, "--voice-prompt", help="Natural-language voice description (required for seed-audio)."),
     trim_pauses: bool = typer.Option(False, "--trim-pauses", help="Opt in to timestamp-based pause trimming. By default, preserve the provider's original audio."),

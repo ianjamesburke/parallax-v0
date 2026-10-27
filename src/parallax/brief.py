@@ -15,7 +15,7 @@ Schema (informal):
     goal: "Promote the new Lion energy drink"
     aspect: 9:16          # 9:16 | 16:9 | 1:1 | 4:3 | 3:4
     voice: nova            # TTS voice name (OpenAI: nova, shimmer, alloy, echo, fable, onyx)
-    voice_speed: 1.0
+    voice_speed: 1.15
     success_criteria:
       - "Hook lands in <2s"
       - "Product visible in scene 1"
@@ -214,7 +214,7 @@ class Brief(BaseModel):
     voice: str = "nova"
     voice_prompt: str | None = None
     brand: dict[str, Any] | None = None
-    voice_speed: float = 1.0
+    voice_speed: float = 1.15
     # Video-gen resolution — upscaled to the output resolution during assembly.
     # Lower is cheaper. Seedance 2.0 Fast: 480p=$0.054/s, 720p=$0.121/s, 1080p=$0.272/s.
     # Defaults are aspect-aware (9:16→480x854, 16:9→854x480, 1:1→480x480).
