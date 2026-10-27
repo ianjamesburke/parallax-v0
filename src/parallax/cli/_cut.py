@@ -101,6 +101,13 @@ def _print_result_human(res: dict) -> None:
             f"  loudness:  drop={ld.get('first_to_last_drop_db', 0.0):.2f}dB "
             f"(decay_detected={ld.get('decay_detected', False)}, report={res.get('loudness_report_path')})"
         )
+    if res.get("verification"):
+        vf = res["verification"]
+        note_str = f" ({vf['note']})" if vf.get("note") else ""
+        print(
+            f"  verify:    status={vf.get('status')} retries={vf.get('retries_used', 0)}"
+            f"{note_str} ({res.get('verify_report_path')})"
+        )
     print(f"  manifest:  {res.get('manifest_path')}")
     if res.get("editor_export_path"):
         print(f"  export:    {res.get('editor_export_path')} (timeline: {res.get('timeline_xml_path')})")
@@ -197,6 +204,21 @@ def cut_cmd(
         True,
         "--vo-normalize/--no-vo-normalize",
         help="Apply two-pass ffmpeg loudnorm to each voiceover chunk (default: on).",
+    ),
+    vo_verify: bool = typer.Option(
+        True,
+        "--vo-verify/--no-vo-verify",
+        help="Verify synthesized/processed voiceover against script via whisper transcription when available (default: on).",
+    ),
+    vo_retries: int = typer.Option(
+        2,
+        "--vo-retries",
+        help="Max per-chunk TTS regeneration retries when verification detects missing words or low similarity (default: 2).",
+    ),
+    strict_vo: bool = typer.Option(
+        False,
+        "--strict-vo/--no-strict-vo",
+        help="Fail with exit code 1 if voiceover verification still has residual mismatches after retries (default: off).",
     ),
     fps: int = typer.Option(
         24,
@@ -308,6 +330,9 @@ def cut_cmd(
             vo_gap=vo_gap,
             vo_lufs=vo_lufs,
             vo_normalize=vo_normalize,
+            vo_verify=vo_verify,
+            vo_retries=vo_retries,
+            strict_vo=strict_vo,
             fps=fps,
             aspect=aspect,
             resolution=resolution,

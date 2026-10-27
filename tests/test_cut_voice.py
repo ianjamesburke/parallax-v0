@@ -461,3 +461,233 @@ def test_per_chunk_loudnorm_and_loudness_decay_detector(tmp_path: Path) -> None:
     assert rep_flat["warning"] is None
 
 
+def test_verifier_flags_missing_tooth_enamel_regenerates_only_failing_chunk_and_keeps_rejected(
+    tmp_path: Path,
+) -> None:
+    """Fake transcriber missing 'tooth enamel' on chunk 2 attempt 1 -> flagged,
+    triggers exactly one regeneration of only chunk 2, preserves .rejected, then passes.
+    """
+    import pytest
+    from parallax.cut import (
+        CutError,
+        chunk_script,
+        diff_script_vs_transcript,
+        resolve_or_generate_voiceover,
+    )
+    from parallax.voiceover import VoiceSynthesisResult
+
+    # Unit check on diff_script_vs_transcript with "97%" vs "ninety seven percent" and missing "tooth enamel"
+    diff_bad = diff_script_vs_transcript(
+        "Up to 97% of human tooth enamel is mineral.",
+        [
+            {"word": "up", "start": 0.0, "end": 0.2},
+            {"word": "to", "start": 0.2, "end": 0.4},
+            {"word": "ninety", "start": 0.4, "end": 0.7},
+            {"word": "seven", "start": 0.7, "end": 1.0},
+            {"word": "percent", "start": 1.0, "end": 1.3},
+            {"word": "of", "start": 1.3, "end": 1.5},
+            {"word": "human", "start": 1.5, "end": 1.8},
+            {"word": "is", "start": 2.1, "end": 2.3},
+            {"word": "mineral", "start": 2.3, "end": 2.7},
+        ],
+    )
+    assert diff_bad["passed"] is False
+    assert any(r["words"] == ["tooth", "enamel"] for r in diff_bad["missing_runs"])
+
+    para1 = " ".join(["Roman concrete piers stood firm in the bay."] * 5)
+    para2 = " ".join(["Up to 97% of human tooth enamel is pure mineral."] * 4)
+    script = f"{para1}\n\n{para2}"
+    chunks = chunk_script(script, max_chunk_seconds=15.0, speed=1.15)
+    assert len(chunks) == 2
+
+    provider_calls: list[str] = []
+    chunk2_synth_attempts = 0
+
+    class _Provider:
+        def synthesize(
+            self,
+            text: str,
+            voice: str = "nova",
+            style: str | None = None,
+            *,
+            out_dir: str | None = None,
+        ) -> VoiceSynthesisResult:
+            nonlocal chunk2_synth_attempts
+            provider_calls.append(text)
+            dest = Path(out_dir or tmp_path)
+            dest.mkdir(parents=True, exist_ok=True)
+            tag = "c1"
+            if "97%" in text:
+                chunk2_synth_attempts += 1
+                tag = f"c2_attempt{chunk2_synth_attempts}"
+            mp3_p = dest / f"{tag}.mp3"
+            mp3_p.write_bytes(f"AUDIO_{tag}".encode("utf-8"))
+            toks = text.split()
+            words = [
+                {"word": w, "start": round(i * 0.3, 4), "end": round((i + 1) * 0.3, 4)}
+                for i, w in enumerate(toks)
+            ]
+            return VoiceSynthesisResult(
+                audio_path=str(mp3_p),
+                words=words,
+                duration_s=round(len(toks) * 0.3, 4),
+                cost_usd=0.01,
+            )
+
+    def _fake_transcriber(audio_path: str, label: str = "") -> list[dict]:
+        data = Path(audio_path).read_bytes()
+        if b"c2_attempt1" in data:
+            # Drop "tooth enamel" on the first attempt of chunk 2!
+            text = chunks[1].replace("tooth enamel", "")
+        elif b"c2_attempt" in data:
+            text = chunks[1]
+        elif "final" in label:
+            text = f"{chunks[0]} {chunks[1]}"
+        else:
+            text = chunks[0]
+        return [
+            {"word": w, "start": round(i * 0.25, 3), "end": round((i + 1) * 0.25, 3)}
+            for i, w in enumerate(text.split())
+        ]
+
+    proj = tmp_path / "verify_retry_proj"
+    res = resolve_or_generate_voiceover(
+        clean_script=script,
+        project_dir=proj,
+        vo_chunk_seconds=15.0,
+        vo_verify=True,
+        vo_retries=2,
+        provider=_Provider(),
+        transcriber=_fake_transcriber,
+        quiet=True,
+    )
+    # Chunk 1 called once, Chunk 2 called twice (initial + 1 retry) -> 3 total calls, 1 retry used
+    assert len(provider_calls) == 3
+    assert chunk2_synth_attempts == 2
+    assert res["tts_calls"] == 3
+    assert res["retries_used"] == 1
+    assert res["verification"]["passed"] is True
+    assert res["verification"]["residual_mismatches"] == []
+    rejected_files = list((proj / "cache" / "vo" / "chunks").glob("*.rejected"))
+    assert len(rejected_files) >= 1
+
+    # Now test residual mismatch when all retries fail: non-fatal by default, fatal under --strict-vo
+    def _always_drop_transcriber(audio_path: str, label: str = "") -> list[dict]:
+        text = chunks[0].replace("concrete piers", "")
+        return [
+            {"word": w, "start": round(i * 0.25, 3), "end": round((i + 1) * 0.25, 3)}
+            for i, w in enumerate(text.split())
+        ]
+
+    proj_res = tmp_path / "verify_residual_proj"
+    res_residual = resolve_or_generate_voiceover(
+        clean_script=chunks[0],
+        project_dir=proj_res,
+        vo_chunk_seconds=0,
+        vo_verify=True,
+        vo_retries=2,
+        strict_vo=False,
+        provider=_Provider(),
+        transcriber=_always_drop_transcriber,
+        quiet=True,
+    )
+    assert res_residual["verification"]["passed"] is False
+    assert res_residual["retries_used"] == 2
+    assert len(res_residual["verification"]["residual_mismatches"]) == 1
+    assert any(
+        r["words"] == ["concrete", "piers"]
+        for r in res_residual["verification"]["residual_mismatches"][0]["missing_runs"]
+    )
+
+    proj_strict = tmp_path / "verify_strict_proj"
+    with pytest.raises(CutError) as exc_info:
+        resolve_or_generate_voiceover(
+            clean_script=chunks[0],
+            project_dir=proj_strict,
+            vo_chunk_seconds=0,
+            vo_verify=True,
+            vo_retries=1,
+            strict_vo=True,
+            provider=_Provider(),
+            transcriber=_always_drop_transcriber,
+            quiet=True,
+        )
+    assert exc_info.value.exit_code == 1
+    assert "--strict-vo" in str(exc_info.value)
+
+
+def test_verifier_trim_induced_mismatch_escalates_padding(tmp_path: Path) -> None:
+    """If pause trim introduces a mismatch not present in the raw audio, re-runs trim with bigger padding."""
+    from parallax.cut import resolve_or_generate_voiceover
+
+    raw_wav = _make_burst_silence_burst_wav(
+        tmp_path / "supplied_raw.wav",
+        b1_dur=0.60,
+        sil_dur=0.80,
+        b2_dur=0.60,
+    )
+    words_json = tmp_path / "supplied_words.json"
+    import json
+
+    words_json.write_text(
+        json.dumps(
+            {
+                "words": [
+                    {"word": "97%", "start": 0.0, "end": 0.60},
+                    {"word": "tooth", "start": 1.40, "end": 1.70},
+                    {"word": "enamel", "start": 1.70, "end": 2.00},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    trimmed_eval_count = 0
+
+    def _transcriber(audio_path: str, label: str = "") -> list[dict]:
+        nonlocal trimmed_eval_count
+        if "raw" in label:
+            # Raw audio has all words intact
+            return [
+                {"word": "ninety", "start": 0.0, "end": 0.2},
+                {"word": "seven", "start": 0.2, "end": 0.4},
+                {"word": "percent", "start": 0.4, "end": 0.6},
+                {"word": "tooth", "start": 1.4, "end": 1.7},
+                {"word": "enamel", "start": 1.7, "end": 2.0},
+            ]
+        trimmed_eval_count += 1
+        if trimmed_eval_count == 1:
+            # Simulate initial trim (padding=0.15) clipping "ninety seven"
+            return [
+                {"word": "percent", "start": 0.0, "end": 0.2},
+                {"word": "tooth", "start": 0.8, "end": 1.1},
+                {"word": "enamel", "start": 1.1, "end": 1.4},
+            ]
+        # Escalated padding (0.30) keeps full phrase intact
+        return [
+            {"word": "ninety", "start": 0.0, "end": 0.2},
+            {"word": "seven", "start": 0.2, "end": 0.4},
+            {"word": "percent", "start": 0.4, "end": 0.6},
+            {"word": "tooth", "start": 1.0, "end": 1.3},
+            {"word": "enamel", "start": 1.3, "end": 1.6},
+        ]
+
+    proj = tmp_path / "trim_esc_proj"
+    res = resolve_or_generate_voiceover(
+        clean_script="97% tooth enamel",
+        project_dir=proj,
+        audio_path=raw_wav,
+        words_path=words_json,
+        process_audio=True,
+        speed=1.0,
+        max_sentence_silence=0.20,
+        vo_verify=True,
+        transcriber=_transcriber,
+        quiet=True,
+    )
+    assert res["verification"]["passed"] is True
+    assert len(res["verification"]["trim_escalations"]) >= 1
+    assert res["verification"]["trim_escalations"][0]["padding_s"] == 0.30
+
+
+

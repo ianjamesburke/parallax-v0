@@ -2352,6 +2352,189 @@ def concatenate_chunk_voiceovers(
     }
 
 
+def diff_script_vs_transcript(
+    script_text: str,
+    heard_words: list[dict[str, Any]] | str,
+    *,
+    min_similarity: float = 0.97,
+    max_missing_run: int = 2,
+) -> dict[str, Any]:
+    """Compare normalized script words against normalized transcript words via `difflib`.
+
+    Flags missing/extra word runs with approximate timestamps and returns `passed=False`
+    when any missing run has `>= max_missing_run` (2) words or similarity `< min_similarity` (0.97).
+    """
+    expected = normalize_text_for_verify(script_text)
+    actual: list[str] = []
+    actual_times: list[tuple[float, float]] = []
+
+    if isinstance(heard_words, str):
+        for w in normalize_text_for_verify(heard_words):
+            actual.append(w)
+            actual_times.append((0.0, 0.0))
+    else:
+        for hw in heard_words or []:
+            if isinstance(hw, str):
+                norm_toks = normalize_text_for_verify(hw)
+                for nt in norm_toks:
+                    actual.append(nt)
+                    actual_times.append((0.0, 0.0))
+            else:
+                w_str = str(hw.get("word", ""))
+                ws = float(hw.get("start", 0.0) or 0.0)
+                we = float(hw.get("end", ws) or ws)
+                norm_toks = normalize_text_for_verify(w_str)
+                for nt in norm_toks:
+                    actual.append(nt)
+                    actual_times.append((ws, we))
+
+    if not expected:
+        return {
+            "status": "passed",
+            "passed": True,
+            "skipped": False,
+            "similarity": 1.0,
+            "expected_words": [],
+            "actual_words": actual,
+            "missing_runs": [],
+            "extra_runs": [],
+            "max_missing_run": 0,
+        }
+
+    sm = difflib.SequenceMatcher(None, expected, actual, autojunk=False)
+    similarity = round(float(sm.ratio()), 4)
+    missing_runs: list[dict[str, Any]] = []
+    extra_runs: list[dict[str, Any]] = []
+
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            continue
+        if j2 > j1 and actual_times:
+            t_start = actual_times[j1][0]
+            t_end = actual_times[j2 - 1][1]
+        elif actual_times:
+            t_start = actual_times[j1 - 1][1] if j1 > 0 else 0.0
+            t_end = actual_times[j1][0] if j1 < len(actual_times) else t_start
+        else:
+            t_start, t_end = 0.0, 0.0
+
+        if i2 > i1:
+            m_toks = expected[i1:i2]
+            missing_runs.append(
+                {
+                    "words": m_toks,
+                    "text": " ".join(m_toks),
+                    "count": len(m_toks),
+                    "start_s": round(t_start, 3),
+                    "end_s": round(t_end, 3),
+                    "script_span": [i1, i2],
+                    "replaced_by": actual[j1:j2] if j2 > j1 else [],
+                }
+            )
+        if j2 > j1:
+            e_toks = actual[j1:j2]
+            extra_runs.append(
+                {
+                    "words": e_toks,
+                    "text": " ".join(e_toks),
+                    "count": len(e_toks),
+                    "start_s": round(t_start, 3),
+                    "end_s": round(t_end, 3),
+                }
+            )
+
+    max_missing_len = max((r["count"] for r in missing_runs), default=0)
+    passed = bool(max_missing_len < int(max_missing_run) and similarity >= float(min_similarity))
+    return {
+        "status": "passed" if passed else "failed",
+        "passed": passed,
+        "skipped": False,
+        "similarity": similarity,
+        "expected_words": expected,
+        "actual_words": actual,
+        "missing_runs": missing_runs,
+        "extra_runs": extra_runs,
+        "max_missing_run": max_missing_len,
+    }
+
+
+def verify_audio_against_script(
+    audio_path: str | Path,
+    script_text: str,
+    *,
+    transcriber: Any | None = None,
+    min_similarity: float = 0.97,
+    max_missing_run: int = 2,
+    label: str = "",
+) -> dict[str, Any]:
+    """Transcribe `audio_path` via `whisper_backend.transcribe_wav` (or `transcriber`) and verify
+    against `script_text`. If whisperx is unavailable, returns a `status='skipped'` report without crashing.
+    """
+    fn = transcriber
+    if fn is None:
+        from . import whisper_backend as _wb
+
+        fn = _wb.transcribe_wav
+
+    try:
+        kwargs: dict[str, Any] = {}
+        try:
+            sig = inspect.signature(fn)
+            if "label" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            ):
+                kwargs["label"] = label
+        except (ValueError, TypeError):
+            pass
+        heard = fn(str(audio_path), **kwargs)
+    except Exception as exc:
+        return {
+            "status": "skipped",
+            "passed": True,
+            "skipped": True,
+            "note": f"verification skipped ({exc})",
+            "similarity": 1.0,
+            "expected_words": normalize_text_for_verify(script_text),
+            "actual_words": [],
+            "missing_runs": [],
+            "extra_runs": [],
+            "max_missing_run": 0,
+        }
+
+    return diff_script_vs_transcript(
+        script_text,
+        heard,
+        min_similarity=min_similarity,
+        max_missing_run=max_missing_run,
+    )
+
+
+def _trim_introduced_mismatch(raw_verify: dict[str, Any], proc_verify: dict[str, Any]) -> bool:
+    """Return True if `proc_verify` has a missing word run or failure not present in `raw_verify`."""
+    if raw_verify.get("skipped") or proc_verify.get("skipped"):
+        return False
+    raw_missing = {tuple(r["words"]) for r in (raw_verify.get("missing_runs") or [])}
+    proc_missing = [tuple(r["words"]) for r in (proc_verify.get("missing_runs") or [])]
+    if any(m not in raw_missing for m in proc_missing):
+        return True
+    if raw_verify.get("passed", True) and not proc_verify.get("passed", True):
+        return True
+    return False
+
+
+def _format_residual_mismatch_summary(residual: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for item in residual:
+        loc = f"chunk {item['chunk_index']}" if item.get("chunk_index") is not None else "final"
+        runs = item.get("missing_runs") or []
+        if runs:
+            run_strs = [f"missing '{r['text']}' (@{r['start_s']:.2f}s)" for r in runs]
+            parts.append(f"{loc} (sim={item.get('similarity', 0.0):.3f}: {', '.join(run_strs)})")
+        else:
+            parts.append(f"{loc} (sim={item.get('similarity', 0.0):.3f})")
+    return "; ".join(parts)
+
+
 def resolve_or_generate_voiceover(
     *,
     clean_script: str,
@@ -2368,17 +2551,24 @@ def resolve_or_generate_voiceover(
     vo_gap: float = 0.25,
     vo_lufs: float = -16.0,
     vo_normalize: bool = True,
+    vo_verify: bool = True,
+    vo_retries: int = 2,
+    strict_vo: bool = False,
     provider: Any | None = None,
+    transcriber: Any | None = None,
     force: bool = False,
     quiet: bool = False,
 ) -> dict[str, Any]:
     """Obtain voiceover audio + word timings from supplied files, cache, or chunked TTS.
 
     Implements per-chunk raw (`<project>/cache/vo/chunks/<sha256>.raw.{mp3,json}`) and
-    processed (`<sha256>.proc.{mp3,json}`) caches plus the top-level combined cache in
-    `<project>/cache/vo/`.
+    processed (`<sha256>.proc.{mp3,json}`) caches, script-vs-audio verification with
+    per-chunk regeneration retries (`--vo-retries`), trim-margin escalation on trim-induced
+    mismatches, and 10s-window loudness decay reporting.
     """
     project_dir.mkdir(parents=True, exist_ok=True)
+    loudness_json_path = project_dir / "voiceover.loudness.json"
+    verify_json_path = project_dir / "voiceover.verify.json"
 
     # Path 1: User supplied --audio
     if audio_path is not None:
@@ -2407,21 +2597,87 @@ def resolve_or_generate_voiceover(
 
         ext = src_audio.suffix.lower() or ".mp3"
         dst_audio = project_dir / f"voiceover{ext}"
-        loudness_json_path = project_dir / "voiceover.loudness.json"
+        trim_escalations: list[dict[str, Any]] = []
+        residual_mismatches: list[dict[str, Any]] = []
+
         if process_audio:
             raw_copy = project_dir / f"voiceover.provider-raw{ext}"
             if src_audio != raw_copy:
                 shutil.copy2(src_audio, raw_copy)
+
+            raw_verify = (
+                verify_audio_against_script(raw_copy, clean_script, transcriber=transcriber, label="supplied raw")
+                if vo_verify
+                else {"status": "disabled", "passed": True, "skipped": True, "missing_runs": [], "extra_runs": []}
+            )
+
             proc = process_voiceover_audio(
                 raw_audio_path=raw_copy,
                 raw_words=raw_words,
                 out_audio_path=dst_audio,
                 speed=speed,
                 max_sentence_silence=max_sentence_silence,
+                min_padding_s=PAUSE_TRIM_ESCALATION_LEVELS[0],
                 vo_lufs=vo_lufs,
                 vo_normalize=vo_normalize,
             )
+
+            final_verify = (
+                verify_audio_against_script(dst_audio, clean_script, transcriber=transcriber, label="supplied trimmed")
+                if vo_verify
+                else {"status": "disabled", "passed": True, "skipped": True, "missing_runs": [], "extra_runs": []}
+            )
+
+            if vo_verify and proc["cuts_count"] > 0 and _trim_introduced_mismatch(raw_verify, final_verify):
+                for esc_pad in PAUSE_TRIM_ESCALATION_LEVELS[1:]:
+                    proc = process_voiceover_audio(
+                        raw_audio_path=raw_copy,
+                        raw_words=raw_words,
+                        out_audio_path=dst_audio,
+                        speed=speed,
+                        max_sentence_silence=max_sentence_silence,
+                        min_padding_s=esc_pad,
+                        vo_lufs=vo_lufs,
+                        vo_normalize=vo_normalize,
+                    )
+                    final_verify = verify_audio_against_script(
+                        dst_audio,
+                        clean_script,
+                        transcriber=transcriber,
+                        label=f"supplied trimmed (padding={esc_pad})",
+                    )
+                    trim_escalations.append(
+                        {
+                            "chunk_index": 0,
+                            "padding_s": esc_pad,
+                            "passed": final_verify.get("passed", True),
+                        }
+                    )
+                    if not _trim_introduced_mismatch(raw_verify, final_verify):
+                        break
+
+            if vo_verify and not final_verify.get("skipped") and not final_verify.get("passed", True):
+                residual_mismatches.append({"chunk_index": None, **final_verify})
+
+            verify_report = {
+                "enabled": bool(vo_verify),
+                "status": final_verify.get("status", "disabled"),
+                "skipped": bool(final_verify.get("skipped", False)),
+                "note": final_verify.get("note"),
+                "passed": len(residual_mismatches) == 0,
+                "retries_used": 0,
+                "trim_escalations": trim_escalations,
+                "residual_mismatches": residual_mismatches,
+                "final": final_verify,
+            }
+            verify_json_path.write_text(json.dumps(verify_report, indent=2), encoding="utf-8")
             loudness_report = analyze_voiceover_loudness(dst_audio, out_json_path=loudness_json_path)
+            if strict_vo and residual_mismatches:
+                raise CutError(
+                    f"Voiceover verification failed (--strict-vo): {_format_residual_mismatch_summary(residual_mismatches)}",
+                    exit_code=1,
+                    report={"status": "vo_verify_failed", "verification": verify_report},
+                )
             return {
                 "source": "supplied",
                 "audio_path": str(dst_audio),
@@ -2433,6 +2689,8 @@ def resolve_or_generate_voiceover(
                 "chunks_count": 1,
                 "loudness": loudness_report,
                 "loudness_report_path": str(loudness_json_path),
+                "verification": verify_report,
+                "verify_report_path": str(verify_json_path),
             }
         else:
             if src_audio != dst_audio:
@@ -2440,7 +2698,32 @@ def resolve_or_generate_voiceover(
             dur = probe_audio_duration(dst_audio)
             if dur is None or dur <= 0:
                 dur = max((float(w.get("end", 0.0)) for w in raw_words), default=1.0)
+            final_verify = (
+                verify_audio_against_script(dst_audio, clean_script, transcriber=transcriber, label="supplied audio")
+                if vo_verify
+                else {"status": "disabled", "passed": True, "skipped": True, "missing_runs": [], "extra_runs": []}
+            )
+            if vo_verify and not final_verify.get("skipped") and not final_verify.get("passed", True):
+                residual_mismatches.append({"chunk_index": None, **final_verify})
+            verify_report = {
+                "enabled": bool(vo_verify),
+                "status": final_verify.get("status", "disabled"),
+                "skipped": bool(final_verify.get("skipped", False)),
+                "note": final_verify.get("note"),
+                "passed": len(residual_mismatches) == 0,
+                "retries_used": 0,
+                "trim_escalations": [],
+                "residual_mismatches": residual_mismatches,
+                "final": final_verify,
+            }
+            verify_json_path.write_text(json.dumps(verify_report, indent=2), encoding="utf-8")
             loudness_report = analyze_voiceover_loudness(dst_audio, out_json_path=loudness_json_path)
+            if strict_vo and residual_mismatches:
+                raise CutError(
+                    f"Voiceover verification failed (--strict-vo): {_format_residual_mismatch_summary(residual_mismatches)}",
+                    exit_code=1,
+                    report={"status": "vo_verify_failed", "verification": verify_report},
+                )
             return {
                 "source": "supplied",
                 "audio_path": str(dst_audio),
@@ -2452,6 +2735,8 @@ def resolve_or_generate_voiceover(
                 "chunks_count": 1,
                 "loudness": loudness_report,
                 "loudness_report_path": str(loudness_json_path),
+                "verification": verify_report,
+                "verify_report_path": str(verify_json_path),
             }
 
     # Path 2: Chunked TTS with per-chunk raw + processed cache under <project>/cache/vo/chunks/
@@ -2479,7 +2764,6 @@ def resolve_or_generate_voiceover(
 
     dst_audio = project_dir / "voiceover.mp3"
     dst_raw_audio = project_dir / "voiceover.provider-raw.mp3"
-    loudness_json_path = project_dir / "voiceover.loudness.json"
 
     chunks = chunk_script(clean_script, max_chunk_seconds=vo_chunk_seconds, speed=speed)
     if not chunks:
@@ -2498,6 +2782,11 @@ def resolve_or_generate_voiceover(
         if not dur:
             dur = probe_audio_duration(dst_audio) or max((float(w.get("end", 0.0)) for w in cached_words), default=1.0)
         loudness_report = analyze_voiceover_loudness(dst_audio, out_json_path=loudness_json_path)
+        verify_report = (
+            json.loads(verify_json_path.read_text(encoding="utf-8"))
+            if verify_json_path.is_file()
+            else {"enabled": bool(vo_verify), "status": "cached", "skipped": True, "passed": True}
+        )
         return {
             "source": "cached",
             "cache_tier": "processed",
@@ -2512,6 +2801,8 @@ def resolve_or_generate_voiceover(
             "chunks_count": len(chunks),
             "loudness": loudness_report,
             "loudness_report_path": str(loudness_json_path),
+            "verification": verify_report,
+            "verify_report_path": str(verify_json_path) if verify_json_path.is_file() else None,
         }
 
     # Resolve VoiceProvider lazily only if needed
@@ -2532,8 +2823,13 @@ def resolve_or_generate_voiceover(
 
     proc_chunks: list[dict[str, Any]] = []
     tts_calls = 0
+    retries_used = 0
     total_cost_usd = 0.0
     any_raw_reprocessed = False
+    chunk_verify_reports: list[dict[str, Any]] = []
+    trim_escalations = []
+    residual_mismatches = []
+    max_retries = max(0, int(vo_retries))
 
     for chunk_idx, chunk_text in enumerate(chunks):
         c_raw_key, c_proc_key = compute_chunk_cache_keys(
@@ -2580,18 +2876,14 @@ def resolve_or_generate_voiceover(
                 shutil.copy2(raw_audio_cache, c_raw_mp3)
                 shutil.copy2(raw_words_cache, c_raw_json)
 
-        if not force and c_raw_mp3.is_file() and c_raw_json.is_file():
-            any_raw_reprocessed = True
-            raw_payload = json.loads(c_raw_json.read_text(encoding="utf-8"))
-            raw_words = raw_payload if isinstance(raw_payload, list) else list(raw_payload.get("words") or [])
-            raw_dur = float(
-                (raw_payload.get("total_duration_s") if isinstance(raw_payload, dict) else None) or 0.0
-            )
-        else:
-            # Per-chunk Tier 3: TTS synthesis via VoiceProvider
+        def _synth_into_raw_cache() -> tuple[list[dict[str, Any]], float]:
+            nonlocal tts_calls, total_cost_usd
             chunk_est = float(spec.estimate_tts_usd(len(chunk_text)) if spec else 0.0)
             if not is_test_mode() and not quiet:
-                print_estimate(f"parallax cut --voice-model {voice_model} (chunk {chunk_idx + 1}/{len(chunks)})", chunk_est)
+                print_estimate(
+                    f"parallax cut --voice-model {voice_model} (chunk {chunk_idx + 1}/{len(chunks)})",
+                    chunk_est,
+                )
             prov = _get_provider()
             with tempfile.TemporaryDirectory(prefix="parallax-cut-tts-") as tmp_dir:
                 synth = _invoke_voice_provider(
@@ -2605,19 +2897,73 @@ def resolve_or_generate_voiceover(
                 tts_calls += 1
                 total_cost_usd += float(synth.cost_usd)
                 raw_src = Path(synth.audio_path)
-                raw_words = list(synth.words)
-                raw_dur = float(synth.duration_s or (raw_words[-1]["end"] if raw_words else 0.0))
+                r_words = list(synth.words)
+                r_dur = float(synth.duration_s or (r_words[-1]["end"] if r_words else 0.0))
                 shutil.copy2(raw_src, c_raw_mp3)
                 c_raw_json.write_text(
-                    json.dumps({"words": raw_words, "total_duration_s": raw_dur}, indent=2),
+                    json.dumps({"words": r_words, "total_duration_s": r_dur}, indent=2),
                     encoding="utf-8",
                 )
                 if len(chunks) == 1:
                     shutil.copy2(raw_src, raw_audio_cache)
                     raw_words_cache.write_text(
-                        json.dumps({"words": raw_words, "total_duration_s": raw_dur}, indent=2),
+                        json.dumps({"words": r_words, "total_duration_s": r_dur}, indent=2),
                         encoding="utf-8",
                     )
+                return r_words, r_dur
+
+        synthesized_this_chunk = False
+        if not force and c_raw_mp3.is_file() and c_raw_json.is_file():
+            any_raw_reprocessed = True
+            raw_payload = json.loads(c_raw_json.read_text(encoding="utf-8"))
+            raw_words = raw_payload if isinstance(raw_payload, list) else list(raw_payload.get("words") or [])
+            raw_dur = float(
+                (raw_payload.get("total_duration_s") if isinstance(raw_payload, dict) else None) or 0.0
+            )
+        else:
+            raw_words, raw_dur = _synth_into_raw_cache()
+            synthesized_this_chunk = True
+
+        # Per-chunk verification + retries (only when vo_verify is enabled)
+        raw_verify: dict[str, Any] = {
+            "status": "disabled",
+            "passed": True,
+            "skipped": True,
+            "missing_runs": [],
+            "extra_runs": [],
+        }
+        chunk_retries = 0
+        if vo_verify:
+            raw_verify = verify_audio_against_script(
+                c_raw_mp3,
+                chunk_text,
+                transcriber=transcriber,
+                label=f"chunk {chunk_idx} raw",
+            )
+            while (
+                not raw_verify.get("skipped")
+                and not raw_verify.get("passed", True)
+                and chunk_retries < max_retries
+                and (synthesized_this_chunk or provider is not None)
+            ):
+                chunk_retries += 1
+                retries_used += 1
+                # Preserve rejected raw audio under cache with `.rejected` suffix and bypass raw cache entry
+                rej_mp3 = chunks_cache_dir / f"{c_raw_key}.raw.mp3.rejected"
+                rej_attempt_mp3 = chunks_cache_dir / f"{c_raw_key}.attempt{chunk_retries}.raw.mp3.rejected"
+                if c_raw_mp3.is_file():
+                    shutil.copy2(c_raw_mp3, rej_mp3)
+                    shutil.copy2(c_raw_mp3, rej_attempt_mp3)
+                    c_raw_mp3.unlink(missing_ok=True)
+                c_raw_json.unlink(missing_ok=True)
+
+                raw_words, raw_dur = _synth_into_raw_cache()
+                raw_verify = verify_audio_against_script(
+                    c_raw_mp3,
+                    chunk_text,
+                    transcriber=transcriber,
+                    label=f"chunk {chunk_idx} retry {chunk_retries}",
+                )
 
         if chunk_idx == 0 and c_raw_mp3.is_file():
             shutil.copy2(c_raw_mp3, dst_raw_audio)
@@ -2629,9 +2975,60 @@ def resolve_or_generate_voiceover(
             speed=speed,
             max_sentence_silence=max_sentence_silence,
             raw_duration_s=raw_dur if raw_dur > 0 else None,
+            min_padding_s=PAUSE_TRIM_ESCALATION_LEVELS[0],
             vo_lufs=vo_lufs,
             vo_normalize=vo_normalize,
         )
+
+        proc_verify = raw_verify
+        if vo_verify and not raw_verify.get("skipped"):
+            if proc_c["cuts_count"] > 0:
+                proc_verify = verify_audio_against_script(
+                    c_proc_mp3,
+                    chunk_text,
+                    transcriber=transcriber,
+                    label=f"chunk {chunk_idx} processed",
+                )
+                if _trim_introduced_mismatch(raw_verify, proc_verify):
+                    for esc_pad in PAUSE_TRIM_ESCALATION_LEVELS[1:]:
+                        proc_c = process_voiceover_audio(
+                            raw_audio_path=c_raw_mp3,
+                            raw_words=raw_words,
+                            out_audio_path=c_proc_mp3,
+                            speed=speed,
+                            max_sentence_silence=max_sentence_silence,
+                            raw_duration_s=raw_dur if raw_dur > 0 else None,
+                            min_padding_s=esc_pad,
+                            vo_lufs=vo_lufs,
+                            vo_normalize=vo_normalize,
+                        )
+                        proc_verify = verify_audio_against_script(
+                            c_proc_mp3,
+                            chunk_text,
+                            transcriber=transcriber,
+                            label=f"chunk {chunk_idx} processed (padding={esc_pad})",
+                        )
+                        trim_escalations.append(
+                            {
+                                "chunk_index": chunk_idx,
+                                "padding_s": esc_pad,
+                                "passed": proc_verify.get("passed", True),
+                            }
+                        )
+                        if not _trim_introduced_mismatch(raw_verify, proc_verify):
+                            break
+
+            chunk_rep = {
+                "chunk_index": chunk_idx,
+                "retries": chunk_retries,
+                **proc_verify,
+            }
+            chunk_verify_reports.append(chunk_rep)
+            if not proc_verify.get("passed", True):
+                residual_mismatches.append(chunk_rep)
+        elif vo_verify and raw_verify.get("skipped"):
+            chunk_verify_reports.append({"chunk_index": chunk_idx, "retries": 0, **raw_verify})
+
         c_proc_json.write_text(
             json.dumps({"words": proc_c["words"], "total_duration_s": proc_c["total_duration_s"]}, indent=2),
             encoding="utf-8",
@@ -2655,7 +3052,57 @@ def resolve_or_generate_voiceover(
     if proc_audio_cache.is_file():
         shutil.copy2(proc_audio_cache, dst_audio)
 
+    # Final verification on combined processed voiceover
+    if vo_verify:
+        if len(chunks) == 1 and chunk_verify_reports:
+            final_verify = dict(chunk_verify_reports[0])
+        else:
+            final_verify = verify_audio_against_script(
+                dst_audio,
+                clean_script,
+                transcriber=transcriber,
+                label="final voiceover",
+            )
+            if (
+                not final_verify.get("skipped")
+                and not final_verify.get("passed", True)
+                and not residual_mismatches
+            ):
+                residual_mismatches.append({"chunk_index": None, **final_verify})
+    else:
+        final_verify = {"status": "disabled", "passed": True, "skipped": True, "missing_runs": [], "extra_runs": []}
+
+    verify_skipped = bool(final_verify.get("skipped", False))
+    verify_report = {
+        "enabled": bool(vo_verify),
+        "status": (
+            "skipped"
+            if verify_skipped
+            else ("passed" if len(residual_mismatches) == 0 else "failed")
+        ),
+        "skipped": verify_skipped,
+        "note": final_verify.get("note"),
+        "passed": len(residual_mismatches) == 0,
+        "retries_used": retries_used,
+        "trim_escalations": trim_escalations,
+        "residual_mismatches": residual_mismatches,
+        "chunks": chunk_verify_reports,
+        "final": final_verify,
+    }
+    verify_json_path.write_text(json.dumps(verify_report, indent=2), encoding="utf-8")
     loudness_report = analyze_voiceover_loudness(dst_audio, out_json_path=loudness_json_path)
+
+    if strict_vo and residual_mismatches:
+        raise CutError(
+            f"Voiceover verification failed (--strict-vo): {_format_residual_mismatch_summary(residual_mismatches)}",
+            exit_code=1,
+            report={
+                "status": "vo_verify_failed",
+                "verification": verify_report,
+                "tts_calls": tts_calls,
+                "tts_cost_usd": round(float(total_cost_usd), 6),
+            },
+        )
 
     if tts_calls == 0:
         if not quiet:
@@ -2676,9 +3123,12 @@ def resolve_or_generate_voiceover(
             "duration_s": combined["total_duration_s"],
             "cost_usd": 0.0,
             "tts_calls": 0,
+            "retries_used": retries_used,
             "chunks_count": len(chunks),
             "loudness": loudness_report,
             "loudness_report_path": str(loudness_json_path),
+            "verification": verify_report,
+            "verify_report_path": str(verify_json_path),
         }
 
     return {
@@ -2692,9 +3142,12 @@ def resolve_or_generate_voiceover(
         "duration_s": combined["total_duration_s"],
         "cost_usd": round(float(total_cost_usd), 6),
         "tts_calls": tts_calls,
+        "retries_used": retries_used,
         "chunks_count": len(chunks),
         "loudness": loudness_report,
         "loudness_report_path": str(loudness_json_path),
+        "verification": verify_report,
+        "verify_report_path": str(verify_json_path),
     }
 
 
@@ -3169,7 +3622,11 @@ def run_cut(
     vo_gap: float = 0.25,
     vo_lufs: float = -16.0,
     vo_normalize: bool = True,
+    vo_verify: bool = True,
+    vo_retries: int = 2,
+    strict_vo: bool = False,
     provider: Any | None = None,
+    transcriber: Any | None = None,
     fps: int = 24,
     aspect: str | None = None,
     resolution: str | None = None,
@@ -3319,6 +3776,10 @@ def run_cut(
                 vo_gap=vo_gap,
                 vo_lufs=vo_lufs,
                 vo_normalize=vo_normalize,
+                vo_verify=vo_verify,
+                vo_retries=vo_retries,
+                strict_vo=strict_vo,
+                transcriber=transcriber,
                 quiet=True,
             )
             est_cost = 0.0
@@ -3336,7 +3797,11 @@ def run_cut(
                 vo_gap=vo_gap,
                 vo_lufs=vo_lufs,
                 vo_normalize=vo_normalize,
+                vo_verify=vo_verify,
+                vo_retries=vo_retries,
+                strict_vo=strict_vo,
                 provider=provider,
+                transcriber=transcriber,
                 force=False,
                 quiet=quiet,
             )
@@ -3372,7 +3837,11 @@ def run_cut(
             vo_gap=vo_gap,
             vo_lufs=vo_lufs,
             vo_normalize=vo_normalize,
+            vo_verify=vo_verify,
+            vo_retries=vo_retries,
+            strict_vo=strict_vo,
             provider=provider,
+            transcriber=transcriber,
             force=force,
             quiet=quiet,
         )
@@ -3394,6 +3863,13 @@ def run_cut(
     loudness_info = vo_info.get("loudness")
     if isinstance(loudness_info, dict) and loudness_info.get("warning"):
         all_warnings.append(str(loudness_info["warning"]))
+    verify_info = vo_info.get("verification")
+    if isinstance(verify_info, dict):
+        residuals = verify_info.get("residual_mismatches") or []
+        if residuals:
+            all_warnings.append(
+                f"voiceover verification residual mismatches: {_format_residual_mismatch_summary(residuals)}"
+            )
 
     # Write script-aligned words.json & captions.srt into project_dir
     script_words_path = proj_p / "words.json"
@@ -3460,6 +3936,8 @@ def run_cut(
         "warnings": all_warnings,
         "loudness": vo_info.get("loudness"),
         "loudness_report_path": vo_info.get("loudness_report_path"),
+        "verification": vo_info.get("verification"),
+        "verify_report_path": vo_info.get("verify_report_path"),
         "scenes": plan["scenes"],
         "project_dir": str(proj_p),
         "manifest_path": str(manifest_path),
