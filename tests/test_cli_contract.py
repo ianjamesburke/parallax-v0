@@ -861,3 +861,82 @@ class TestExport:
         data = json.loads(capsys.readouterr().out)
         assert data["sequence_duration_frames"] == 60
 
+
+# ---------------------------------------------------------------------------
+# cut
+# ---------------------------------------------------------------------------
+
+class TestCut:
+    def test_cut_help(self):
+        _help_exits_zero("cut")
+
+    def test_cut_out_required(self):
+        _rejects_args("cut")
+
+    def test_cut_happy_path_dispatches_to_run_cut(self, monkeypatch, tmp_path, capsys):
+        import parallax.cut as cut_mod
+        captured: dict = {}
+
+        def fake_run_cut(**kw):
+            captured.update(kw)
+            return {
+                "status": "ok",
+                "video_path": str(tmp_path / "out.mp4"),
+                "video_duration_s": 4.0,
+                "duration_diff_s": 0.0,
+                "voiceover_source": "cached",
+                "voiceover_duration_s": 4.0,
+                "segments_count": 2,
+                "reuse_count": 0,
+                "warnings": [],
+                "caption_report_path": str(tmp_path / "caption-report.json"),
+                "caption_safe_area": "ok",
+                "manifest_path": str(tmp_path / "manifest.yaml"),
+                "editor_export_path": str(tmp_path / "assets"),
+                "timeline_xml_path": str(tmp_path / "assets" / "timeline.xml"),
+                "consistency": "manifest==xml ok",
+                "consistency_ok": True,
+                "tts_cost_usd": 0.0,
+            }
+
+        monkeypatch.setattr(cut_mod, "run_cut", fake_run_cut)
+        rc = cli.main([
+            "cut",
+            "--script", str(tmp_path / "script.txt"),
+            "--clips", str(tmp_path / "clips"),
+            "--out", str(tmp_path / "out.mp4"),
+        ])
+        assert rc == 0
+        assert captured["speed"] == 1.15
+        assert captured["max_sentence_silence"] == 0.25
+        assert captured["fps"] == 24
+        assert captured["words_per_chunk"] == 3
+        assert captured["export_editor"] is True
+        out_text = capsys.readouterr().out
+        assert "consistency: manifest==xml ok" in out_text
+
+    def test_cut_json_flag(self, monkeypatch, tmp_path, capsys):
+        import parallax.cut as cut_mod
+        monkeypatch.setattr(
+            cut_mod,
+            "run_cut",
+            lambda **kw: {
+                "status": "plan_only",
+                "segments_count": 3,
+                "consistency": "manifest==xml ok",
+            },
+        )
+        rc = cli.main([
+            "cut",
+            "--script", str(tmp_path / "script.txt"),
+            "--clips", str(tmp_path / "clips"),
+            "--output", str(tmp_path / "out.mp4"),
+            "--plan-only",
+            "--json",
+        ])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["status"] == "plan_only"
+        assert data["segments_count"] == 3
+
+
