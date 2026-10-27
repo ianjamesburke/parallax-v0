@@ -197,9 +197,12 @@ segments:               # in script order
     clip: Scene_02
 ```
 
-**Idempotent voiceover cache:**
-- Cached under `<project>/cache/vo/` by `sha256(script + voice + voice_model + style + speed + max_sentence_silence + version)`. Re-running prints `voiceover: cached (no TTS call)` and spends `$0`.
-- Raw provider audio + word timings are also cached by `sha256(script + voice + voice_model + style)` (and preserved at `<project>/voiceover.provider-raw.mp3`), so changing `--speed` (default `1.15`) or `--max-sentence-silence` (default `0.25`) re-processes locally with **zero** new TTS calls. Pass `--force` to bypass caches.
+**Idempotent voiceover cache, chunked hygiene & Drive-safe encode:**
+- **Chunked TTS & per-chunk cache (`--vo-chunk-seconds 60`, `--vo-gap 0.25`)**: Long scripts are split at paragraph/sentence boundaries (pass `--vo-chunk-seconds 0` for a single TTS call). Each chunk is cached raw (`<project>/cache/vo/chunks/<sha256>.raw.{mp3,json}`) and processed (`<proc_key>.proc.{mp3,json}`). Editing a single sentence re-synthesizes only that chunk; changing `--speed` (default `1.15`), `--max-sentence-silence` (default `0.25`), or `--vo-lufs` (default `-16`) re-processes cached raw chunks locally with **zero** new TTS calls. Pass `--force` to bypass caches.
+- **Energy-based pause trim**: Sentence pauses are trimmed only at the **midpoint** of real acoustic silence intervals (`silencedetect` `-35dB`, `>=0.12s`) inside word-alignment gaps, keeping `>=0.15s` lead-in/lead-out (`2x` margin around tokens aligned `>0.6s`) and expanding numerals (e.g. `97%` -> `ninety seven percent`) for alignment matching while keeping script text (`97%`) in captions and the manifest.
+- **Loudness normalization (`--vo-lufs -16`, `--vo-normalize/--no-vo-normalize`)**: Each chunk is two-pass normalized with EBU R128 `loudnorm` (`I=-16:TP=-1.5:LRA=11`) before concatenation, and a final 10s-window report is written to `<project>/voiceover.loudness.json` (warning if the last window drops `> 3 dB` below the first).
+- **Script verification & retry (`--vo-verify/--no-vo-verify`, `--vo-retries 2`, `--strict-vo`)**: Post-TTS and post-trim audio are verified against the script. Provider omissions trigger up to `--vo-retries` per-chunk regenerations (saving failed takes as `.rejected`), while trim-induced word losses automatically escalate pause-trim safety margins (`0.15s -> 0.30s -> 0.50s -> untrimmed`). Residual mismatches warn by default or exit `1` under `--strict-vo`.
+- **Drive-safe MP4 encode (`--encode-preset drive-safe|source`)**: Both `parallax cut` and `parallax video assemble` default to `--encode-preset drive-safe` (H.264 `high@4.0`, `yuv420p`, CFR, `-bf 2 -g 48`, even dimensions, stereo 48kHz AAC-LC, `+faststart`, stripped encoder metadata) for reliable Google Drive, QuickTime, and iOS preview playback.
 
 ## Storyboard package
 

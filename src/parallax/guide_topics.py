@@ -57,7 +57,7 @@ TOPICS: dict[str, dict] = {
             "# --shots shots.json also accepts clip {\"path\": \"clip.mp4\", \"trim_start\": 1.5, \"duration\": 2.0, \"speed\": 1.25}",
             "parallax video captions --video final.mp4 --words words.json --report boxes.json --out captioned.mp4",
         ],
-        "contract": "All commands use local ffmpeg only. text-overlay outputs a silent clip appropriate for scene_type: motion_graphic clip_path. Caption reports expose actual safe-area boxes.",
+        "contract": "All commands use local ffmpeg only. text-overlay outputs a silent clip appropriate for scene_type: motion_graphic clip_path. Caption reports expose actual safe-area boxes. `video assemble` defaults to `--encode-preset drive-safe` (H.264 High@L4.0, yuv420p, CFR, -bf 2 -g 48, AAC-LC 48kHz stereo, +faststart, stripped encoder tags; pass `--encode-preset source` for legacy settings).",
         "social_ad_example": "9:16 social ad: shots.json starts with animated clips using trim_start and speed; after about 15 seconds use stills with move: pan-left/pan-right; insert the count-up graphic as a motion_graphic clip; then assemble at 1080x1920 with the delayed VO, --caption-y .72, and --report.",
     },
     "character_first": {
@@ -330,7 +330,13 @@ TOPICS: dict[str, dict] = {
             "parallax cut --script script.txt --clips clips/ --map cut-map.yaml --audio vo.mp3 --words words.json --out out.mp4",
             "parallax cut --from-manifest out.cut/manifest.yaml --out out.mp4",
         ],
-        "voiceover_cache": "Idempotent two-tier cache under `<project>/cache/vo/`: changing `--speed` (default 1.15) or `--max-sentence-silence` (default 0.25) re-processes the cached raw provider audio locally with zero TTS calls. Pass `--force` to bypass.",
+        "voiceover_cache": "Idempotent two-tier + per-chunk cache under `<project>/cache/vo/` and `<project>/cache/vo/chunks/`: `--vo-chunk-seconds` (default 60; 0 disables chunking) splits scripts at paragraph/sentence boundaries with `--vo-gap` (default 0.25s) silence between chunks. Editing one sentence re-synthesizes only that chunk; changing `--speed` (default 1.15), `--max-sentence-silence` (default 0.25), or `--vo-lufs` (default -16) re-processes cached raw chunks locally with zero TTS calls. Pass `--force` to bypass.",
+        "voiceover_hygiene": {
+            "energy_pause_trim": "Cuts only at the midpoint of ffmpeg `silencedetect` intervals (-35dB, >=0.12s) inside alignment gaps, keeping >=0.15s lead-in/lead-out (2x margin around tokens aligned >0.6s) and expanding numerals (e.g. `97%` -> `ninety seven percent`) for alignment matching while preserving script text in captions.",
+            "loudness": "`--vo-normalize/--no-vo-normalize` (default on) runs per-chunk two-pass EBU R128 `loudnorm` to `--vo-lufs` (default -16 LUFS, TP -1.5, LRA 11) and writes a 10s-window report to `<project>/voiceover.loudness.json` (warns if first-to-last window drops > 3 dB).",
+            "verification": "`--vo-verify/--no-vo-verify` (default on) transcribes raw and trimmed audio to verify no script words were dropped: provider omissions trigger up to `--vo-retries` (default 2) per-chunk regenerations (saving `.rejected` takes), and trim-induced losses escalate pause-trim margins (`0.15s -> 0.30s -> 0.50s -> untrimmed`). Residual mismatches warn by default or exit 1 with `--strict-vo`.",
+        },
+        "encode_preset": "`--encode-preset drive-safe|source` (default `drive-safe`): H.264 High@L4.0, yuv420p, CFR, `-bf 2 -g 48`, even dimensions, stereo 48kHz AAC-LC (`+faststart`, stripped encoder tags) for Google Drive, QuickTime, and iOS preview compatibility.",
         "next": None,
     },
 }
