@@ -1515,6 +1515,10 @@ def compute_vo_cache_keys(
     style: str | None,
     speed: float,
     max_sentence_silence: float,
+    vo_chunk_seconds: float = 60.0,
+    vo_gap: float = 0.25,
+    vo_lufs: float = -16.0,
+    vo_normalize: bool = True,
 ) -> tuple[str, str]:
     """Return `(raw_key, processed_key)` sha256 hex digests for the voiceover cache."""
     norm_script = " ".join(script_text.split())
@@ -1524,6 +1528,7 @@ def compute_vo_cache_keys(
             "voice": voice or "",
             "voice_model": voice_model or "",
             "style": style or "",
+            "vo_chunk_seconds": round(float(vo_chunk_seconds), 4),
         },
         sort_keys=True,
     )
@@ -1537,12 +1542,55 @@ def compute_vo_cache_keys(
             "style": style or "",
             "speed": round(float(speed), 4),
             "max_sentence_silence": round(float(max_sentence_silence), 4),
+            "vo_chunk_seconds": round(float(vo_chunk_seconds), 4),
+            "vo_gap": round(float(vo_gap), 4),
+            "vo_lufs": round(float(vo_lufs), 2) if vo_normalize else None,
+            "vo_normalize": bool(vo_normalize),
             "version": VO_PROCESS_VERSION,
         },
         sort_keys=True,
     )
     proc_key = hashlib.sha256(proc_payload.encode("utf-8")).hexdigest()
     return raw_key, proc_key
+
+
+def compute_chunk_cache_keys(
+    *,
+    chunk_text: str,
+    voice: str,
+    voice_model: str,
+    style: str | None,
+    speed: float,
+    max_sentence_silence: float,
+    vo_lufs: float = -16.0,
+    vo_normalize: bool = True,
+    min_padding_s: float | str | None = 0.15,
+) -> tuple[str, str]:
+    """Return `(raw_chunk_key, proc_chunk_key)` sha256 hex digests for a single VO chunk.
+
+    `raw_chunk_key` is `sha256(f"{norm_text}|{voice}|{voice_model}|{style}")`.
+    """
+    norm_chunk = " ".join(chunk_text.split())
+    raw_str = f"{norm_chunk}|{voice or ''}|{voice_model or ''}|{style or ''}"
+    raw_chunk_key = hashlib.sha256(raw_str.encode("utf-8")).hexdigest()
+
+    proc_payload = json.dumps(
+        {
+            "chunk": norm_chunk,
+            "voice": voice or "",
+            "voice_model": voice_model or "",
+            "style": style or "",
+            "speed": round(float(speed), 4),
+            "max_sentence_silence": round(float(max_sentence_silence), 4),
+            "vo_lufs": round(float(vo_lufs), 2) if vo_normalize else None,
+            "vo_normalize": bool(vo_normalize),
+            "padding": str(min_padding_s),
+            "version": VO_PROCESS_VERSION,
+        },
+        sort_keys=True,
+    )
+    proc_chunk_key = hashlib.sha256(proc_payload.encode("utf-8")).hexdigest()
+    return raw_chunk_key, proc_chunk_key
 
 
 PAUSE_TRIM_NOISE_DB = -35.0
@@ -1912,6 +1960,124 @@ def process_voiceover_audio(
     }
 
 
+def _invoke_voice_provider(
+    provider: Any,
+    text: str,
+    voice: str,
+    style: str | None,
+    out_dir: str | Path,
+    default_cost_usd: float = 0.0,
+) -> VoiceSynthesisResult:
+    """Invoke `provider.synthesize(...)` with or without `out_dir` kwarg and normalize its return value."""
+    fn = getattr(provider, "synthesize", provider)
+    kwargs: dict[str, Any] = {}
+    try:
+        sig = inspect.signature(fn)
+        params = sig.parameters
+        if "out_dir" in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            kwargs["out_dir"] = str(out_dir)
+    except (ValueError, TypeError):
+        pass
+    raw_res = fn(text, voice, style, **kwargs)
+    return coerce_synthesis_result(raw_res, default_cost_usd=default_cost_usd)
+
+
+def concatenate_chunk_voiceovers(
+    proc_chunks: list[dict[str, Any]],
+    out_audio_path: str | Path,
+    *,
+    vo_gap: float = 0.25,
+) -> dict[str, Any]:
+    """Concatenate processed voiceover chunks with `vo_gap` silence and offset word timings."""
+    out_p = Path(out_audio_path)
+    out_p.parent.mkdir(parents=True, exist_ok=True)
+    gap = max(0.0, float(vo_gap))
+
+    if not proc_chunks:
+        return {"audio_path": str(out_p), "words": [], "total_duration_s": 0.0}
+
+    if len(proc_chunks) == 1:
+        c0 = proc_chunks[0]
+        src_p = Path(c0["audio_path"])
+        if src_p.is_file() and src_p.resolve() != out_p.resolve():
+            shutil.copy2(src_p, out_p)
+        words_0 = [
+            {
+                "word": str(w.get("word", "")),
+                "start": round(float(w.get("start", 0.0)), 4),
+                "end": round(float(w.get("end", 0.0)), 4),
+            }
+            for w in (c0.get("words") or [])
+        ]
+        dur_0 = float(c0.get("total_duration_s") or c0.get("duration_s") or 0.0)
+        return {
+            "audio_path": str(out_p),
+            "words": words_0,
+            "total_duration_s": round(dur_0, 4),
+        }
+
+    combined_words: list[dict[str, Any]] = []
+    offset_s = 0.0
+    n_chunks = len(proc_chunks)
+    chunk_paths: list[Path] = []
+    all_real_media = True
+
+    for idx, ch in enumerate(proc_chunks):
+        cp = Path(ch["audio_path"])
+        chunk_paths.append(cp)
+        probed_d = probe_audio_duration(cp) if cp.is_file() else None
+        if probed_d is None or probed_d <= 0:
+            all_real_media = False
+        c_words = ch.get("words") or []
+        c_dur = float(
+            probed_d
+            if (probed_d is not None and probed_d > 0)
+            else (
+                ch.get("total_duration_s")
+                or ch.get("duration_s")
+                or max((float(w.get("end", 0.0)) for w in c_words), default=1.0)
+            )
+        )
+        for w in c_words:
+            ws = float(w.get("start", 0.0)) + offset_s
+            we = float(w.get("end", 0.0)) + offset_s
+            combined_words.append(
+                {
+                    "word": str(w.get("word", "")),
+                    "start": round(ws, 4),
+                    "end": round(max(ws + 0.01, we), 4),
+                }
+            )
+        offset_s += c_dur + (gap if idx < n_chunks - 1 else 0.0)
+
+    if all_real_media:
+        cmd: list[str] = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+        fc_parts: list[str] = []
+        for idx, cp in enumerate(chunk_paths):
+            cmd += ["-i", str(cp)]
+            if idx < n_chunks - 1 and gap > 0:
+                fc_parts.append(f"[{idx}:a]aresample=44100,apad=pad_dur={gap:.4f}[c{idx}]")
+            else:
+                fc_parts.append(f"[{idx}:a]aresample=44100[c{idx}]")
+        concat_in = "".join(f"[c{idx}]" for idx in range(n_chunks))
+        fc = ";".join(fc_parts) + f";{concat_in}concat=n={n_chunks}:v=0:a=1[out]"
+        cmd += ["-filter_complex", fc, "-map", "[out]", str(out_p)]
+        res = run_ffmpeg(cmd, capture_output=True, text=True)
+        if res.returncode != 0 or not out_p.is_file():
+            shutil.copy2(chunk_paths[0], out_p)
+    else:
+        if chunk_paths[0].is_file():
+            shutil.copy2(chunk_paths[0], out_p)
+
+    probed_total = probe_audio_duration(out_p) if all_real_media else None
+    total_dur = float(probed_total) if (probed_total is not None and probed_total > 0) else offset_s
+    return {
+        "audio_path": str(out_p),
+        "words": combined_words,
+        "total_duration_s": round(total_dur, 4),
+    }
+
+
 def resolve_or_generate_voiceover(
     *,
     clean_script: str,
@@ -1924,14 +2090,19 @@ def resolve_or_generate_voiceover(
     style: str | None = None,
     speed: float = 1.15,
     max_sentence_silence: float = 0.25,
+    vo_chunk_seconds: float = 60.0,
+    vo_gap: float = 0.25,
+    vo_lufs: float = -16.0,
+    vo_normalize: bool = True,
+    provider: Any | None = None,
     force: bool = False,
     quiet: bool = False,
 ) -> dict[str, Any]:
-    """Obtain voiceover audio + word timings from supplied files, cache, or TTS.
+    """Obtain voiceover audio + word timings from supplied files, cache, or chunked TTS.
 
-    Implements the two-tier idempotent cache in `<project>/cache/vo/`:
-      - Processed cache (`<proc_key>.{mp3,words.json}`): exact hit -> 0 TTS calls, 0 ffmpeg calls.
-      - Raw provider cache (`raw_<raw_key>.{mp3,words.json}`): speed/silence change -> re-process locally with 0 TTS calls.
+    Implements per-chunk raw (`<project>/cache/vo/chunks/<sha256>.raw.{mp3,json}`) and
+    processed (`<sha256>.proc.{mp3,json}`) caches plus the top-level combined cache in
+    `<project>/cache/vo/`.
     """
     project_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1981,6 +2152,7 @@ def resolve_or_generate_voiceover(
                 "duration_s": proc["total_duration_s"],
                 "cost_usd": 0.0,
                 "tts_calls": 0,
+                "chunks_count": 1,
             }
         else:
             if src_audio != dst_audio:
@@ -1996,11 +2168,14 @@ def resolve_or_generate_voiceover(
                 "duration_s": round(float(dur), 4),
                 "cost_usd": 0.0,
                 "tts_calls": 0,
+                "chunks_count": 1,
             }
 
-    # Path 2: TTS with two-tier idempotent cache under <project>/cache/vo/
+    # Path 2: Chunked TTS with per-chunk raw + processed cache under <project>/cache/vo/chunks/
     cache_dir = project_dir / "cache" / "vo"
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    chunks_cache_dir = cache_dir / "chunks"
+    chunks_cache_dir.mkdir(parents=True, exist_ok=True)
+
     raw_key, proc_key = compute_vo_cache_keys(
         script_text=clean_script,
         voice=voice,
@@ -2008,6 +2183,10 @@ def resolve_or_generate_voiceover(
         style=style,
         speed=speed,
         max_sentence_silence=max_sentence_silence,
+        vo_chunk_seconds=vo_chunk_seconds,
+        vo_gap=vo_gap,
+        vo_lufs=vo_lufs,
+        vo_normalize=vo_normalize,
     )
 
     proc_audio_cache = cache_dir / f"{proc_key}.mp3"
@@ -2018,7 +2197,11 @@ def resolve_or_generate_voiceover(
     dst_audio = project_dir / "voiceover.mp3"
     dst_raw_audio = project_dir / "voiceover.provider-raw.mp3"
 
-    # Tier 1: Processed cache hit
+    chunks = chunk_script(clean_script, max_chunk_seconds=vo_chunk_seconds, speed=speed)
+    if not chunks:
+        chunks = [" ".join(clean_script.split())]
+
+    # Tier 1: Full-script processed cache hit
     if not force and proc_audio_cache.is_file() and proc_words_cache.is_file():
         if not quiet:
             print("voiceover: cached (no TTS call)", flush=True)
@@ -2041,85 +2224,169 @@ def resolve_or_generate_voiceover(
             "duration_s": round(float(dur), 4),
             "cost_usd": 0.0,
             "tts_calls": 0,
+            "chunks_count": len(chunks),
         }
 
-    # Tier 2: Raw provider cache hit (e.g. speed or max_sentence_silence changed) -> re-process locally, 0 TTS calls!
-    if not force and raw_audio_cache.is_file() and raw_words_cache.is_file():
-        if not quiet:
-            print("voiceover: cached (no TTS call) [re-processing from raw cache]", flush=True)
-        shutil.copy2(raw_audio_cache, dst_raw_audio)
-        raw_payload = json.loads(raw_words_cache.read_text(encoding="utf-8"))
-        raw_words = raw_payload if isinstance(raw_payload, list) else list(raw_payload.get("words") or [])
-        raw_dur = raw_payload.get("total_duration_s") if isinstance(raw_payload, dict) else None
+    # Resolve VoiceProvider lazily only if needed
+    spec = TTS_MODELS.get(voice_model)
 
-        proc = process_voiceover_audio(
-            raw_audio_path=raw_audio_cache,
-            raw_words=raw_words,
-            out_audio_path=proc_audio_cache,
+    def _get_provider() -> Any:
+        nonlocal provider
+        if provider is None:
+            from . import voiceover as _vo_mod
+
+            factory = (
+                get_voice_provider
+                if get_voice_provider is not _vo_mod.get_voice_provider
+                else _vo_mod.get_voice_provider
+            )
+            provider = factory(voice_model=voice_model)
+        return provider
+
+    proc_chunks: list[dict[str, Any]] = []
+    tts_calls = 0
+    total_cost_usd = 0.0
+    any_raw_reprocessed = False
+
+    for chunk_idx, chunk_text in enumerate(chunks):
+        c_raw_key, c_proc_key = compute_chunk_cache_keys(
+            chunk_text=chunk_text,
+            voice=voice,
+            voice_model=voice_model,
+            style=style,
             speed=speed,
             max_sentence_silence=max_sentence_silence,
-            raw_duration_s=float(raw_dur) if raw_dur else None,
+            vo_lufs=vo_lufs,
+            vo_normalize=vo_normalize,
         )
-        proc_words_cache.write_text(
-            json.dumps({"words": proc["words"], "total_duration_s": proc["total_duration_s"]}, indent=2),
+        c_raw_mp3 = chunks_cache_dir / f"{c_raw_key}.raw.mp3"
+        c_raw_json = chunks_cache_dir / f"{c_raw_key}.raw.json"
+        c_proc_mp3 = chunks_cache_dir / f"{c_proc_key}.proc.mp3"
+        c_proc_json = chunks_cache_dir / f"{c_proc_key}.proc.json"
+
+        # Per-chunk Tier 1: processed chunk cache hit
+        if not force and c_proc_mp3.is_file() and c_proc_json.is_file():
+            cp_data = json.loads(c_proc_json.read_text(encoding="utf-8"))
+            cp_words = cp_data if isinstance(cp_data, list) else list(cp_data.get("words") or [])
+            cp_dur = float(
+                (cp_data.get("total_duration_s") if isinstance(cp_data, dict) else None)
+                or probe_audio_duration(c_proc_mp3)
+                or max((float(w.get("end", 0.0)) for w in cp_words), default=1.0)
+            )
+            if chunk_idx == 0 and c_raw_mp3.is_file():
+                shutil.copy2(c_raw_mp3, dst_raw_audio)
+            proc_chunks.append(
+                {
+                    "audio_path": str(c_proc_mp3),
+                    "words": cp_words,
+                    "total_duration_s": round(cp_dur, 4),
+                    "chunk_index": chunk_idx,
+                    "raw_key": c_raw_key,
+                    "proc_key": c_proc_key,
+                }
+            )
+            continue
+
+        # Per-chunk Tier 2: raw chunk cache hit (or legacy single-chunk raw_<raw_key> cache hit)
+        if not force and not (c_raw_mp3.is_file() and c_raw_json.is_file()):
+            if len(chunks) == 1 and raw_audio_cache.is_file() and raw_words_cache.is_file():
+                shutil.copy2(raw_audio_cache, c_raw_mp3)
+                shutil.copy2(raw_words_cache, c_raw_json)
+
+        if not force and c_raw_mp3.is_file() and c_raw_json.is_file():
+            any_raw_reprocessed = True
+            raw_payload = json.loads(c_raw_json.read_text(encoding="utf-8"))
+            raw_words = raw_payload if isinstance(raw_payload, list) else list(raw_payload.get("words") or [])
+            raw_dur = float(
+                (raw_payload.get("total_duration_s") if isinstance(raw_payload, dict) else None) or 0.0
+            )
+        else:
+            # Per-chunk Tier 3: TTS synthesis via VoiceProvider
+            chunk_est = float(spec.estimate_tts_usd(len(chunk_text)) if spec else 0.0)
+            if not is_test_mode() and not quiet:
+                print_estimate(f"parallax cut --voice-model {voice_model} (chunk {chunk_idx + 1}/{len(chunks)})", chunk_est)
+            prov = _get_provider()
+            with tempfile.TemporaryDirectory(prefix="parallax-cut-tts-") as tmp_dir:
+                synth = _invoke_voice_provider(
+                    prov,
+                    chunk_text,
+                    voice,
+                    style,
+                    tmp_dir,
+                    default_cost_usd=chunk_est,
+                )
+                tts_calls += 1
+                total_cost_usd += float(synth.cost_usd)
+                raw_src = Path(synth.audio_path)
+                raw_words = list(synth.words)
+                raw_dur = float(synth.duration_s or (raw_words[-1]["end"] if raw_words else 0.0))
+                shutil.copy2(raw_src, c_raw_mp3)
+                c_raw_json.write_text(
+                    json.dumps({"words": raw_words, "total_duration_s": raw_dur}, indent=2),
+                    encoding="utf-8",
+                )
+                if len(chunks) == 1:
+                    shutil.copy2(raw_src, raw_audio_cache)
+                    raw_words_cache.write_text(
+                        json.dumps({"words": raw_words, "total_duration_s": raw_dur}, indent=2),
+                        encoding="utf-8",
+                    )
+
+        if chunk_idx == 0 and c_raw_mp3.is_file():
+            shutil.copy2(c_raw_mp3, dst_raw_audio)
+
+        proc_c = process_voiceover_audio(
+            raw_audio_path=c_raw_mp3,
+            raw_words=raw_words,
+            out_audio_path=c_proc_mp3,
+            speed=speed,
+            max_sentence_silence=max_sentence_silence,
+            raw_duration_s=raw_dur if raw_dur > 0 else None,
+        )
+        c_proc_json.write_text(
+            json.dumps({"words": proc_c["words"], "total_duration_s": proc_c["total_duration_s"]}, indent=2),
             encoding="utf-8",
         )
+        proc_chunks.append(
+            {
+                "audio_path": str(c_proc_mp3),
+                "words": proc_c["words"],
+                "total_duration_s": proc_c["total_duration_s"],
+                "chunk_index": chunk_idx,
+                "raw_key": c_raw_key,
+                "proc_key": c_proc_key,
+            }
+        )
+
+    combined = concatenate_chunk_voiceovers(proc_chunks, proc_audio_cache, vo_gap=vo_gap)
+    proc_words_cache.write_text(
+        json.dumps({"words": combined["words"], "total_duration_s": combined["total_duration_s"]}, indent=2),
+        encoding="utf-8",
+    )
+    if proc_audio_cache.is_file():
         shutil.copy2(proc_audio_cache, dst_audio)
+
+    if tts_calls == 0:
+        if not quiet:
+            msg = (
+                "voiceover: cached (no TTS call) [re-processing from raw cache]"
+                if any_raw_reprocessed
+                else "voiceover: cached (no TTS call)"
+            )
+            print(msg, flush=True)
         return {
             "source": "cached",
-            "cache_tier": "raw",
+            "cache_tier": "raw" if any_raw_reprocessed else "processed",
             "cache_key": proc_key,
             "raw_cache_key": raw_key,
             "audio_path": str(dst_audio),
-            "raw_audio_path": str(dst_raw_audio),
-            "words": proc["words"],
-            "duration_s": proc["total_duration_s"],
+            "raw_audio_path": str(dst_raw_audio) if dst_raw_audio.is_file() else str(dst_audio),
+            "words": combined["words"],
+            "duration_s": combined["total_duration_s"],
             "cost_usd": 0.0,
             "tts_calls": 0,
+            "chunks_count": len(chunks),
         }
-
-    # Tier 3: Cache miss (or --force) -> synthesize via TTS, populate raw + processed caches
-    spec = TTS_MODELS.get(voice_model)
-    est_cost = spec.estimate_tts_usd(len(clean_script)) if spec else 0.0
-    if not is_test_mode() and not quiet:
-        print_estimate(f"parallax cut --voice-model {voice_model}", est_cost)
-
-    from . import voiceover as _vo_mod
-
-    with tempfile.TemporaryDirectory(prefix="parallax-cut-tts-") as tmp_dir:
-        vo_res = _vo_mod.generate_voiceover_dict(
-            text=clean_script,
-            voice=voice,
-            out_dir=tmp_dir,
-            style=style,
-            voice_model=voice_model,
-            trim_pauses=False,
-            verify=False,
-        )
-        raw_src = Path(vo_res.get("raw_audio_path") or vo_res["audio_path"])
-        raw_words = list(vo_res.get("words") or [])
-        raw_dur = float(vo_res.get("total_duration_s") or 0.0)
-
-        shutil.copy2(raw_src, raw_audio_cache)
-        shutil.copy2(raw_src, dst_raw_audio)
-        raw_words_cache.write_text(
-            json.dumps({"words": raw_words, "total_duration_s": raw_dur}, indent=2),
-            encoding="utf-8",
-        )
-
-    proc = process_voiceover_audio(
-        raw_audio_path=raw_audio_cache,
-        raw_words=raw_words,
-        out_audio_path=proc_audio_cache,
-        speed=speed,
-        max_sentence_silence=max_sentence_silence,
-        raw_duration_s=raw_dur,
-    )
-    proc_words_cache.write_text(
-        json.dumps({"words": proc["words"], "total_duration_s": proc["total_duration_s"]}, indent=2),
-        encoding="utf-8",
-    )
-    shutil.copy2(proc_audio_cache, dst_audio)
 
     return {
         "source": "tts",
@@ -2127,11 +2394,12 @@ def resolve_or_generate_voiceover(
         "cache_key": proc_key,
         "raw_cache_key": raw_key,
         "audio_path": str(dst_audio),
-        "raw_audio_path": str(dst_raw_audio),
-        "words": proc["words"],
-        "duration_s": proc["total_duration_s"],
-        "cost_usd": round(float(est_cost or 0.0), 6),
-        "tts_calls": 1,
+        "raw_audio_path": str(dst_raw_audio) if dst_raw_audio.is_file() else str(dst_audio),
+        "words": combined["words"],
+        "duration_s": combined["total_duration_s"],
+        "cost_usd": round(float(total_cost_usd), 6),
+        "tts_calls": tts_calls,
+        "chunks_count": len(chunks),
     }
 
 
@@ -2602,6 +2870,9 @@ def run_cut(
     voice_model: str = "tts-mini",
     style: str | None = None,
     max_sentence_silence: float = 0.25,
+    vo_chunk_seconds: float = 60.0,
+    vo_gap: float = 0.25,
+    provider: Any | None = None,
     fps: int = 24,
     aspect: str | None = None,
     resolution: str | None = None,
@@ -2731,6 +3002,8 @@ def run_cut(
             style=style,
             speed=speed,
             max_sentence_silence=max_sentence_silence,
+            vo_chunk_seconds=vo_chunk_seconds,
+            vo_gap=vo_gap,
         )
         cache_dir = proj_p / "cache" / "vo"
         proc_words_cache = cache_dir / f"{proc_key}.words.json"
@@ -2743,6 +3016,8 @@ def run_cut(
                 process_audio=process_audio,
                 speed=speed,
                 max_sentence_silence=max_sentence_silence,
+                vo_chunk_seconds=vo_chunk_seconds,
+                vo_gap=vo_gap,
                 quiet=True,
             )
             est_cost = 0.0
@@ -2756,6 +3031,9 @@ def run_cut(
                 style=style,
                 speed=speed,
                 max_sentence_silence=max_sentence_silence,
+                vo_chunk_seconds=vo_chunk_seconds,
+                vo_gap=vo_gap,
+                provider=provider,
                 force=False,
                 quiet=quiet,
             )
@@ -2787,6 +3065,9 @@ def run_cut(
             style=style,
             speed=speed,
             max_sentence_silence=max_sentence_silence,
+            vo_chunk_seconds=vo_chunk_seconds,
+            vo_gap=vo_gap,
+            provider=provider,
             force=force,
             quiet=quiet,
         )

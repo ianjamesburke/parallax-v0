@@ -172,6 +172,16 @@ def cut_cmd(
         "--max-sentence-silence",
         help="Cap inter-word/sentence silences to this duration in seconds (default: 0.25).",
     ),
+    vo_chunk_seconds: float = typer.Option(
+        60.0,
+        "--vo-chunk-seconds",
+        help="Soft cap in seconds per TTS voiceover chunk at paragraph/sentence boundaries (default: 60; 0 = single take).",
+    ),
+    vo_gap: float = typer.Option(
+        0.25,
+        "--vo-gap",
+        help="Natural silence gap in seconds inserted between concatenated voiceover chunks (default: 0.25).",
+    ),
     fps: int = typer.Option(
         24,
         "--fps",
@@ -278,6 +288,8 @@ def cut_cmd(
             voice_model=voice_model,
             style=style,
             max_sentence_silence=max_sentence_silence,
+            vo_chunk_seconds=vo_chunk_seconds,
+            vo_gap=vo_gap,
             fps=fps,
             aspect=aspect,
             resolution=resolution,

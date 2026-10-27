@@ -223,3 +223,137 @@ def test_chunk_script_boundaries() -> None:
     chunks = chunk_script(script, max_chunk_seconds=12.0, speed=1.15)
     assert len(chunks) == 2
     assert "[Scene" not in chunks[0] and "[Scene" not in chunks[1]
+
+
+def test_chunked_voiceover_per_chunk_cache_and_word_offset(tmp_path: Path) -> None:
+    """First run = N calls, rerun = 0, speed change = 0 (re-processed from per-chunk raw cache),
+    one edited sentence = 1 call (only the edited chunk re-synthesized).
+    """
+    from parallax.cut import compute_chunk_cache_keys, resolve_or_generate_voiceover
+    from parallax.voiceover import VoiceSynthesisResult
+
+    calls: list[str] = []
+
+    class _MockProvider:
+        def synthesize(
+            self,
+            text: str,
+            voice: str = "nova",
+            style: str | None = None,
+            *,
+            out_dir: str | None = None,
+        ) -> VoiceSynthesisResult:
+            calls.append(text)
+            dest = Path(out_dir or tmp_path)
+            dest.mkdir(parents=True, exist_ok=True)
+            mp3_path = dest / f"synth_{len(calls)}.mp3"
+            mp3_path.write_bytes(b"FAKE_CHUNK_MP3_BYTES")
+            toks = text.split()
+            words = [
+                {"word": w, "start": round(i * 0.4, 4), "end": round((i + 1) * 0.4, 4)}
+                for i, w in enumerate(toks)
+            ]
+            dur = round(len(toks) * 0.4, 4)
+            return VoiceSynthesisResult(
+                audio_path=str(mp3_path),
+                words=words,
+                duration_s=dur,
+                cost_usd=0.01,
+            )
+
+    para1 = " ".join(["Alpha sentence one is spoken clearly."] * 5)
+    para2 = " ".join(["Beta sentence two follows right after."] * 5)
+    para3 = " ".join(["Gamma sentence three concludes the story."] * 5)
+    script = f"{para1}\n\n{para2}\n\n{para3}"
+
+    expected_chunks = chunk_script(script, max_chunk_seconds=12.0, speed=1.15)
+    assert len(expected_chunks) == 3
+
+    proj = tmp_path / "chunk_proj"
+    provider = _MockProvider()
+
+    # 1. First run: N=3 provider calls, raw + processed chunk files created, word timings offset with gap
+    r1 = resolve_or_generate_voiceover(
+        clean_script=script,
+        project_dir=proj,
+        speed=1.15,
+        max_sentence_silence=0.25,
+        vo_chunk_seconds=12.0,
+        vo_gap=0.25,
+        provider=provider,
+        quiet=True,
+    )
+    assert len(calls) == 3
+    assert r1["tts_calls"] == 3
+    assert r1["chunks_count"] == 3
+    assert r1["source"] == "tts"
+
+    # Verify per-chunk raw cache `<project>/cache/vo/chunks/<sha256>.raw.{mp3,json}` exists
+    c0_raw_key, _ = compute_chunk_cache_keys(
+        chunk_text=expected_chunks[0],
+        voice="nova",
+        voice_model="tts-mini",
+        style=None,
+        speed=1.15,
+        max_sentence_silence=0.25,
+    )
+    chunks_dir = proj / "cache" / "vo" / "chunks"
+    assert (chunks_dir / f"{c0_raw_key}.raw.mp3").is_file()
+    assert (chunks_dir / f"{c0_raw_key}.raw.json").is_file()
+
+    # Check word timings are monotonically offset across chunk boundaries
+    w_starts = [w["start"] for w in r1["words"]]
+    assert w_starts == sorted(w_starts)
+    assert w_starts[-1] > w_starts[0] + 5.0
+
+    # 2. Rerun with identical arguments: 0 provider calls
+    calls.clear()
+    r2 = resolve_or_generate_voiceover(
+        clean_script=script,
+        project_dir=proj,
+        speed=1.15,
+        max_sentence_silence=0.25,
+        vo_chunk_seconds=12.0,
+        vo_gap=0.25,
+        provider=provider,
+        quiet=True,
+    )
+    assert len(calls) == 0
+    assert r2["tts_calls"] == 0
+    assert r2["source"] == "cached"
+
+    # 3. Speed change (1.15 -> 1.25): 0 provider calls (re-processed from per-chunk raw cache)
+    calls.clear()
+    r3 = resolve_or_generate_voiceover(
+        clean_script=script,
+        project_dir=proj,
+        speed=1.25,
+        max_sentence_silence=0.25,
+        vo_chunk_seconds=12.0,
+        vo_gap=0.25,
+        provider=provider,
+        quiet=True,
+    )
+    assert len(calls) == 0
+    assert r3["tts_calls"] == 0
+    assert r3["source"] == "cached"
+    assert r3["cache_tier"] == "raw"
+
+    # 4. Edit ONE sentence in paragraph 2 (at speed=1.15): only chunk 2 is synthesized (1 call!)
+    calls.clear()
+    para2_edited = para2.replace("Beta sentence two", "Delta revised sentence", 1)
+    script_edited = f"{para1}\n\n{para2_edited}\n\n{para3}"
+    r4 = resolve_or_generate_voiceover(
+        clean_script=script_edited,
+        project_dir=proj,
+        speed=1.15,
+        max_sentence_silence=0.25,
+        vo_chunk_seconds=12.0,
+        vo_gap=0.25,
+        provider=provider,
+        quiet=True,
+    )
+    assert len(calls) == 1
+    assert r4["tts_calls"] == 1
+    assert "Delta revised sentence" in calls[0]
+
