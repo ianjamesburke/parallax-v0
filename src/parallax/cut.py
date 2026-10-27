@@ -1806,6 +1806,273 @@ def compute_energy_pause_cuts(
     }
 
 
+def measure_audio_loudness_lufs(
+    audio_path: str | Path,
+    *,
+    target_lufs: float = -16.0,
+    tp: float = -1.5,
+    lra: float = 11.0,
+) -> dict[str, float] | None:
+    """Measure integrated loudness (LUFS), true peak, LRA, and threshold via ffmpeg `loudnorm` pass 1."""
+    p = Path(audio_path)
+    if not p.is_file():
+        return None
+    res = run_ffmpeg(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-nostats",
+            "-i",
+            str(p),
+            "-af",
+            f"loudnorm=I={float(target_lufs)}:TP={float(tp)}:LRA={float(lra)}:print_format=json",
+            "-f",
+            "null",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if res.returncode != 0:
+        return None
+    m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", res.stderr or "", re.DOTALL)
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(0))
+        in_i = float(data["input_i"])
+        in_tp = float(data["input_tp"])
+        in_lra = float(data["input_lra"])
+        in_th = float(data["input_thresh"])
+        t_off = float(data["target_offset"])
+        if not math.isfinite(in_i) or in_i <= -70.0:
+            return None
+        return {
+            "input_i": round(in_i, 2),
+            "input_tp": round(in_tp, 2),
+            "input_lra": round(in_lra, 2),
+            "input_thresh": round(in_th, 2),
+            "target_offset": round(t_off, 2),
+        }
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def normalize_audio_loudness(
+    in_path: str | Path,
+    out_path: str | Path,
+    *,
+    target_lufs: float = -16.0,
+    tp: float = -1.5,
+    lra: float = 11.0,
+) -> dict[str, Any]:
+    """Two-pass (measured-linear) ffmpeg `loudnorm` normalisation to `target_lufs` (default -16 LUFS)."""
+    in_p = Path(in_path)
+    out_p = Path(out_path)
+    out_p.parent.mkdir(parents=True, exist_ok=True)
+    stats = measure_audio_loudness_lufs(in_p, target_lufs=target_lufs, tp=tp, lra=lra)
+    if stats is None:
+        if in_p.is_file() and in_p.resolve() != out_p.resolve():
+            shutil.copy2(in_p, out_p)
+        return {"normalized": False, "target_lufs": float(target_lufs), "input_lufs": None}
+
+    af = (
+        f"loudnorm=I={float(target_lufs)}:TP={float(tp)}:LRA={float(lra)}:linear=true:"
+        f"measured_I={stats['input_i']}:"
+        f"measured_TP={stats['input_tp']}:"
+        f"measured_LRA={stats['input_lra']}:"
+        f"measured_thresh={stats['input_thresh']}:"
+        f"offset={stats['target_offset']}"
+    )
+    suffix = out_p.suffix.lower()
+    if suffix == ".wav":
+        codec_args = ["-c:a", "pcm_s16le", "-ar", "44100"]
+    elif suffix in (".m4a", ".aac"):
+        codec_args = ["-c:a", "aac", "-b:a", "192k", "-ar", "44100"]
+    else:
+        codec_args = ["-c:a", "libmp3lame", "-b:a", "128k", "-ar", "44100"]
+
+    with tempfile.TemporaryDirectory(prefix="parallax-loudnorm-") as td:
+        tmp_out = Path(td) / f"norm{suffix or '.mp3'}"
+        res = run_ffmpeg(
+            [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(in_p),
+                "-af",
+                af,
+                *codec_args,
+                str(tmp_out),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode == 0 and tmp_out.is_file():
+            shutil.copy2(tmp_out, out_p)
+            return {
+                "normalized": True,
+                "target_lufs": float(target_lufs),
+                "input_lufs": stats["input_i"],
+            }
+
+    if in_p.resolve() != out_p.resolve():
+        shutil.copy2(in_p, out_p)
+    return {"normalized": False, "target_lufs": float(target_lufs), "input_lufs": stats["input_i"]}
+
+
+def analyze_voiceover_loudness(
+    audio_path: str | Path,
+    *,
+    window_s: float = 10.0,
+    decay_warn_db: float = 3.0,
+    out_json_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Measure per-window loudness (default 10s windows) via ffmpeg `astats`/`loudnorm`,
+    detect first-to-last window decay `> decay_warn_db` (3.0 dB), and optionally write
+    `<project>/voiceover.loudness.json`.
+    """
+    p = Path(audio_path)
+    dur = probe_audio_duration(p) if p.is_file() else None
+    if dur is None or dur <= 0:
+        report: dict[str, Any] = {
+            "window_s": float(window_s),
+            "windows": [],
+            "first_window_db": None,
+            "last_window_db": None,
+            "first_to_last_drop_db": 0.0,
+            "max_drop_db": 0.0,
+            "decay_detected": False,
+            "warning": None,
+        }
+        if out_json_path is not None:
+            out_p = Path(out_json_path)
+            out_p.parent.mkdir(parents=True, exist_ok=True)
+            out_p.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        return report
+
+    total_d = float(dur)
+    eff_win = float(window_s)
+    # If audio is shorter than 1.2 * window_s (e.g. a short synthetic fixture), split into 3 sub-windows
+    if total_d < eff_win * 1.2 and total_d >= 1.5:
+        eff_win = round(total_d / 3.0, 4)
+
+    bounds: list[tuple[float, float]] = []
+    cur = 0.0
+    while cur < total_d - 1e-3:
+        nxt = min(total_d, cur + eff_win)
+        if nxt - cur < 0.4 and bounds:
+            prev_s, _ = bounds[-1]
+            bounds[-1] = (prev_s, total_d)
+            break
+        bounds.append((round(cur, 4), round(nxt, 4)))
+        cur = nxt
+
+    windows: list[dict[str, Any]] = []
+    for idx, (ws, we) in enumerate(bounds):
+        wdur = max(0.1, we - ws)
+        res = run_ffmpeg(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-nostats",
+                "-ss",
+                f"{ws:.4f}",
+                "-t",
+                f"{wdur:.4f}",
+                "-i",
+                str(p),
+                "-af",
+                "astats=reset=0,loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        stderr = res.stderr or ""
+        rms_matches = re.findall(r"RMS level dB:\s*([-\d.]+)", stderr)
+        rms_db: float | None = None
+        for cand in reversed(rms_matches):
+            try:
+                val = float(cand)
+                if math.isfinite(val) and val > -90.0:
+                    rms_db = round(val, 2)
+                    break
+            except ValueError:
+                pass
+
+        lufs_val: float | None = None
+        m_ln = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", stderr, re.DOTALL)
+        if m_ln:
+            try:
+                ln_data = json.loads(m_ln.group(0))
+                li = float(ln_data["input_i"])
+                if math.isfinite(li) and li > -70.0:
+                    lufs_val = round(li, 2)
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+                pass
+
+        level_db = lufs_val if lufs_val is not None else rms_db
+        if rms_db is not None and lufs_val is None:
+            lufs_val = rms_db
+        if level_db is not None:
+            windows.append(
+                {
+                    "index": idx,
+                    "start_s": round(ws, 2),
+                    "end_s": round(we, 2),
+                    "rms_db": rms_db if rms_db is not None else level_db,
+                    "lufs": lufs_val if lufs_val is not None else level_db,
+                    "level_db": rms_db if rms_db is not None else level_db,
+                }
+            )
+
+    if len(windows) >= 2:
+        first_db = float(windows[0]["rms_db"])
+        last_db = float(windows[-1]["rms_db"])
+        drop_db = round(first_db - last_db, 2)
+        levels = [float(w["rms_db"]) for w in windows]
+        max_drop_db = round(max(drop_db, max(levels) - min(levels)), 2)
+    elif len(windows) == 1:
+        first_db = float(windows[0]["rms_db"])
+        last_db = first_db
+        drop_db = 0.0
+        max_drop_db = 0.0
+    else:
+        first_db = None
+        last_db = None
+        drop_db = 0.0
+        max_drop_db = 0.0
+
+    decay_detected = bool(drop_db > float(decay_warn_db))
+    warn_msg = (
+        f"voiceover loudness decayed by {drop_db:.2f} dB from first window ({first_db:.2f} dB) "
+        f"to last window ({last_db:.2f} dB), exceeding {float(decay_warn_db):.1f} dB threshold"
+        if decay_detected and first_db is not None and last_db is not None
+        else None
+    )
+    report = {
+        "window_s": round(eff_win, 2),
+        "windows": windows,
+        "first_window_db": first_db,
+        "last_window_db": last_db,
+        "first_to_last_drop_db": drop_db,
+        "max_drop_db": max_drop_db,
+        "decay_detected": decay_detected,
+        "warning": warn_msg,
+    }
+    if out_json_path is not None:
+        out_p = Path(out_json_path)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        out_p.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return report
+
+
 def process_voiceover_audio(
     *,
     raw_audio_path: str | Path,
@@ -1818,6 +2085,8 @@ def process_voiceover_audio(
     noise_db: float = PAUSE_TRIM_NOISE_DB,
     min_silence_s: float = PAUSE_TRIM_MIN_SILENCE_S,
     energy_silences: list[dict[str, Any]] | None = None,
+    vo_lufs: float = -16.0,
+    vo_normalize: bool = False,
 ) -> dict[str, Any]:
     """Energy-based pause trim + speed adjustment + word-timing remap.
 
@@ -1943,6 +2212,10 @@ def process_voiceover_audio(
         else:
             shutil.copy2(stage_audio, out_p)
 
+        loudnorm_info: dict[str, Any] = {"normalized": False, "target_lufs": float(vo_lufs)}
+        if vo_normalize and probed_dur is not None and probed_dur > 0:
+            loudnorm_info = normalize_audio_loudness(out_p, out_p, target_lufs=vo_lufs)
+
     final_probed = probe_audio_duration(out_p)
     final_dur = float(final_probed) if (final_probed is not None and final_probed > 0) else round(expected_dur, 4)
 
@@ -1957,6 +2230,7 @@ def process_voiceover_audio(
         "long_tokens": long_tokens,
         "padding_s": cut_info["padding_s"],
         "speed": spd,
+        "loudnorm": loudnorm_info,
     }
 
 
@@ -2133,6 +2407,7 @@ def resolve_or_generate_voiceover(
 
         ext = src_audio.suffix.lower() or ".mp3"
         dst_audio = project_dir / f"voiceover{ext}"
+        loudness_json_path = project_dir / "voiceover.loudness.json"
         if process_audio:
             raw_copy = project_dir / f"voiceover.provider-raw{ext}"
             if src_audio != raw_copy:
@@ -2143,7 +2418,10 @@ def resolve_or_generate_voiceover(
                 out_audio_path=dst_audio,
                 speed=speed,
                 max_sentence_silence=max_sentence_silence,
+                vo_lufs=vo_lufs,
+                vo_normalize=vo_normalize,
             )
+            loudness_report = analyze_voiceover_loudness(dst_audio, out_json_path=loudness_json_path)
             return {
                 "source": "supplied",
                 "audio_path": str(dst_audio),
@@ -2153,6 +2431,8 @@ def resolve_or_generate_voiceover(
                 "cost_usd": 0.0,
                 "tts_calls": 0,
                 "chunks_count": 1,
+                "loudness": loudness_report,
+                "loudness_report_path": str(loudness_json_path),
             }
         else:
             if src_audio != dst_audio:
@@ -2160,6 +2440,7 @@ def resolve_or_generate_voiceover(
             dur = probe_audio_duration(dst_audio)
             if dur is None or dur <= 0:
                 dur = max((float(w.get("end", 0.0)) for w in raw_words), default=1.0)
+            loudness_report = analyze_voiceover_loudness(dst_audio, out_json_path=loudness_json_path)
             return {
                 "source": "supplied",
                 "audio_path": str(dst_audio),
@@ -2169,6 +2450,8 @@ def resolve_or_generate_voiceover(
                 "cost_usd": 0.0,
                 "tts_calls": 0,
                 "chunks_count": 1,
+                "loudness": loudness_report,
+                "loudness_report_path": str(loudness_json_path),
             }
 
     # Path 2: Chunked TTS with per-chunk raw + processed cache under <project>/cache/vo/chunks/
@@ -2196,6 +2479,7 @@ def resolve_or_generate_voiceover(
 
     dst_audio = project_dir / "voiceover.mp3"
     dst_raw_audio = project_dir / "voiceover.provider-raw.mp3"
+    loudness_json_path = project_dir / "voiceover.loudness.json"
 
     chunks = chunk_script(clean_script, max_chunk_seconds=vo_chunk_seconds, speed=speed)
     if not chunks:
@@ -2213,6 +2497,7 @@ def resolve_or_generate_voiceover(
         dur = cached_payload.get("total_duration_s") if isinstance(cached_payload, dict) else None
         if not dur:
             dur = probe_audio_duration(dst_audio) or max((float(w.get("end", 0.0)) for w in cached_words), default=1.0)
+        loudness_report = analyze_voiceover_loudness(dst_audio, out_json_path=loudness_json_path)
         return {
             "source": "cached",
             "cache_tier": "processed",
@@ -2225,6 +2510,8 @@ def resolve_or_generate_voiceover(
             "cost_usd": 0.0,
             "tts_calls": 0,
             "chunks_count": len(chunks),
+            "loudness": loudness_report,
+            "loudness_report_path": str(loudness_json_path),
         }
 
     # Resolve VoiceProvider lazily only if needed
@@ -2342,6 +2629,8 @@ def resolve_or_generate_voiceover(
             speed=speed,
             max_sentence_silence=max_sentence_silence,
             raw_duration_s=raw_dur if raw_dur > 0 else None,
+            vo_lufs=vo_lufs,
+            vo_normalize=vo_normalize,
         )
         c_proc_json.write_text(
             json.dumps({"words": proc_c["words"], "total_duration_s": proc_c["total_duration_s"]}, indent=2),
@@ -2366,6 +2655,8 @@ def resolve_or_generate_voiceover(
     if proc_audio_cache.is_file():
         shutil.copy2(proc_audio_cache, dst_audio)
 
+    loudness_report = analyze_voiceover_loudness(dst_audio, out_json_path=loudness_json_path)
+
     if tts_calls == 0:
         if not quiet:
             msg = (
@@ -2386,6 +2677,8 @@ def resolve_or_generate_voiceover(
             "cost_usd": 0.0,
             "tts_calls": 0,
             "chunks_count": len(chunks),
+            "loudness": loudness_report,
+            "loudness_report_path": str(loudness_json_path),
         }
 
     return {
@@ -2400,6 +2693,8 @@ def resolve_or_generate_voiceover(
         "cost_usd": round(float(total_cost_usd), 6),
         "tts_calls": tts_calls,
         "chunks_count": len(chunks),
+        "loudness": loudness_report,
+        "loudness_report_path": str(loudness_json_path),
     }
 
 
@@ -2872,6 +3167,8 @@ def run_cut(
     max_sentence_silence: float = 0.25,
     vo_chunk_seconds: float = 60.0,
     vo_gap: float = 0.25,
+    vo_lufs: float = -16.0,
+    vo_normalize: bool = True,
     provider: Any | None = None,
     fps: int = 24,
     aspect: str | None = None,
@@ -3004,6 +3301,8 @@ def run_cut(
             max_sentence_silence=max_sentence_silence,
             vo_chunk_seconds=vo_chunk_seconds,
             vo_gap=vo_gap,
+            vo_lufs=vo_lufs,
+            vo_normalize=vo_normalize,
         )
         cache_dir = proj_p / "cache" / "vo"
         proc_words_cache = cache_dir / f"{proc_key}.words.json"
@@ -3018,6 +3317,8 @@ def run_cut(
                 max_sentence_silence=max_sentence_silence,
                 vo_chunk_seconds=vo_chunk_seconds,
                 vo_gap=vo_gap,
+                vo_lufs=vo_lufs,
+                vo_normalize=vo_normalize,
                 quiet=True,
             )
             est_cost = 0.0
@@ -3033,6 +3334,8 @@ def run_cut(
                 max_sentence_silence=max_sentence_silence,
                 vo_chunk_seconds=vo_chunk_seconds,
                 vo_gap=vo_gap,
+                vo_lufs=vo_lufs,
+                vo_normalize=vo_normalize,
                 provider=provider,
                 force=False,
                 quiet=quiet,
@@ -3067,6 +3370,8 @@ def run_cut(
             max_sentence_silence=max_sentence_silence,
             vo_chunk_seconds=vo_chunk_seconds,
             vo_gap=vo_gap,
+            vo_lufs=vo_lufs,
+            vo_normalize=vo_normalize,
             provider=provider,
             force=force,
             quiet=quiet,
@@ -3086,6 +3391,9 @@ def run_cut(
         allow_hold=allow_hold,
     )
     all_warnings = list(mapping.get("inference_log") or []) + list(plan["warnings"])
+    loudness_info = vo_info.get("loudness")
+    if isinstance(loudness_info, dict) and loudness_info.get("warning"):
+        all_warnings.append(str(loudness_info["warning"]))
 
     # Write script-aligned words.json & captions.srt into project_dir
     script_words_path = proj_p / "words.json"
@@ -3150,6 +3458,8 @@ def run_cut(
         "fuzzy_anchors": plan["fuzzy_anchors"],
         "unmatched_script_tokens": plan["unmatched_script_tokens"],
         "warnings": all_warnings,
+        "loudness": vo_info.get("loudness"),
+        "loudness_report_path": vo_info.get("loudness_report_path"),
         "scenes": plan["scenes"],
         "project_dir": str(proj_p),
         "manifest_path": str(manifest_path),

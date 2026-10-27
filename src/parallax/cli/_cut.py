@@ -95,6 +95,12 @@ def _print_result_human(res: dict) -> None:
         print(f"  warning:   {w}")
     if res.get("caption_report_path"):
         print(f"  captions:  safe_area={res.get('caption_safe_area')} ({res.get('caption_report_path')})")
+    if res.get("loudness"):
+        ld = res["loudness"]
+        print(
+            f"  loudness:  drop={ld.get('first_to_last_drop_db', 0.0):.2f}dB "
+            f"(decay_detected={ld.get('decay_detected', False)}, report={res.get('loudness_report_path')})"
+        )
     print(f"  manifest:  {res.get('manifest_path')}")
     if res.get("editor_export_path"):
         print(f"  export:    {res.get('editor_export_path')} (timeline: {res.get('timeline_xml_path')})")
@@ -181,6 +187,16 @@ def cut_cmd(
         0.25,
         "--vo-gap",
         help="Natural silence gap in seconds inserted between concatenated voiceover chunks (default: 0.25).",
+    ),
+    vo_lufs: float = typer.Option(
+        -16.0,
+        "--vo-lufs",
+        help="Target integrated loudness in LUFS for per-chunk voiceover normalisation (default: -16.0).",
+    ),
+    vo_normalize: bool = typer.Option(
+        True,
+        "--vo-normalize/--no-vo-normalize",
+        help="Apply two-pass ffmpeg loudnorm to each voiceover chunk (default: on).",
     ),
     fps: int = typer.Option(
         24,
@@ -290,6 +306,8 @@ def cut_cmd(
             max_sentence_silence=max_sentence_silence,
             vo_chunk_seconds=vo_chunk_seconds,
             vo_gap=vo_gap,
+            vo_lufs=vo_lufs,
+            vo_normalize=vo_normalize,
             fps=fps,
             aspect=aspect,
             resolution=resolution,

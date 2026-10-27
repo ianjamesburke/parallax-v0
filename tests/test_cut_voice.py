@@ -357,3 +357,107 @@ def test_chunked_voiceover_per_chunk_cache_and_word_offset(tmp_path: Path) -> No
     assert r4["tts_calls"] == 1
     assert "Delta revised sentence" in calls[0]
 
+
+def test_per_chunk_loudnorm_and_loudness_decay_detector(tmp_path: Path) -> None:
+    """Decaying-amplitude sine chunk fixtures normalised within ~1.5 LU;
+    decay detector flags a decaying fixture (> 3 dB drop) and not a flat one.
+    """
+    import json
+    from parallax.cut import (
+        analyze_voiceover_loudness,
+        measure_audio_loudness_lufs,
+        normalize_audio_loudness,
+    )
+
+    # 1. Create 3 sine chunks with decaying amplitudes (0.8, 0.35, 0.15)
+    amps = [0.80, 0.35, 0.15]
+    norm_lufs: list[float] = []
+    for idx, amp in enumerate(amps):
+        raw_chunk = tmp_path / f"chunk_{idx}.wav"
+        norm_chunk = tmp_path / f"chunk_{idx}_norm.wav"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=44100:duration=3.0",
+                "-af",
+                f"volume={amp}",
+                str(raw_chunk),
+            ],
+            check=True,
+        )
+        res_norm = normalize_audio_loudness(raw_chunk, norm_chunk, target_lufs=-16.0)
+        assert res_norm["normalized"] is True
+        post = measure_audio_loudness_lufs(norm_chunk, target_lufs=-16.0)
+        assert post is not None
+        norm_lufs.append(post["input_i"])
+
+    # All normalised chunks must be within ~1.5 LU of each other and ~1.5 LU of -16 LUFS
+    assert max(norm_lufs) - min(norm_lufs) <= 1.5
+    for val in norm_lufs:
+        assert abs(val - (-16.0)) <= 1.5
+
+    # 2. Construct a 30s decaying fixture (three 10s windows: volume 0.8 -> 0.4 -> 0.2, ~12 dB drop)
+    decay_wav = tmp_path / "decay_30s.wav"
+    fc_decay = (
+        "sine=frequency=440:sample_rate=16000:duration=10.0,volume=0.80[w0];"
+        "sine=frequency=440:sample_rate=16000:duration=10.0,volume=0.40[w1];"
+        "sine=frequency=440:sample_rate=16000:duration=10.0,volume=0.20[w2];"
+        "[w0][w1][w2]concat=n=3:v=0:a=1[out]"
+    )
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-filter_complex",
+            fc_decay,
+            "-map",
+            "[out]",
+            str(decay_wav),
+        ],
+        check=True,
+    )
+    decay_json = tmp_path / "voiceover.loudness.json"
+    rep_decay = analyze_voiceover_loudness(decay_wav, window_s=10.0, out_json_path=decay_json)
+    assert decay_json.is_file()
+    saved = json.loads(decay_json.read_text(encoding="utf-8"))
+    assert saved["decay_detected"] is True
+    assert rep_decay["decay_detected"] is True
+    assert rep_decay["first_to_last_drop_db"] > 3.0
+    assert rep_decay["warning"] is not None
+    assert len(rep_decay["windows"]) == 3
+
+    # 3. Construct a flat fixture and verify decay_detected is False
+    flat_wav = tmp_path / "flat_20s.wav"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=16000:duration=20.0",
+            "-af",
+            "volume=0.6",
+            str(flat_wav),
+        ],
+        check=True,
+    )
+    rep_flat = analyze_voiceover_loudness(flat_wav, window_s=10.0)
+    assert rep_flat["decay_detected"] is False
+    assert abs(rep_flat["first_to_last_drop_db"]) < 0.5
+    assert rep_flat["warning"] is None
+
+
