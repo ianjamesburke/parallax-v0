@@ -171,7 +171,7 @@ _STAGES = [
         ],
         "preconditions": ["human approved the storyboard", "no open reference gates", "human has seen the printed estimate"],
         "human_decision": {"question": "Is the estimate `parallax produce` prints acceptable for this project?", "ask_only_if_unresolved": False},
-        "see": ["produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll", "export"],
+        "see": ["produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll", "export", "cut"],
         "review_boundary": "Dry run first with PARALLAX_TEST_MODE=1 (stub assets, no network),; it writes nothing into plan.yaml. Lock approved assets before re-running; unlocked scenes regenerate and cost money.",
         "spends_money": True,
         "next": None,

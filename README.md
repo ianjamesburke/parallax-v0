@@ -8,6 +8,7 @@ Agentic creative production CLI. A brief goes in, a finished short-form video co
 curl -LsSf https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/install.sh | sh   # install
 parallax --help       # every command
 parallax guide        # how to author a brief and drive the pipeline
+parallax guide cut    # cut a folder of existing clips to a script + voiceover + XML export
 PARALLAX_TEST_MODE=1 parallax produce --folder ./my-project --brief ./my-project/brief.yaml   # free stub run, try this first
 parallax update       # upgrade later
 ```
@@ -63,11 +64,12 @@ These work with no key and no provider calls:
 
 - `parallax storyboard`: storyboard packages, HTML previews, optional PDF.
 - `parallax ingest`: local WhisperX transcription with word timestamps (the first run may download model weights).
+- `parallax cut`: script-anchored clip assembly, caption burn, and XML editor export when `--audio`/`--words`, `--plan-only`, `--from-manifest`, or a cached voiceover is used (only uncached TTS synthesis uses `OPENROUTER_API_KEY`).
 - `parallax video ...` local tools: `assemble` clips with voiceover and captions, `ken-burns`, `text-overlay`, `app-screen`, `end-card`, `diagram`, and `motion --from-spec` / `--from-html` re-renders.
 - `parallax export editor`: an xmeml v4 and FCPXML 1.10 timeline, assets, and SRT captions for Premiere, Resolve, and Final Cut.
 - `parallax validate`, `plan`, `guide`, and `schema`.
 
-Anything that generates with a provider (`produce`, `image generate`, `video animate`, `audio voiceover`) needs the key, and so does `credits`.
+Anything that generates with a provider (`produce`, `image generate`, `video animate`, `audio voiceover`, or `cut` when synthesizing a new TTS voiceover) needs the key, and so does `credits`.
 
 For dry runs of the paid pipeline without spending: `export PARALLAX_TEST_MODE=1` — the pipeline produces stub PNGs / mp4s / mp3s end-to-end with no network calls.
 
@@ -157,6 +159,47 @@ Writes `<folder>/editor-handoff/` (override with `--out`):
 - `captions/captions.srt` — SubRip subtitle file chunked from `vo_words.json`
 - `reference/` — optional copy of the finished MP4 from the produce run
 - `README.txt` & `handoff.json` — import instructions and machine-readable frame/second manifest
+
+### Cut existing clips to a script (`parallax cut`)
+
+When you already have a folder of clips and a script, `parallax cut` produces the voiceover (or reuses cached/supplied audio), aligns script tokens to word timestamps, computes midpoint-of-gap scene boundaries with per-clip capacity redistribution and reuse-trim continuation, writes `<project>/manifest.yaml`, renders a captioned MP4 from that manifest, and exports an editor handoff package (`<project>/assets/timeline.xml` + `timeline.fcpxml` + `captions.srt`) from the **same** manifest so the video and XML timeline always match:
+
+```sh
+# 1. Dry-run plan (zero paid calls, zero renders; exits 2 with a MAPPING NEEDED report + template if unmapped)
+parallax cut --script ./script.txt --clips ./clips/ --map ./cut-map.yaml --out ./final.mp4 --plan-only
+
+# 2. Full run (synthesizes or reuses cached TTS at 1.15x with <=0.25s sentence silence, renders MP4 + XML export)
+parallax cut --script ./script.txt --clips ./clips/ --map ./cut-map.yaml --out ./final.mp4
+
+# 3. Key-free run with supplied voiceover audio and word timings
+parallax cut --script ./script.txt --clips ./clips/ --map ./cut-map.yaml --audio ./vo.mp3 --words ./words.json --out ./final.mp4
+
+# 4. Re-render and re-export after hand-editing manifest.yaml
+parallax cut --from-manifest ./final.cut/manifest.yaml --out ./final.mp4
+```
+
+**Agent workflow (`parallax guide cut`):**
+1. Inspect the clips in `--clips` using your own vision (or `parallax ingest ./clips/ --estimate`). Parallax never calls a model to guess visual clip-to-script matching.
+2. Provide `--map cut-map.yaml` (or omit `--map` when the script has inline `[Scene_01]` / `Scene 1:` markers or numbered clips matching the paragraph or sentence count; otherwise `parallax cut` exits `2`, prints a `MAPPING NEEDED` report, and writes `<project>/cut-map.template.yaml`).
+3. Run `parallax cut ... --plan-only` to verify anchors, slot durations, clip reuse trims, and any overruns before spending or rendering.
+4. Run `parallax cut ...` to produce `<out>`, `<project>/manifest.yaml`, and `<project>/assets/timeline.xml` (verified with `consistency: manifest==xml ok`).
+
+**Mapping format (`cut-map.yaml`):**
+
+```yaml
+version: 1
+segments:               # in script order
+  - anchor: "45 AD."    # >=1 opening word where this segment starts (matched forward-only from previous anchor)
+    clip: Scene_01.mp4  # filename, stem, or relative path inside --clips
+    in: 0.0             # optional in-point seconds (default: continue where previous use of this clip ended)
+    note: "Opening hook"
+  - anchor: "Desperate,"
+    clip: Scene_02
+```
+
+**Idempotent voiceover cache:**
+- Cached under `<project>/cache/vo/` by `sha256(script + voice + voice_model + style + speed + max_sentence_silence + version)`. Re-running prints `voiceover: cached (no TTS call)` and spends `$0`.
+- Raw provider audio + word timings are also cached by `sha256(script + voice + voice_model + style)` (and preserved at `<project>/voiceover.provider-raw.mp3`), so changing `--speed` (default `1.15`) or `--max-sentence-silence` (default `0.25`) re-processes locally with **zero** new TTS calls. Pass `--force` to bypass caches.
 
 ## Storyboard package
 

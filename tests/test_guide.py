@@ -105,7 +105,15 @@ def test_guide_topics_chain_and_cross_references_resolve(capsys):
         assert target is None or target in names
         for ref in (data["stage"].get("see", []) if "stage" in data else data.get("see", [])):
             assert ref in names
-    assert {"produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll", "single_shot", "character_first"} <= names
+    assert {"produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll", "single_shot", "character_first", "cut"} <= names
+
+
+def test_cut_guide_topic_documents_agent_workflow_and_mapping_format(capsys):
+    topic = _topic(capsys, "cut")
+    assert "agent_workflow" in topic
+    assert topic["mapping_format"]["version"] == 1
+    assert isinstance(topic["mapping_format"]["segments"], list)
+    assert any("parallax cut" in cmd for cmd in topic["commands"])
 
 
 def test_single_shot_guide_derives_end_frame_models_from_catalog(capsys):

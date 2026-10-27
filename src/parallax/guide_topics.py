@@ -300,6 +300,37 @@ TOPICS: dict[str, dict] = {
             "README.txt": "Import steps for Premiere Pro, DaVinci Resolve, Final Cut Pro, and CapCut.",
             "handoff.json": "Machine-readable manifest with relative file paths, frame and second timings, fps, and warnings.",
         },
+        "next": "cut",
+    },
+    "cut": {
+        "summary": "Assemble a folder of existing clips to a script (`parallax cut`): voiceover (with idempotent cache), script-token alignment, midpoint-of-gap scene plan, manifest.yaml, captioned MP4, and XML editor export from ONE manifest.",
+        "design_principle": "Parallax never guesses clip-to-script visual matching with a model. The calling agent inspects clips (with its own vision or `parallax ingest`), writes `cut-map.yaml` (or relies on deterministic name/marker inference), runs `parallax cut --plan-only`, then runs `parallax cut`.",
+        "agent_workflow": [
+            {"step": 1, "do": "Inspect clips in `--clips DIR` (e.g. `parallax ingest <dir> --estimate` or sample frames with your own vision)."},
+            {"step": 2, "do": "Author `cut-map.yaml` mapping script opening phrases (`anchor`) to clip filenames/stems in script order, or run `parallax cut --script script.txt --clips clips/ --out out.mp4 --plan-only` first to generate `<project>/cut-map.template.yaml`."},
+            {"step": 3, "do": "Dry-run the plan with `parallax cut --script script.txt --clips clips/ --map cut-map.yaml --out out.mp4 --plan-only` (zero paid calls, zero renders; exits 0 if renderable, 2 on mapping/overrun issues)."},
+            {"step": 4, "do": "Run `parallax cut --script script.txt --clips clips/ --map cut-map.yaml --out out.mp4` to synthesize/reuse cached voiceover, write `<project>/manifest.yaml`, render the captioned video, and export `<project>/assets/timeline.xml`."},
+            {"step": 5, "do": "If you hand-edit `<project>/manifest.yaml` timings or trims, re-run `parallax cut --from-manifest <project>/manifest.yaml --out out.mp4` so the MP4 and `timeline.xml` stay 100% identical."},
+        ],
+        "mapping_format": {
+            "version": 1,
+            "segments": [
+                {"anchor": "45 AD.", "clip": "Scene_01.mp4", "in": 0.0, "note": "optional note"},
+                {"anchor": "Desperate,", "clip": "Scene_02"},
+            ],
+        },
+        "mapping_resolution_order": [
+            "1. `--map FILE` (YAML or JSON): validates all segments at once (unknown clip, missing anchor with closest candidate sentences, non-monotonic anchors).",
+            "2. Name inference (when `--map` is omitted): (i) inline script markers (`[Scene_03]`, `[scene 3]`, `Scene 3:`), stripped from spoken/caption text; (ii) numbered clips (`Scene_01`, `clip2`, ...) when paragraph count == clip count; (iii) numbered clips when sentence count == clip count.",
+            "3. Otherwise exits 2 with a `MAPPING NEEDED` report and writes `<project>/cut-map.template.yaml`.",
+        ],
+        "commands": [
+            "parallax cut --script script.txt --clips clips/ --map cut-map.yaml --out out.mp4 --plan-only",
+            "parallax cut --script script.txt --clips clips/ --map cut-map.yaml --out out.mp4",
+            "parallax cut --script script.txt --clips clips/ --map cut-map.yaml --audio vo.mp3 --words words.json --out out.mp4",
+            "parallax cut --from-manifest out.cut/manifest.yaml --out out.mp4",
+        ],
+        "voiceover_cache": "Idempotent two-tier cache under `<project>/cache/vo/`: changing `--speed` (default 1.15) or `--max-sentence-silence` (default 0.25) re-processes the cached raw provider audio locally with zero TTS calls. Pass `--force` to bypass.",
         "next": None,
     },
 }
