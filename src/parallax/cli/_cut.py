@@ -232,6 +232,11 @@ def cut_cmd(
         "--from-manifest",
         help="Skip planning: re-render video and re-export editor package from an existing or hand-edited manifest.yaml.",
     ),
+    encode_preset: str = typer.Option(
+        "drive-safe",
+        "--encode-preset",
+        help="Output encoding preset: drive-safe (default; H.264 High@L4.0, yuv420p, 24fps CFR, AAC-LC 48kHz stereo 160k, +faststart, even dimensions) or source.",
+    ),
     plan_only: bool = typer.Option(
         False,
         "--plan-only",
@@ -285,6 +290,7 @@ def cut_cmd(
             allow_hold=allow_hold,
             export_editor=export_editor,
             from_manifest=from_manifest,
+            encode_preset=encode_preset,
             plan_only=plan_only,
             force=force,
             quiet=as_json,

@@ -302,19 +302,17 @@ def test_cut_full_cli_run_and_from_manifest_round_trip(
             str(proj_dir),
             "--out",
             str(out_mp4),
-            "--fps",
-            "12",
         ],
     )
     assert res.exit_code == 0, res.output
     assert "consistency: manifest==xml ok" in res.output
     assert out_mp4.is_file()
 
-    # Video duration must match voiceover within 1 frame (1/12s = 0.0833s)
+    # Video duration must match voiceover within 1 frame (1/24s = 0.0417s)
     vid_dur = probe_duration(out_mp4)
     vo_dur = probe_audio_duration(fx["vo"])
     assert vid_dur is not None and vo_dur is not None
-    assert abs(vid_dur - vo_dur) <= (1.0 / 12.0) + 0.05
+    assert abs(vid_dur - vo_dur) <= (1.0 / 24.0) + 0.05
 
     manifest_path = proj_dir / "manifest.yaml"
     xml_path = proj_dir / "assets" / "timeline.xml"

@@ -1947,23 +1947,29 @@ def resolve_target_resolution(
     *,
     aspect: str | None = None,
     resolution: str | None = None,
+    encode_preset: str = "drive-safe",
 ) -> str:
     """Resolve output resolution (`WxH`).
 
     If neither `--resolution` nor `--aspect` is explicitly set and all clips share
     a valid resolution, use that resolution; otherwise default to `9:16` (`720x1280`).
+    When `encode_preset == "drive-safe"`, dimensions are rounded to even integers.
     """
     if resolution:
         w, h = parse_resolution(resolution)
-        return f"{w}x{h}"
-    if aspect:
+    elif aspect:
         if aspect not in _ASPECT_TO_RESOLUTION:
             raise CutError(f"Unsupported aspect {aspect!r}; choose from {sorted(_ASPECT_TO_RESOLUTION)}", exit_code=1)
-        return _ASPECT_TO_RESOLUTION[aspect]
-    clip_res = {c["resolution"] for c in clips if c.get("width", 0) > 0 and c.get("height", 0) > 0}
-    if len(clip_res) == 1:
-        return next(iter(clip_res))
-    return _ASPECT_TO_RESOLUTION["9:16"]
+        w, h = parse_resolution(_ASPECT_TO_RESOLUTION[aspect])
+    else:
+        clip_res = {c["resolution"] for c in clips if c.get("width", 0) > 0 and c.get("height", 0) > 0}
+        if len(clip_res) == 1:
+            w, h = parse_resolution(next(iter(clip_res)))
+        else:
+            w, h = parse_resolution(_ASPECT_TO_RESOLUTION["9:16"])
+    if encode_preset == "drive-safe":
+        w, h = even_dimensions(w, h)
+    return f"{w}x{h}"
 
 
 def build_manifest_dict(
@@ -2050,12 +2056,14 @@ def render_from_manifest(
     caption_size: int | None = None,
     words_per_chunk: int | str | None = None,
     report_path: str | Path | None = None,
+    fps: int | None = None,
+    encode_preset: str | None = None,
 ) -> dict[str, Any]:
     """Render the final MP4 directly from a `manifest.yaml` file.
 
     Frame-accurate per-scene trim and duration (`-ss trim -i clip` + `tpad=stop_mode=clone`
     + `-frames:v slot_frames`), scale/crop-to-fill normalisation, voiceover mux,
-    and optional caption burn.
+    and optional caption burn. Uses `drive_safe_encode_args` by default (`encode_preset="drive-safe"`).
     """
     mpath = Path(manifest_path).expanduser().resolve()
     if not mpath.is_file():
@@ -2068,9 +2076,21 @@ def render_from_manifest(
     manifest_dir = mpath.parent
     cut_cfg = manifest.get("cut") if isinstance(manifest.get("cut"), dict) else {}
 
+    resolved_preset = str(
+        encode_preset
+        if encode_preset is not None
+        else (cut_cfg.get("encode_preset") or manifest.get("encode_preset") or "drive-safe")
+    )
+    if resolved_preset not in ENCODE_PRESETS:
+        raise CutError(f"Invalid encode_preset {resolved_preset!r}; choose from {ENCODE_PRESETS}", exit_code=2)
+
     res_str = str(manifest.get("resolution") or "720x1280")
     w, h = parse_resolution(res_str)
-    fps = int(manifest.get("fps") or cut_cfg.get("fps") or 24)
+    if resolved_preset == "drive-safe":
+        w, h = even_dimensions(w, h)
+        res_str = f"{w}x{h}"
+
+    fps_val = int(fps if fps is not None else (manifest.get("fps") or cut_cfg.get("fps") or 24))
 
     do_captions = captions if captions is not None else bool(cut_cfg.get("captions", True))
     c_style = caption_style or str(cut_cfg.get("caption_style") or "bangers")
@@ -2101,20 +2121,20 @@ def render_from_manifest(
                 raise CutError(f"Scene {pos} clip not found: {scene.get('clip_path')}", exit_code=1)
 
             if scene.get("start_s") is not None and scene.get("end_s") is not None:
-                s_frame = round(float(scene["start_s"]) * fps)
-                e_frame = round(float(scene["end_s"]) * fps)
+                s_frame = round(float(scene["start_s"]) * fps_val)
+                e_frame = round(float(scene["end_s"]) * fps_val)
                 slot_frames = max(1, e_frame - s_frame)
             else:
-                slot_frames = max(1, round(float(scene.get("duration_s", 5.0)) * fps))
+                slot_frames = max(1, round(float(scene.get("duration_s", 5.0)) * fps_val))
 
-            slot_dur = slot_frames / float(fps)
+            slot_dur = slot_frames / float(fps_val)
             total_frames += slot_frames
             trim_start = max(0.0, float(scene.get("clip_trim_start_s") or 0.0))
 
             seg_out = td_path / f"seg_{pos:03d}.mp4"
             vf = (
                 f"scale={w}:{h}:force_original_aspect_ratio=increase,"
-                f"crop={w}:{h},fps={fps},setsar=1,"
+                f"crop={w}:{h},fps={fps_val},setsar=1,"
                 f"tpad=stop_mode=clone:stop_duration={slot_dur:.4f}"
             )
             res = run_ffmpeg(
@@ -2148,7 +2168,7 @@ def render_from_manifest(
                 raise CutError(f"ffmpeg segment render failed for scene {pos}: {res.stderr[:400]}", exit_code=1)
             seg_files.append(seg_out)
 
-        total_dur_s = total_frames / float(fps)
+        total_dur_s = total_frames / float(fps_val)
         concat_txt = td_path / "concat.txt"
         concat_txt.write_text("".join(f"file '{p}'\n" for p in seg_files), encoding="utf-8")
 
@@ -2175,18 +2195,23 @@ def render_from_manifest(
             "[a]",
             "-frames:v",
             str(total_frames),
-            "-c:v",
-            "libx264",
             "-preset",
             "fast",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-movflags",
-            "+faststart",
-            str(base_mp4),
         ]
+        if resolved_preset == "drive-safe":
+            mux_cmd += drive_safe_encode_args(fps=fps_val, include_audio=True)
+        else:
+            mux_cmd += [
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-movflags",
+                "+faststart",
+            ]
+        mux_cmd.append(str(base_mp4))
         res_mux = run_ffmpeg(mux_cmd, capture_output=True, text=True)
         if res_mux.returncode != 0:
             raise CutError(f"ffmpeg concat/mux failed: {res_mux.stderr[:400]}", exit_code=1)
@@ -2204,25 +2229,46 @@ def render_from_manifest(
                 report_path=str(rep_p),
                 caption_y=c_y,
             )
-            # Re-mux with +faststart to guarantee container flags
-            res_fast = run_ffmpeg(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-hide_banner",
-                    "-loglevel",
-                    "error",
-                    "-i",
-                    str(captioned_tmp),
-                    "-c",
-                    "copy",
-                    "-movflags",
-                    "+faststart",
-                    str(out_p),
-                ],
-                capture_output=True,
-                text=True,
-            )
+            if resolved_preset == "drive-safe":
+                res_fast = run_ffmpeg(
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-i",
+                        str(captioned_tmp),
+                        "-frames:v",
+                        str(total_frames),
+                        "-preset",
+                        "fast",
+                        *drive_safe_encode_args(fps=fps_val, include_audio=True),
+                        str(out_p),
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+            else:
+                # Re-mux with +faststart to guarantee container flags
+                res_fast = run_ffmpeg(
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-i",
+                        str(captioned_tmp),
+                        "-c",
+                        "copy",
+                        "-movflags",
+                        "+faststart",
+                        str(out_p),
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
             if res_fast.returncode != 0:
                 shutil.copy2(captioned_tmp, out_p)
 
@@ -2245,9 +2291,10 @@ def render_from_manifest(
         "video_duration_s": round(float(probed_video_dur), 4),
         "expected_duration_s": round(total_dur_s, 4),
         "voiceover_duration_s": round(float(probed_vo_dur), 4),
-        "duration_diff_s": round( abs(float(probed_video_dur) - float(probed_vo_dur)), 4),
-        "fps": fps,
+        "duration_diff_s": round(abs(float(probed_video_dur) - float(probed_vo_dur)), 4),
+        "fps": fps_val,
         "resolution": res_str,
+        "encode_preset": resolved_preset,
         "captions_burned": bool(do_captions and words_file and words_file.is_file()),
         "caption_report_path": str(rep_p) if (do_captions and rep_p.is_file()) else None,
         "caption_safe_area": "ok" if caption_safe_ok else "overflow",
@@ -2336,11 +2383,14 @@ def run_cut(
     allow_hold: bool = False,
     export_editor: bool = True,
     from_manifest: str | Path | None = None,
+    encode_preset: str = "drive-safe",
     plan_only: bool = False,
     force: bool = False,
     quiet: bool = False,
 ) -> dict[str, Any]:
     """Execute the `parallax cut` workflow end-to-end."""
+    if encode_preset not in ENCODE_PRESETS:
+        raise CutError(f"Invalid encode-preset {encode_preset!r}; choose from {ENCODE_PRESETS}", exit_code=2)
     out_p = Path(out_path).expanduser().resolve()
     proj_p = (
         Path(project_dir).expanduser().resolve()
@@ -2363,6 +2413,7 @@ def run_cut(
             caption_y=caption_y,
             caption_size=caption_size,
             words_per_chunk=words_per_chunk,
+            encode_preset=encode_preset,
         )
         # Copy or link reference video into manifest_dir so export_editor_package can include it
         manifest_data = yaml.safe_load(mpath.read_text(encoding="utf-8")) or {}
@@ -2424,7 +2475,7 @@ def run_cut(
 
     cdir = Path(clips_dir).expanduser().resolve()
     clips = discover_clips(cdir, probe=True)
-    target_res = resolve_target_resolution(clips, aspect=aspect, resolution=resolution)
+    target_res = resolve_target_resolution(clips, aspect=aspect, resolution=resolution, encode_preset=encode_preset)
     clip_durations = {c["name"]: float(c["duration_s"]) for c in clips}
 
     # 1. Resolve mapping (order: --map -> infer from names -> fail exit 2 with MAPPING NEEDED)
@@ -2552,6 +2603,7 @@ def run_cut(
         "caption_size": caption_size,
         "words_per_chunk": words_per_chunk,
         "allow_hold": allow_hold,
+        "encode_preset": encode_preset,
         "estimated": timing_is_estimated,
     }
     manifest_dict = build_manifest_dict(
@@ -2620,6 +2672,8 @@ def run_cut(
         caption_y=caption_y,
         caption_size=caption_size,
         words_per_chunk=words_per_chunk,
+        fps=fps,
+        encode_preset=encode_preset,
     )
 
     # 5. Export editor package from the SAME manifest into `<project>/assets/` + verify consistency
