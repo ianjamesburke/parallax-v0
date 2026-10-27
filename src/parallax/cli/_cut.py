@@ -97,10 +97,17 @@ def _print_result_human(res: dict) -> None:
         print(f"  captions:  safe_area={res.get('caption_safe_area')} ({res.get('caption_report_path')})")
     if res.get("loudness"):
         ld = res["loudness"]
-        print(
-            f"  loudness:  drop={ld.get('first_to_last_drop_db', 0.0):.2f}dB "
-            f"(decay_detected={ld.get('decay_detected', False)}, report={res.get('loudness_report_path')})"
-        )
+        final_lufs = ld.get("final_lufs")
+        final_str = f"{final_lufs:.1f} LUFS" if isinstance(final_lufs, (int, float)) else "n/a"
+        ld_warns = ld.get("warnings") or []
+        if ld_warns:
+            print(f"  loudness: final {final_str} — {'; '.join(ld_warns)} (report={res.get('loudness_report_path')})")
+        else:
+            max_dev = float(ld.get("max_deviation_lu") or 0.0)
+            print(
+                f"  loudness: final {final_str}, chunks within ±{max_dev:.1f} LU "
+                f"(report={res.get('loudness_report_path')})"
+            )
     if res.get("verification"):
         vf = res["verification"]
         note_str = f" ({vf['note']})" if vf.get("note") else ""
@@ -199,6 +206,11 @@ def cut_cmd(
         -16.0,
         "--vo-lufs",
         help="Target integrated loudness in LUFS for per-chunk voiceover normalisation (default: -16.0).",
+    ),
+    vo_lufs_tolerance: float = typer.Option(
+        1.5,
+        "--vo-lufs-tolerance",
+        help="Max allowed chunk deviation in LU from mean chunk loudness before emitting a warning (default: 1.5).",
     ),
     vo_normalize: bool = typer.Option(
         True,
@@ -329,6 +341,7 @@ def cut_cmd(
             vo_chunk_seconds=vo_chunk_seconds,
             vo_gap=vo_gap,
             vo_lufs=vo_lufs,
+            vo_lufs_tolerance=vo_lufs_tolerance,
             vo_normalize=vo_normalize,
             vo_verify=vo_verify,
             vo_retries=vo_retries,

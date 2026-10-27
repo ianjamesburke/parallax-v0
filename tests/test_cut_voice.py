@@ -358,22 +358,34 @@ def test_chunked_voiceover_per_chunk_cache_and_word_offset(tmp_path: Path) -> No
     assert "Delta revised sentence" in calls[0]
 
 
-def test_per_chunk_loudnorm_and_loudness_decay_detector(tmp_path: Path) -> None:
-    """Decaying-amplitude sine chunk fixtures normalised within ~1.5 LU;
-    decay detector flags a decaying fixture (> 3 dB drop) and not a flat one.
+def test_per_chunk_loudnorm_and_loudness_consistency_check(tmp_path: Path, capsys) -> None:
+    """Per-chunk loudnorm brings chunks within ±1.5 LU of target/mean; when one chunk is
+    deliberately off by >1.5 LU (e.g. -12 dBFS vs others -26 dBFS, with normalisation disabled),
+    consistency check emits a warning naming that chunk, whereas consistent chunks do not.
     """
     import json
+    from parallax.cli._cut import _print_result_human
     from parallax.cut import (
         analyze_voiceover_loudness,
+        concatenate_chunk_voiceovers,
         measure_audio_loudness_lufs,
         normalize_audio_loudness,
+        resolve_or_generate_voiceover,
     )
+    from parallax.voiceover import VoiceSynthesisResult
 
-    # 1. Create 3 sine chunks with decaying amplitudes (0.8, 0.35, 0.15)
-    amps = [0.80, 0.35, 0.15]
+    # 1. Create 3 sine chunks where chunk 1 is at -12 dBFS (0.25) and chunks 0 & 2 are at -26 dBFS (0.05)
+    chunk_specs = [
+        (0, "Opening paragraph one about ancient ports.", 0.05),
+        (1, "Middle outlier paragraph two with loud sine.", 0.25),
+        (2, "Closing paragraph three about calm waters.", 0.05),
+    ]
+    raw_chunks: list[dict] = []
+    norm_chunks: list[dict] = []
     norm_lufs: list[float] = []
-    for idx, amp in enumerate(amps):
-        raw_chunk = tmp_path / f"chunk_{idx}.wav"
+
+    for idx, preview_text, amp in chunk_specs:
+        raw_chunk = tmp_path / f"chunk_{idx}_raw.wav"
         norm_chunk = tmp_path / f"chunk_{idx}_norm.wav"
         subprocess.run(
             [
@@ -385,80 +397,187 @@ def test_per_chunk_loudnorm_and_loudness_decay_detector(tmp_path: Path) -> None:
                 "-f",
                 "lavfi",
                 "-i",
-                "sine=frequency=440:sample_rate=44100:duration=3.0",
-                "-af",
-                f"volume={amp}",
+                f"aevalsrc={amp}*sin(2*PI*440*t):s=44100:d=3.0",
                 str(raw_chunk),
             ],
             check=True,
+        )
+        raw_chunks.append(
+            {
+                "index": idx,
+                "text": preview_text,
+                "audio_path": str(raw_chunk),
+                "total_duration_s": 3.0,
+            }
         )
         res_norm = normalize_audio_loudness(raw_chunk, norm_chunk, target_lufs=-16.0)
         assert res_norm["normalized"] is True
         post = measure_audio_loudness_lufs(norm_chunk, target_lufs=-16.0)
         assert post is not None
         norm_lufs.append(post["input_i"])
+        norm_chunks.append(
+            {
+                "index": idx,
+                "text": preview_text,
+                "audio_path": str(norm_chunk),
+                "total_duration_s": 3.0,
+                "integrated_lufs": post["input_i"],
+            }
+        )
 
-    # All normalised chunks must be within ~1.5 LU of each other and ~1.5 LU of -16 LUFS
+    # All normalised chunks must be within 1.5 LU of each other and 1.5 LU of -16 LUFS
     assert max(norm_lufs) - min(norm_lufs) <= 1.5
     for val in norm_lufs:
         assert abs(val - (-16.0)) <= 1.5
 
-    # 2. Construct a 30s decaying fixture (three 10s windows: volume 0.8 -> 0.4 -> 0.2, ~12 dB drop)
-    decay_wav = tmp_path / "decay_30s.wav"
-    fc_decay = (
-        "sine=frequency=440:sample_rate=16000:duration=10.0,volume=0.80[w0];"
-        "sine=frequency=440:sample_rate=16000:duration=10.0,volume=0.40[w1];"
-        "sine=frequency=440:sample_rate=16000:duration=10.0,volume=0.20[w2];"
-        "[w0][w1][w2]concat=n=3:v=0:a=1[out]"
+    # 2. Consistent chunks (post-normalisation): no deviations, no warnings
+    concat_norm = tmp_path / "concat_norm.wav"
+    concatenate_chunk_voiceovers(norm_chunks, concat_norm, vo_gap=0.25)
+    norm_json = tmp_path / "consistent.loudness.json"
+    rep_ok = analyze_voiceover_loudness(
+        concat_norm,
+        chunks=norm_chunks,
+        target_lufs=-16.0,
+        tolerance_lu=1.5,
+        vo_gap=0.25,
+        out_json_path=norm_json,
     )
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-filter_complex",
-            fc_decay,
-            "-map",
-            "[out]",
-            str(decay_wav),
-        ],
-        check=True,
-    )
-    decay_json = tmp_path / "voiceover.loudness.json"
-    rep_decay = analyze_voiceover_loudness(decay_wav, window_s=10.0, out_json_path=decay_json)
-    assert decay_json.is_file()
-    saved = json.loads(decay_json.read_text(encoding="utf-8"))
-    assert saved["decay_detected"] is True
-    assert rep_decay["decay_detected"] is True
-    assert rep_decay["first_to_last_drop_db"] > 3.0
-    assert rep_decay["warning"] is not None
-    assert len(rep_decay["windows"]) == 3
+    assert norm_json.is_file()
+    saved_ok = json.loads(norm_json.read_text(encoding="utf-8"))
+    for key in (
+        "target_lufs",
+        "chunks",
+        "final_lufs",
+        "mean_chunk_lufs",
+        "tolerance_lu",
+        "deviations",
+        "warnings",
+    ):
+        assert key in saved_ok
+    assert len(rep_ok["chunks"]) == 3
+    for idx, ch_entry in enumerate(rep_ok["chunks"]):
+        assert ch_entry["index"] == idx
+        assert ch_entry["text_preview"] == chunk_specs[idx][1]
+        assert isinstance(ch_entry["start_s"], float)
+        assert isinstance(ch_entry["end_s"], float)
+        assert isinstance(ch_entry["integrated_lufs"], float)
+    assert rep_ok["deviations"] == []
+    assert rep_ok["warnings"] == []
 
-    # 3. Construct a flat fixture and verify decay_detected is False
-    flat_wav = tmp_path / "flat_20s.wav"
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "sine=frequency=440:sample_rate=16000:duration=20.0",
-            "-af",
-            "volume=0.6",
-            str(flat_wav),
-        ],
-        check=True,
+    # Human summary for consistent chunks prints "loudness: final ... LUFS, chunks within ±... LU"
+    _print_result_human(
+        {
+            "video_path": "out.mp4",
+            "video_duration_s": 9.5,
+            "duration_diff_s": 0.0,
+            "voiceover_source": "tts",
+            "voiceover_duration_s": 9.5,
+            "tts_cost_usd": 0.0,
+            "segments_count": 3,
+            "reuse_count": 0,
+            "loudness": rep_ok,
+            "loudness_report_path": str(norm_json),
+            "manifest_path": "manifest.yaml",
+        }
     )
-    rep_flat = analyze_voiceover_loudness(flat_wav, window_s=10.0)
-    assert rep_flat["decay_detected"] is False
-    assert abs(rep_flat["first_to_last_drop_db"]) < 0.5
-    assert rep_flat["warning"] is None
+    human_ok = capsys.readouterr().out
+    assert "loudness: final " in human_ok
+    assert "chunks within ±" in human_ok
+
+    # 3. End-to-end via resolve_or_generate_voiceover with --no-vo-normalize where chunk 1 is -12 dBFS vs others -26 dBFS
+    para0 = " ".join(["Opening paragraph one about ancient ports."] * 4)
+    para1 = " ".join(["Middle outlier paragraph two with loud sine."] * 4)
+    para2 = " ".join(["Closing paragraph three about calm waters."] * 4)
+    script = f"{para0}\n\n{para1}\n\n{para2}"
+
+    class _OutlierProvider:
+        def synthesize(
+            self,
+            text: str,
+            voice: str = "nova",
+            style: str | None = None,
+            *,
+            out_dir: str | None = None,
+        ) -> VoiceSynthesisResult:
+            dest = Path(out_dir or tmp_path)
+            dest.mkdir(parents=True, exist_ok=True)
+            is_outlier = "Middle outlier" in text
+            amp = 0.25 if is_outlier else 0.05
+            tag = "outlier" if is_outlier else f"normal_{abs(hash(text)) % 1000}"
+            mp3_p = dest / f"{tag}.mp3"
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    f"aevalsrc={amp}*sin(2*PI*440*t):s=44100:d=3.0",
+                    "-c:a",
+                    "libmp3lame",
+                    "-b:a",
+                    "128k",
+                    str(mp3_p),
+                ],
+                check=True,
+            )
+            toks = text.split()
+            dur_per_w = 3.0 / max(1, len(toks))
+            words = [
+                {"word": w, "start": round(i * dur_per_w, 4), "end": round((i + 1) * dur_per_w, 4)}
+                for i, w in enumerate(toks)
+            ]
+            return VoiceSynthesisResult(audio_path=str(mp3_p), words=words, duration_s=3.0, cost_usd=0.0)
+
+    proj_unnorm = tmp_path / "proj_unnorm"
+    res_unnorm = resolve_or_generate_voiceover(
+        clean_script=script,
+        project_dir=proj_unnorm,
+        speed=1.0,
+        vo_chunk_seconds=12.0,
+        vo_gap=0.25,
+        vo_lufs=-16.0,
+        vo_lufs_tolerance=1.5,
+        vo_normalize=False,
+        vo_verify=False,
+        provider=_OutlierProvider(),
+        quiet=True,
+    )
+    ld_unnorm = res_unnorm["loudness"]
+    loudness_file = proj_unnorm / "voiceover.loudness.json"
+    assert loudness_file.is_file()
+    saved_unnorm = json.loads(loudness_file.read_text(encoding="utf-8"))
+    assert saved_unnorm == ld_unnorm
+    assert len(ld_unnorm["chunks"]) == 3
+    assert len(ld_unnorm["deviations"]) == 1
+    assert ld_unnorm["deviations"][0]["index"] == 1
+    assert ld_unnorm["deviations"][0]["abs_delta_lu"] > 1.5
+    assert len(ld_unnorm["warnings"]) == 1
+    assert "chunk 1" in ld_unnorm["warnings"][0]
+    assert "Middle outlier" in ld_unnorm["warnings"][0]
+
+    # Human summary prints the warning naming chunk 1
+    _print_result_human(
+        {
+            "video_path": "out.mp4",
+            "video_duration_s": 9.5,
+            "duration_diff_s": 0.0,
+            "voiceover_source": "tts",
+            "voiceover_duration_s": 9.5,
+            "tts_cost_usd": 0.0,
+            "segments_count": 3,
+            "reuse_count": 0,
+            "warnings": list(ld_unnorm["warnings"]),
+            "loudness": ld_unnorm,
+            "loudness_report_path": str(loudness_file),
+            "manifest_path": "manifest.yaml",
+        }
+    )
+    human_warn = capsys.readouterr().out
+    assert "chunk 1" in human_warn
 
 
 def test_verifier_flags_missing_tooth_enamel_regenerates_only_failing_chunk_and_keeps_rejected(

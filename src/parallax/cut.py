@@ -1518,6 +1518,7 @@ def compute_vo_cache_keys(
     vo_chunk_seconds: float = 60.0,
     vo_gap: float = 0.25,
     vo_lufs: float = -16.0,
+    vo_lufs_tolerance: float = 1.5,
     vo_normalize: bool = True,
 ) -> tuple[str, str]:
     """Return `(raw_key, processed_key)` sha256 hex digests for the voiceover cache."""
@@ -1924,147 +1925,192 @@ def normalize_audio_loudness(
     return {"normalized": False, "target_lufs": float(target_lufs), "input_lufs": stats["input_i"]}
 
 
+def _preview_chunk_text(text: str, max_len: int = 80) -> str:
+    cleaned = " ".join(str(text or "").split())
+    if len(cleaned) <= max_len:
+        return cleaned
+    return cleaned[: max_len - 3] + "..."
+
+
 def analyze_voiceover_loudness(
     audio_path: str | Path,
     *,
-    window_s: float = 10.0,
-    decay_warn_db: float = 3.0,
+    chunks: list[Any] | None = None,
+    target_lufs: float = -16.0,
+    tolerance_lu: float = 1.5,
+    vo_gap: float = 0.25,
     out_json_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Measure per-window loudness (default 10s windows) via ffmpeg `astats`/`loudnorm`,
-    detect first-to-last window decay `> decay_warn_db` (3.0 dB), and optionally write
-    `<project>/voiceover.loudness.json`.
+    """Measure integrated loudness (LUFS) per chunk (after normalisation) and for the final
+    concatenated audio, check chunk consistency against `mean_chunk_lufs ± tolerance_lu`, and
+    optionally write `<project>/voiceover.loudness.json`.
     """
     p = Path(audio_path)
-    dur = probe_audio_duration(p) if p.is_file() else None
-    if dur is None or dur <= 0:
-        report: dict[str, Any] = {
-            "window_s": float(window_s),
-            "windows": [],
-            "first_window_db": None,
-            "last_window_db": None,
-            "first_to_last_drop_db": 0.0,
-            "max_drop_db": 0.0,
-            "decay_detected": False,
-            "warning": None,
-        }
-        if out_json_path is not None:
-            out_p = Path(out_json_path)
-            out_p.parent.mkdir(parents=True, exist_ok=True)
-            out_p.write_text(json.dumps(report, indent=2), encoding="utf-8")
-        return report
+    final_dur = probe_audio_duration(p) if p.is_file() else None
+    final_stats = (
+        measure_audio_loudness_lufs(p, target_lufs=target_lufs)
+        if (final_dur is not None and final_dur > 0)
+        else None
+    )
+    final_lufs: float | None = final_stats["input_i"] if final_stats is not None else None
 
-    total_d = float(dur)
-    eff_win = float(window_s)
-    # If audio is shorter than 1.2 * window_s (e.g. a short synthetic fixture), split into 3 sub-windows
-    if total_d < eff_win * 1.2 and total_d >= 1.5:
-        eff_win = round(total_d / 3.0, 4)
+    chunk_entries: list[dict[str, Any]] = []
+    gap = max(0.0, float(vo_gap))
 
-    bounds: list[tuple[float, float]] = []
-    cur = 0.0
-    while cur < total_d - 1e-3:
-        nxt = min(total_d, cur + eff_win)
-        if nxt - cur < 0.4 and bounds:
-            prev_s, _ = bounds[-1]
-            bounds[-1] = (prev_s, total_d)
-            break
-        bounds.append((round(cur, 4), round(nxt, 4)))
-        cur = nxt
-
-    windows: list[dict[str, Any]] = []
-    for idx, (ws, we) in enumerate(bounds):
-        wdur = max(0.1, we - ws)
-        res = run_ffmpeg(
-            [
-                "ffmpeg",
-                "-hide_banner",
-                "-nostats",
-                "-ss",
-                f"{ws:.4f}",
-                "-t",
-                f"{wdur:.4f}",
-                "-i",
-                str(p),
-                "-af",
-                "astats=reset=0,loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json",
-                "-f",
-                "null",
-                "-",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        stderr = res.stderr or ""
-        rms_matches = re.findall(r"RMS level dB:\s*([-\d.]+)", stderr)
-        rms_db: float | None = None
-        for cand in reversed(rms_matches):
-            try:
-                val = float(cand)
-                if math.isfinite(val) and val > -90.0:
-                    rms_db = round(val, 2)
-                    break
-            except ValueError:
-                pass
-
-        lufs_val: float | None = None
-        m_ln = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", stderr, re.DOTALL)
-        if m_ln:
-            try:
-                ln_data = json.loads(m_ln.group(0))
-                li = float(ln_data["input_i"])
-                if math.isfinite(li) and li > -70.0:
-                    lufs_val = round(li, 2)
-            except (ValueError, KeyError, TypeError, json.JSONDecodeError):
-                pass
-
-        level_db = lufs_val if lufs_val is not None else rms_db
-        if rms_db is not None and lufs_val is None:
-            lufs_val = rms_db
-        if level_db is not None:
-            windows.append(
+    if not chunks:
+        if p.is_file():
+            chunk_entries.append(
                 {
-                    "index": idx,
-                    "start_s": round(ws, 2),
-                    "end_s": round(we, 2),
-                    "rms_db": rms_db if rms_db is not None else level_db,
-                    "lufs": lufs_val if lufs_val is not None else level_db,
-                    "level_db": rms_db if rms_db is not None else level_db,
+                    "index": 0,
+                    "text_preview": "",
+                    "start_s": 0.0,
+                    "end_s": round(float(final_dur or 0.0), 2),
+                    "integrated_lufs": final_lufs,
+                }
+            )
+    else:
+        cursor_s = 0.0
+        n_chunks = len(chunks)
+        for idx, raw_ch in enumerate(chunks):
+            if isinstance(raw_ch, (str, Path)):
+                ch_path = Path(raw_ch)
+                c_idx = idx
+                preview = ch_path.name
+                probed_c_dur = probe_audio_duration(ch_path) if ch_path.is_file() else None
+                c_dur = float(probed_c_dur or 0.0)
+                start_s = round(cursor_s, 2)
+                end_s = round(cursor_s + c_dur, 2)
+                c_stats = (
+                    measure_audio_loudness_lufs(ch_path, target_lufs=target_lufs)
+                    if (probed_c_dur is not None and probed_c_dur > 0)
+                    else None
+                )
+                c_lufs = c_stats["input_i"] if c_stats is not None else None
+            elif isinstance(raw_ch, dict):
+                c_idx = int(raw_ch.get("index", raw_ch.get("chunk_index", idx)))
+                preview = _preview_chunk_text(raw_ch.get("text_preview") or raw_ch.get("text") or "")
+                ch_audio = raw_ch.get("audio_path")
+                ch_path = Path(ch_audio) if ch_audio else None
+                probed_c_dur = probe_audio_duration(ch_path) if (ch_path is not None and ch_path.is_file()) else None
+                c_dur = float(
+                    raw_ch.get("total_duration_s")
+                    or raw_ch.get("duration_s")
+                    or probed_c_dur
+                    or 0.0
+                )
+                start_s = (
+                    round(float(raw_ch["start_s"]), 2)
+                    if raw_ch.get("start_s") is not None
+                    else round(cursor_s, 2)
+                )
+                end_s = (
+                    round(float(raw_ch["end_s"]), 2)
+                    if raw_ch.get("end_s") is not None
+                    else round(start_s + c_dur, 2)
+                )
+                raw_lufs = raw_ch.get("integrated_lufs")
+                if isinstance(raw_lufs, (int, float)) and math.isfinite(float(raw_lufs)):
+                    c_lufs = round(float(raw_lufs), 2)
+                elif ch_path is not None and probed_c_dur is not None and probed_c_dur > 0:
+                    if n_chunks == 1 and final_lufs is not None and p.is_file() and ch_path.resolve() == p.resolve():
+                        c_lufs = final_lufs
+                    else:
+                        c_stats = measure_audio_loudness_lufs(ch_path, target_lufs=target_lufs)
+                        c_lufs = c_stats["input_i"] if c_stats is not None else None
+                else:
+                    c_lufs = None
+            else:
+                continue
+
+            cursor_s = end_s + (gap if idx < n_chunks - 1 else 0.0)
+            chunk_entries.append(
+                {
+                    "index": c_idx,
+                    "text_preview": preview,
+                    "start_s": start_s,
+                    "end_s": end_s,
+                    "integrated_lufs": c_lufs,
                 }
             )
 
-    if len(windows) >= 2:
-        first_db = float(windows[0]["rms_db"])
-        last_db = float(windows[-1]["rms_db"])
-        drop_db = round(first_db - last_db, 2)
-        levels = [float(w["rms_db"]) for w in windows]
-        max_drop_db = round(max(drop_db, max(levels) - min(levels)), 2)
-    elif len(windows) == 1:
-        first_db = float(windows[0]["rms_db"])
-        last_db = first_db
-        drop_db = 0.0
-        max_drop_db = 0.0
-    else:
-        first_db = None
-        last_db = None
-        drop_db = 0.0
-        max_drop_db = 0.0
+    measured_vals = [
+        float(c["integrated_lufs"])
+        for c in chunk_entries
+        if isinstance(c.get("integrated_lufs"), (int, float)) and math.isfinite(float(c["integrated_lufs"]))
+    ]
+    if final_lufs is None and len(measured_vals) == 1:
+        final_lufs = round(measured_vals[0], 2)
 
-    decay_detected = bool(drop_db > float(decay_warn_db))
-    warn_msg = (
-        f"voiceover loudness decayed by {drop_db:.2f} dB from first window ({first_db:.2f} dB) "
-        f"to last window ({last_db:.2f} dB), exceeding {float(decay_warn_db):.1f} dB threshold"
-        if decay_detected and first_db is not None and last_db is not None
-        else None
+    mean_chunk_lufs: float | None = (
+        round(sum(measured_vals) / len(measured_vals), 2) if measured_vals else final_lufs
     )
-    report = {
-        "window_s": round(eff_win, 2),
-        "windows": windows,
-        "first_window_db": first_db,
-        "last_window_db": last_db,
-        "first_to_last_drop_db": drop_db,
-        "max_drop_db": max_drop_db,
-        "decay_detected": decay_detected,
-        "warning": warn_msg,
+    tol = round(float(tolerance_lu), 2)
+    deviations: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    max_dev = 0.0
+
+    if mean_chunk_lufs is not None and measured_vals:
+        candidates: list[tuple[dict[str, Any], float, float]] = []
+        for c in chunk_entries:
+            c_lufs = c.get("integrated_lufs")
+            if not isinstance(c_lufs, (int, float)) or not math.isfinite(float(c_lufs)):
+                continue
+            delta = round(float(c_lufs) - mean_chunk_lufs, 2)
+            abs_delta = round(abs(float(c_lufs) - mean_chunk_lufs), 2)
+            if abs_delta > max_dev:
+                max_dev = abs_delta
+            if abs_delta > float(tolerance_lu):
+                candidates.append((c, delta, abs_delta))
+
+        if len(measured_vals) >= 3 and len(candidates) > 1:
+            worst_c, worst_delta, worst_abs = max(candidates, key=lambda item: item[2])
+            rest_vals = [
+                float(c["integrated_lufs"])
+                for c in chunk_entries
+                if c is not worst_c
+                and isinstance(c.get("integrated_lufs"), (int, float))
+                and math.isfinite(float(c["integrated_lufs"]))
+            ]
+            if rest_vals:
+                rest_mean = sum(rest_vals) / len(rest_vals)
+                if all(abs(v - rest_mean) <= float(tolerance_lu) for v in rest_vals):
+                    candidates = [(worst_c, worst_delta, worst_abs)]
+
+        for c, delta, abs_delta in candidates:
+            c_lufs = float(c["integrated_lufs"])
+            c_idx = int(c["index"])
+            preview = str(c.get("text_preview") or "")
+            deviations.append(
+                {
+                    "index": c_idx,
+                    "chunk_index": c_idx,
+                    "text_preview": preview,
+                    "start_s": c["start_s"],
+                    "end_s": c["end_s"],
+                    "integrated_lufs": round(c_lufs, 2),
+                    "mean_chunk_lufs": mean_chunk_lufs,
+                    "delta_lu": delta,
+                    "abs_delta_lu": abs_delta,
+                    "tolerance_lu": tol,
+                }
+            )
+            sign = "+" if delta >= 0 else ""
+            preview_str = f" ({preview!r})" if preview else ""
+            warnings.append(
+                f"voiceover loudness inconsistency: chunk {c_idx}{preview_str} is "
+                f"{c_lufs:.1f} LUFS ({sign}{delta:.1f} LU vs mean "
+                f"{mean_chunk_lufs:.1f} LUFS, exceeds ±{float(tolerance_lu):.1f} LU tolerance)"
+            )
+
+    report: dict[str, Any] = {
+        "target_lufs": round(float(target_lufs), 2),
+        "chunks": chunk_entries,
+        "final_lufs": final_lufs,
+        "mean_chunk_lufs": mean_chunk_lufs,
+        "max_deviation_lu": round(max_dev, 2),
+        "tolerance_lu": tol,
+        "deviations": deviations,
+        "warnings": warnings,
     }
     if out_json_path is not None:
         out_p = Path(out_json_path)
@@ -2215,6 +2261,13 @@ def process_voiceover_audio(
         loudnorm_info: dict[str, Any] = {"normalized": False, "target_lufs": float(vo_lufs)}
         if vo_normalize and probed_dur is not None and probed_dur > 0:
             loudnorm_info = normalize_audio_loudness(out_p, out_p, target_lufs=vo_lufs)
+        post_lufs_stats = (
+            measure_audio_loudness_lufs(out_p, target_lufs=vo_lufs)
+            if (probed_dur is not None and probed_dur > 0)
+            else None
+        )
+        integrated_lufs = post_lufs_stats["input_i"] if post_lufs_stats is not None else None
+        loudnorm_info["output_lufs"] = integrated_lufs
 
     final_probed = probe_audio_duration(out_p)
     final_dur = float(final_probed) if (final_probed is not None and final_probed > 0) else round(expected_dur, 4)
@@ -2231,6 +2284,7 @@ def process_voiceover_audio(
         "padding_s": cut_info["padding_s"],
         "speed": spd,
         "loudnorm": loudnorm_info,
+        "integrated_lufs": integrated_lufs,
     }
 
 
@@ -2550,6 +2604,7 @@ def resolve_or_generate_voiceover(
     vo_chunk_seconds: float = 60.0,
     vo_gap: float = 0.25,
     vo_lufs: float = -16.0,
+    vo_lufs_tolerance: float = 1.5,
     vo_normalize: bool = True,
     vo_verify: bool = True,
     vo_retries: int = 2,
@@ -2564,7 +2619,7 @@ def resolve_or_generate_voiceover(
     Implements per-chunk raw (`<project>/cache/vo/chunks/<sha256>.raw.{mp3,json}`) and
     processed (`<sha256>.proc.{mp3,json}`) caches, script-vs-audio verification with
     per-chunk regeneration retries (`--vo-retries`), trim-margin escalation on trim-induced
-    mismatches, and 10s-window loudness decay reporting.
+    mismatches, and per-chunk loudness consistency reporting.
     """
     project_dir.mkdir(parents=True, exist_ok=True)
     loudness_json_path = project_dir / "voiceover.loudness.json"
@@ -2671,7 +2726,23 @@ def resolve_or_generate_voiceover(
                 "final": final_verify,
             }
             verify_json_path.write_text(json.dumps(verify_report, indent=2), encoding="utf-8")
-            loudness_report = analyze_voiceover_loudness(dst_audio, out_json_path=loudness_json_path)
+            loudness_report = analyze_voiceover_loudness(
+                dst_audio,
+                chunks=[
+                    {
+                        "index": 0,
+                        "text": clean_script,
+                        "start_s": 0.0,
+                        "end_s": proc["total_duration_s"],
+                        "audio_path": str(dst_audio),
+                        "integrated_lufs": proc.get("integrated_lufs"),
+                    }
+                ],
+                target_lufs=vo_lufs,
+                tolerance_lu=vo_lufs_tolerance,
+                vo_gap=vo_gap,
+                out_json_path=loudness_json_path,
+            )
             if strict_vo and residual_mismatches:
                 raise CutError(
                     f"Voiceover verification failed (--strict-vo): {_format_residual_mismatch_summary(residual_mismatches)}",
@@ -2717,7 +2788,22 @@ def resolve_or_generate_voiceover(
                 "final": final_verify,
             }
             verify_json_path.write_text(json.dumps(verify_report, indent=2), encoding="utf-8")
-            loudness_report = analyze_voiceover_loudness(dst_audio, out_json_path=loudness_json_path)
+            loudness_report = analyze_voiceover_loudness(
+                dst_audio,
+                chunks=[
+                    {
+                        "index": 0,
+                        "text": clean_script,
+                        "start_s": 0.0,
+                        "end_s": float(dur),
+                        "audio_path": str(dst_audio),
+                    }
+                ],
+                target_lufs=vo_lufs,
+                tolerance_lu=vo_lufs_tolerance,
+                vo_gap=vo_gap,
+                out_json_path=loudness_json_path,
+            )
             if strict_vo and residual_mismatches:
                 raise CutError(
                     f"Voiceover verification failed (--strict-vo): {_format_residual_mismatch_summary(residual_mismatches)}",
@@ -2781,7 +2867,54 @@ def resolve_or_generate_voiceover(
         dur = cached_payload.get("total_duration_s") if isinstance(cached_payload, dict) else None
         if not dur:
             dur = probe_audio_duration(dst_audio) or max((float(w.get("end", 0.0)) for w in cached_words), default=1.0)
-        loudness_report = analyze_voiceover_loudness(dst_audio, out_json_path=loudness_json_path)
+        cached_proc_chunks: list[dict[str, Any]] = []
+        for chunk_idx, chunk_text in enumerate(chunks):
+            _, c_proc_key = compute_chunk_cache_keys(
+                chunk_text=chunk_text,
+                voice=voice,
+                voice_model=voice_model,
+                style=style,
+                speed=speed,
+                max_sentence_silence=max_sentence_silence,
+                vo_lufs=vo_lufs,
+                vo_normalize=vo_normalize,
+            )
+            c_proc_mp3 = chunks_cache_dir / f"{c_proc_key}.proc.mp3"
+            c_proc_json = chunks_cache_dir / f"{c_proc_key}.proc.json"
+            cp_dur: float | None = None
+            cp_lufs: float | None = None
+            if c_proc_json.is_file():
+                cp_data = json.loads(c_proc_json.read_text(encoding="utf-8"))
+                if isinstance(cp_data, dict):
+                    cp_dur = cp_data.get("total_duration_s")
+                    cp_lufs = cp_data.get("integrated_lufs")
+            if cp_dur is None and c_proc_mp3.is_file():
+                cp_dur = probe_audio_duration(c_proc_mp3)
+            cached_proc_chunks.append(
+                {
+                    "chunk_index": chunk_idx,
+                    "text": chunk_text,
+                    "audio_path": (
+                        str(c_proc_mp3)
+                        if c_proc_mp3.is_file()
+                        else (str(dst_audio) if len(chunks) == 1 else None)
+                    ),
+                    "total_duration_s": (
+                        float(cp_dur)
+                        if cp_dur is not None
+                        else (float(dur) if len(chunks) == 1 else 0.0)
+                    ),
+                    "integrated_lufs": cp_lufs,
+                }
+            )
+        loudness_report = analyze_voiceover_loudness(
+            dst_audio,
+            chunks=cached_proc_chunks,
+            target_lufs=vo_lufs,
+            tolerance_lu=vo_lufs_tolerance,
+            vo_gap=vo_gap,
+            out_json_path=loudness_json_path,
+        )
         verify_report = (
             json.loads(verify_json_path.read_text(encoding="utf-8"))
             if verify_json_path.is_file()
@@ -2856,6 +2989,7 @@ def resolve_or_generate_voiceover(
                 or probe_audio_duration(c_proc_mp3)
                 or max((float(w.get("end", 0.0)) for w in cp_words), default=1.0)
             )
+            cp_lufs = cp_data.get("integrated_lufs") if isinstance(cp_data, dict) else None
             if chunk_idx == 0 and c_raw_mp3.is_file():
                 shutil.copy2(c_raw_mp3, dst_raw_audio)
             proc_chunks.append(
@@ -2864,6 +2998,8 @@ def resolve_or_generate_voiceover(
                     "words": cp_words,
                     "total_duration_s": round(cp_dur, 4),
                     "chunk_index": chunk_idx,
+                    "text": chunk_text,
+                    "integrated_lufs": cp_lufs,
                     "raw_key": c_raw_key,
                     "proc_key": c_proc_key,
                 }
@@ -3030,7 +3166,14 @@ def resolve_or_generate_voiceover(
             chunk_verify_reports.append({"chunk_index": chunk_idx, "retries": 0, **raw_verify})
 
         c_proc_json.write_text(
-            json.dumps({"words": proc_c["words"], "total_duration_s": proc_c["total_duration_s"]}, indent=2),
+            json.dumps(
+                {
+                    "words": proc_c["words"],
+                    "total_duration_s": proc_c["total_duration_s"],
+                    "integrated_lufs": proc_c.get("integrated_lufs"),
+                },
+                indent=2,
+            ),
             encoding="utf-8",
         )
         proc_chunks.append(
@@ -3039,6 +3182,8 @@ def resolve_or_generate_voiceover(
                 "words": proc_c["words"],
                 "total_duration_s": proc_c["total_duration_s"],
                 "chunk_index": chunk_idx,
+                "text": chunk_text,
+                "integrated_lufs": proc_c.get("integrated_lufs"),
                 "raw_key": c_raw_key,
                 "proc_key": c_proc_key,
             }
@@ -3090,7 +3235,14 @@ def resolve_or_generate_voiceover(
         "final": final_verify,
     }
     verify_json_path.write_text(json.dumps(verify_report, indent=2), encoding="utf-8")
-    loudness_report = analyze_voiceover_loudness(dst_audio, out_json_path=loudness_json_path)
+    loudness_report = analyze_voiceover_loudness(
+        dst_audio,
+        chunks=proc_chunks,
+        target_lufs=vo_lufs,
+        tolerance_lu=vo_lufs_tolerance,
+        vo_gap=vo_gap,
+        out_json_path=loudness_json_path,
+    )
 
     if strict_vo and residual_mismatches:
         raise CutError(
@@ -3621,6 +3773,7 @@ def run_cut(
     vo_chunk_seconds: float = 60.0,
     vo_gap: float = 0.25,
     vo_lufs: float = -16.0,
+    vo_lufs_tolerance: float = 1.5,
     vo_normalize: bool = True,
     vo_verify: bool = True,
     vo_retries: int = 2,
@@ -3775,6 +3928,7 @@ def run_cut(
                 vo_chunk_seconds=vo_chunk_seconds,
                 vo_gap=vo_gap,
                 vo_lufs=vo_lufs,
+                vo_lufs_tolerance=vo_lufs_tolerance,
                 vo_normalize=vo_normalize,
                 vo_verify=vo_verify,
                 vo_retries=vo_retries,
@@ -3796,6 +3950,7 @@ def run_cut(
                 vo_chunk_seconds=vo_chunk_seconds,
                 vo_gap=vo_gap,
                 vo_lufs=vo_lufs,
+                vo_lufs_tolerance=vo_lufs_tolerance,
                 vo_normalize=vo_normalize,
                 vo_verify=vo_verify,
                 vo_retries=vo_retries,
@@ -3836,6 +3991,7 @@ def run_cut(
             vo_chunk_seconds=vo_chunk_seconds,
             vo_gap=vo_gap,
             vo_lufs=vo_lufs,
+            vo_lufs_tolerance=vo_lufs_tolerance,
             vo_normalize=vo_normalize,
             vo_verify=vo_verify,
             vo_retries=vo_retries,
@@ -3861,8 +4017,9 @@ def run_cut(
     )
     all_warnings = list(mapping.get("inference_log") or []) + list(plan["warnings"])
     loudness_info = vo_info.get("loudness")
-    if isinstance(loudness_info, dict) and loudness_info.get("warning"):
-        all_warnings.append(str(loudness_info["warning"]))
+    if isinstance(loudness_info, dict):
+        for lw in loudness_info.get("warnings") or []:
+            all_warnings.append(str(lw))
     verify_info = vo_info.get("verification")
     if isinstance(verify_info, dict):
         residuals = verify_info.get("residual_mismatches") or []
