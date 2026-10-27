@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -36,6 +37,9 @@ from .captions import burn_captions
 from .captions.chunker import _fixed_chunk_words, _smart_chunk_words
 from .editor_export import _build_srt, export_editor_package
 from .ffmpeg_utils import (
+    ENCODE_PRESETS,
+    drive_safe_encode_args,
+    even_dimensions,
     parse_resolution,
     probe_audio_duration,
     probe_duration,
@@ -47,10 +51,23 @@ from .models import TTS_MODELS
 from .preflight import print_estimate
 from .settings import _ASPECT_TO_RESOLUTION
 from .shim import is_test_mode
+from .voiceover import (
+    ElevenLabsVoiceProvider,
+    OpenRouterVoiceProvider,
+    VoiceProvider,
+    VoiceSynthesisResult,
+    coerce_synthesis_result,
+    expand_numbers_and_symbols,
+    get_voice_provider,
+    int_to_words,
+    normalize_text_for_verify,
+    ordinal_to_words,
+)
 
 log = get_logger(__name__)
 
-VO_PROCESS_VERSION = "cut-vo-v1"
+VO_PROCESS_VERSION = "cut-vo-v2"
+VO_CHUNK_BASE_WPM = 150.0
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".mkv", ".m4v", ".avi"}
 
 _NUMBER_WORDS: dict[str, str] = {
@@ -264,6 +281,110 @@ def split_script_paragraphs(text: str) -> list[str]:
     return lines
 
 
+def strip_script_brackets(text: str) -> str:
+    """Strip inline `[...]` markers/brackets from script text while preserving paragraph breaks."""
+    no_brackets = re.sub(r"\[[^\]]*\]", " ", text)
+    paras = [
+        " ".join(p.split())
+        for p in re.split(r"\n\s*\n", no_brackets.strip())
+        if p.strip()
+    ]
+    return "\n\n".join(paras)
+
+
+def estimate_speech_seconds(
+    text: str,
+    *,
+    speed: float = 1.15,
+    base_wpm: float = VO_CHUNK_BASE_WPM,
+) -> float:
+    """Estimate spoken duration in seconds for `text` using `VO_CHUNK_BASE_WPM * speed`."""
+    words_count = len(tokenize_script(text))
+    if words_count == 0:
+        return 0.0
+    effective_wpm = max(30.0, float(base_wpm) * max(0.5, float(speed)))
+    return (words_count * 60.0) / effective_wpm
+
+
+def chunk_script(
+    script_text: str,
+    *,
+    max_chunk_seconds: float = 60.0,
+    speed: float = 1.15,
+    base_wpm: float = VO_CHUNK_BASE_WPM,
+) -> list[str]:
+    """Split spoken script into chunks with a soft cap of `max_chunk_seconds` of speech.
+
+    Rules:
+      - `max_chunk_seconds <= 0` returns a single chunk (`[clean_script]`).
+      - Starts a new chunk ONLY at a paragraph start or sentence start (NEVER mid-sentence).
+      - Prefers paragraph boundaries when within the cap: packs whole paragraphs together
+        while `estimate_speech_seconds(chunk + para) <= max_chunk_seconds`, flushing at the
+        paragraph boundary before starting the next paragraph.
+      - When a single paragraph exceeds `max_chunk_seconds`, splits that paragraph at
+        sentence boundaries.
+      - A single sentence longer than `max_chunk_seconds` stays whole in its own chunk.
+    """
+    cleaned = strip_script_brackets(script_text)
+    if not cleaned.strip():
+        return []
+    if max_chunk_seconds is None or float(max_chunk_seconds) <= 0:
+        return [" ".join(cleaned.split())]
+
+    cap = float(max_chunk_seconds)
+    paragraphs = split_script_paragraphs(cleaned)
+    chunks: list[str] = []
+    cur_paras: list[str] = []
+
+    for para in paragraphs:
+        para_clean = " ".join(para.split())
+        if not para_clean:
+            continue
+        cand_text = "\n\n".join(cur_paras + [para_clean])
+        if estimate_speech_seconds(cand_text, speed=speed, base_wpm=base_wpm) <= cap:
+            cur_paras.append(para_clean)
+            continue
+
+        # Adding `para_clean` as a whole would exceed `cap` -> flush at paragraph boundary first
+        if cur_paras:
+            chunks.append("\n\n".join(cur_paras))
+            cur_paras = []
+
+        if estimate_speech_seconds(para_clean, speed=speed, base_wpm=base_wpm) <= cap:
+            cur_paras = [para_clean]
+            continue
+
+        # Single paragraph exceeds `cap` -> split at sentence boundaries (never mid-sentence)
+        sents = split_script_sentences(para_clean)
+        cur_sents: list[str] = []
+        for sent in sents:
+            sent_clean = " ".join(sent.split())
+            if not sent_clean:
+                continue
+            if not cur_sents:
+                cur_sents = [sent_clean]
+            else:
+                cand_sent = " ".join(cur_sents + [sent_clean])
+                if estimate_speech_seconds(cand_sent, speed=speed, base_wpm=base_wpm) <= cap:
+                    cur_sents.append(sent_clean)
+                else:
+                    chunks.append(" ".join(cur_sents))
+                    cur_sents = [sent_clean]
+
+            # A single sentence longer than `cap` stays whole in its own chunk
+            if len(cur_sents) == 1 and estimate_speech_seconds(cur_sents[0], speed=speed, base_wpm=base_wpm) > cap:
+                chunks.append(cur_sents[0])
+                cur_sents = []
+
+        if cur_sents:
+            chunks.append(" ".join(cur_sents))
+
+    if cur_paras:
+        chunks.append("\n\n".join(cur_paras))
+
+    return chunks
+
+
 def suggested_anchor_for_text(text: str, max_words: int = 4) -> str:
     """Return the opening 1..max_words tokens of a sentence or paragraph."""
     toks = tokenize_script(text)
@@ -374,29 +495,62 @@ def _expand_asr_norm_words(asr_words: list[dict[str, Any]]) -> list[str]:
 
 
 def _coalesce_number_words_for_matching(
+    script_tokens: list[str],
     script_norm: list[str],
+    asr_words: list[dict[str, Any]],
     asr_norm: list[str],
-) -> list[str]:
-    """Map ASR number words ('forty', 'five' -> '45') when matching against numeric script tokens."""
-    script_nums = {tok for tok in script_norm if tok.isdigit()}
-    if not script_nums:
-        return asr_norm
+) -> tuple[list[str], dict[int, int]]:
+    """Coalesce multi-word spoken numbers/symbols in ASR ('ninety', 'seven', 'percent' -> '97')
+    to match numeric/symbol script tokens ('97%', '$5', '1,000', '45', '21st').
+
+    Returns `(coalesced_asr_norm, span_end_by_asr_idx)` where `span_end_by_asr_idx[j]`
+    records the inclusive last ASR word index `j_end` of a coalesced multi-word phrase starting at `j`.
+    """
+    # Build mapping from expanded spoken tuple -> canonical script_norm token
+    phrase_to_sn: dict[tuple[str, ...], str] = {}
+    for raw_tok, sn_tok in zip(script_tokens, script_norm):
+        if any(ch.isdigit() for ch in raw_tok) or "%" in raw_tok or "$" in raw_tok:
+            exp = tuple(normalize_text_for_verify(raw_tok))
+            if exp:
+                phrase_to_sn[exp] = sn_tok
+            # Also register without trailing unit ("percent"/"dollars") in case script has "97%" and ASR has "percent" as next token
+            if len(exp) >= 2 and exp[-1] in ("percent", "dollar", "dollars"):
+                phrase_to_sn[exp[:-1]] = sn_tok
+
+    if not phrase_to_sn:
+        return list(asr_norm), {}
+
+    # Expand each ASR word into its normalized word tuple (e.g. "ninety-seven" -> ("ninety", "seven"))
+    asr_expanded: list[list[str]] = [
+        normalize_text_for_verify(str(w.get("word", ""))) or [norm_token(str(w.get("word", "")))]
+        for w in asr_words
+    ]
+
     out = list(asr_norm)
+    span_end_by_idx: dict[int, int] = {}
     n = len(out)
     i = 0
+    max_span = min(6, n)
     while i < n:
-        w1 = _NUMBER_WORDS.get(out[i])
-        if w1 is not None:
-            if i + 1 < n and _NUMBER_WORDS.get(out[i + 1]) is not None:
-                v1, v2 = int(w1), int(_NUMBER_WORDS[out[i + 1]])
-                if 20 <= v1 <= 90 and 1 <= v2 <= 9 and str(v1 + v2) in script_nums:
-                    out[i] = str(v1 + v2)
-                    i += 2
-                    continue
-            if w1 in script_nums:
-                out[i] = w1
-        i += 1
-    return out
+        matched_len = 0
+        matched_sn: str | None = None
+        for span_len in range(min(max_span, n - i), 0, -1):
+            flat: list[str] = []
+            for k in range(i, i + span_len):
+                flat.extend(asr_expanded[k])
+            cand = tuple(flat)
+            if cand in phrase_to_sn:
+                matched_len = span_len
+                matched_sn = phrase_to_sn[cand]
+                break
+        if matched_sn is not None and matched_len > 0:
+            out[i] = matched_sn
+            if matched_len > 1:
+                span_end_by_idx[i] = i + matched_len - 1
+            i += matched_len
+        else:
+            i += 1
+    return out, span_end_by_idx
 
 
 def align_script_words(
@@ -448,7 +602,7 @@ def align_script_words(
 
     sn = [norm_token(t) for t in tokens]
     wn_raw = _expand_asr_norm_words(asr_words)
-    wn = _coalesce_number_words_for_matching(sn, wn_raw)
+    wn, span_end_by_idx = _coalesce_number_words_for_matching(tokens, sn, asr_words, wn_raw)
 
     sm = difflib.SequenceMatcher(None, sn, wn, autojunk=False)
     amap: list[int | None] = [None] * n
@@ -465,17 +619,8 @@ def align_script_words(
                 amap[si] = wi
                 w_start = float(asr_words[wi]["start"])
                 w_end = float(asr_words[wi]["end"])
-                # If a coalesced 2-word number ("forty", "five") matched "45", include the second word's end
-                if (
-                    sn[si].isdigit()
-                    and wn_raw[wi] != sn[si]
-                    and wi + 1 < len(asr_words)
-                    and (wi + 1 < j2 or (si + 1 < n and amap[si + 1] != wi + 1))
-                ):
-                    w1_num = _NUMBER_WORDS.get(wn_raw[wi])
-                    w2_num = _NUMBER_WORDS.get(wn_raw[wi + 1])
-                    if w1_num and w2_num and str(int(w1_num) + int(w2_num)) == sn[si]:
-                        w_end = float(asr_words[wi + 1]["end"])
+                if wi in span_end_by_idx and span_end_by_idx[wi] < len(asr_words):
+                    w_end = max(w_end, float(asr_words[span_end_by_idx[wi]]["end"]))
                 timed[si] = {
                     "word": tokens[si],
                     "start": round(w_start, 4),
