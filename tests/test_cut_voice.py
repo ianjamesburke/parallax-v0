@@ -1,0 +1,225 @@
+"""Synthetic unit and ffmpeg tests for `parallax cut` voiceover processing."""
+
+from __future__ import annotations
+
+import math
+import struct
+import subprocess
+import wave
+from pathlib import Path
+
+from parallax.cut import (
+    PAUSE_TRIM_ESCALATION_LEVELS,
+    align_script_words,
+    chunk_script,
+    compute_energy_pause_cuts,
+    compute_naive_alignment_cuts,
+    detect_energy_silences,
+    flag_long_aligned_tokens,
+    process_voiceover_audio,
+)
+from parallax.voiceover import expand_numbers_and_symbols, normalize_text_for_verify
+
+
+def _make_burst_silence_burst_wav(
+    path: Path,
+    *,
+    b1_dur: float = 0.60,
+    sil_dur: float = 1.00,
+    b2_dur: float = 0.70,
+    sr: int = 16000,
+) -> Path:
+    """Synthesize `[sine burst 1][silence][sine burst 2]` via ffmpeg."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fc = (
+        f"sine=frequency=440:sample_rate={sr}:duration={b1_dur},volume=0.8[b1];"
+        f"anullsrc=r={sr}:cl=mono:d={sil_dur}[sil];"
+        f"sine=frequency=660:sample_rate={sr}:duration={b2_dur},volume=0.8[b2];"
+        f"[b1][sil][b2]concat=n=3:v=0:a=1[out]"
+    )
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-filter_complex",
+            fc,
+            "-map",
+            "[out]",
+            "-c:a",
+            "pcm_s16le",
+            str(path),
+        ],
+        check=True,
+    )
+    return path
+
+
+def _wav_rms(wav_path: Path, start_s: float, end_s: float) -> float:
+    """Compute normalized RMS (0..1) of a 16-bit mono WAV slice `[start_s, end_s]`."""
+    with wave.open(str(wav_path), "rb") as wf:
+        sr = wf.getframerate()
+        n_frames = wf.getnframes()
+        s_idx = max(0, min(n_frames, int(round(start_s * sr))))
+        e_idx = max(s_idx, min(n_frames, int(round(end_s * sr))))
+        if e_idx <= s_idx:
+            return 0.0
+        wf.setpos(s_idx)
+        raw = wf.readframes(e_idx - s_idx)
+    samples = struct.unpack(f"<{len(raw) // 2}h", raw)
+    if not samples:
+        return 0.0
+    mean_sq = sum((s / 32768.0) ** 2 for s in samples) / len(samples)
+    return math.sqrt(mean_sq)
+
+
+def test_expand_numbers_and_align_script_words_keeps_script_numerals() -> None:
+    assert expand_numbers_and_symbols("up to 97% of tooth enamel") == "up to ninety seven percent of tooth enamel"
+    assert expand_numbers_and_symbols("It costs $5 or $1,000 in 45 AD.") == (
+        "It costs five dollars or one thousand dollars in forty five AD."
+    )
+    assert normalize_text_for_verify("97% — ninety-seven per cent!") == [
+        "ninety",
+        "seven",
+        "percent",
+        "ninety",
+        "seven",
+        "percent",
+    ]
+
+    script = "Up to 97% of human tooth enamel costs $5 in 45 AD."
+    asr_words = [
+        {"word": "up", "start": 0.0, "end": 0.15},
+        {"word": "to", "start": 0.15, "end": 0.30},
+        {"word": "ninety", "start": 0.40, "end": 0.65},
+        {"word": "seven", "start": 0.65, "end": 0.90},
+        {"word": "percent", "start": 0.90, "end": 1.20},
+        {"word": "of", "start": 1.25, "end": 1.35},
+        {"word": "human", "start": 1.35, "end": 1.65},
+        {"word": "tooth", "start": 1.65, "end": 1.95},
+        {"word": "enamel", "start": 1.95, "end": 2.30},
+        {"word": "costs", "start": 2.35, "end": 2.65},
+        {"word": "five", "start": 2.70, "end": 2.95},
+        {"word": "dollars", "start": 2.95, "end": 3.30},
+        {"word": "in", "start": 3.35, "end": 3.45},
+        {"word": "forty", "start": 3.50, "end": 3.75},
+        {"word": "five", "start": 3.75, "end": 4.00},
+        {"word": "ad", "start": 4.00, "end": 4.30},
+    ]
+    aligned = align_script_words(script, asr_words, audio_duration=4.40)
+    assert aligned["unmatched_tokens"] == []
+    by_word = {w["word"]: w for w in aligned["words"]}
+    # Script/caption token stays "97%" and spans "ninety".."percent" (0.40..1.20)
+    assert "97%" in by_word
+    assert by_word["97%"]["start"] == 0.40
+    assert by_word["97%"]["end"] == 1.20
+    assert by_word["$5"]["start"] == 2.70
+    assert by_word["$5"]["end"] == 3.30
+
+
+def test_compute_energy_pause_cuts_midpoint_padding_escalation_and_long_token() -> None:
+    # Gap without energy silence must NEVER be cut
+    words_short = [
+        {"word": "hello", "start": 0.0, "end": 0.40},
+        {"word": "world", "start": 1.40, "end": 1.80},
+    ]
+    res_no_sil = compute_energy_pause_cuts(words_short, [], max_sentence_silence=0.25, min_padding_s=0.15)
+    assert res_no_sil["cuts"] == []
+
+    # Real silence [0.50, 1.30] inside alignment gap [0.40, 1.40]:
+    # midpoint of real silence is 0.90; with padding 0.15 each side -> cut is [0.65, 1.15]
+    silences = [{"start": 0.50, "end": 1.30, "duration": 0.80}]
+    res_015 = compute_energy_pause_cuts(words_short, silences, max_sentence_silence=0.20, min_padding_s=0.15)
+    assert res_015["cuts"] == [(0.65, 1.15)]
+    c0, c1 = res_015["cuts"][0]
+    assert round((c0 + c1) / 2.0, 4) == 0.90  # exact middle of energy silence [0.50, 1.30]
+    assert round(c0 - 0.50, 4) >= 0.15
+    assert round(1.30 - c1, 4) >= 0.15
+
+    # Escalation levels: 0.30 -> [0.80, 1.00]; 0.50 -> no cut (needs >1.0s silence); None/"off" -> no cut
+    res_030 = compute_energy_pause_cuts(words_short, silences, max_sentence_silence=0.20, min_padding_s=0.30)
+    assert res_030["cuts"] == [(0.80, 1.00)]
+    res_050 = compute_energy_pause_cuts(words_short, silences, max_sentence_silence=0.20, min_padding_s=0.50)
+    assert res_050["cuts"] == []
+    res_off = compute_energy_pause_cuts(words_short, silences, max_sentence_silence=0.20, min_padding_s=None)
+    assert res_off["cuts"] == []
+    assert PAUSE_TRIM_ESCALATION_LEVELS == (0.15, 0.30, 0.50, None)
+
+    # Long aligned token (>0.6s) widens margin x2 on adjacent gap (0.15 * 2 = 0.30 -> [0.80, 1.00])
+    words_long = [
+        {"word": "hello", "start": 0.0, "end": 0.40},
+        {"word": "97%", "start": 1.40, "end": 2.15},  # 0.75s (>0.6s)
+    ]
+    flagged = flag_long_aligned_tokens(words_long)
+    assert len(flagged) == 1 and flagged[0]["word"] == "97%"
+    res_long = compute_energy_pause_cuts(words_long, silences, max_sentence_silence=0.20, min_padding_s=0.15)
+    assert res_long["cuts"] == [(0.80, 1.00)]
+
+
+def test_energy_pause_trim_preserves_late_aligned_numeral_burst_onset(tmp_path: Path) -> None:
+    """Synthetic test: sine bursts + silence + fake words.json with '97%' aligned 0.2s late.
+
+     Burst 1: 0.00..0.60s
+     Silence: 0.60..1.60s (1.00s real silence)
+     Burst 2: 1.60..2.30s (real onset at 1.60s; aligned start in words.json is 1.80s, 0.20s late!)
+    """
+    raw_wav = _make_burst_silence_burst_wav(
+        tmp_path / "raw_bursts.wav",
+        b1_dur=0.60,
+        sil_dur=1.00,
+        b2_dur=0.70,
+    )
+    sils = detect_energy_silences(raw_wav)
+    assert len(sils) == 1
+    assert abs(sils[0]["start"] - 0.60) < 0.05
+    assert abs(sils[0]["end"] - 1.60) < 0.05
+
+    # Fake words.json: "97%" aligned 0.20s late at 1.80s (real burst 2 starts at 1.60s)
+    raw_words = [
+        {"word": "up", "start": 0.00, "end": 0.60},
+        {"word": "97%", "start": 1.80, "end": 2.25},  # 0.45s span, aligned 0.20s late
+    ]
+
+    out_wav = tmp_path / "trimmed_energy.wav"
+    proc = process_voiceover_audio(
+        raw_audio_path=raw_wav,
+        raw_words=raw_words,
+        out_audio_path=out_wav,
+        speed=1.0,
+        max_sentence_silence=0.10,
+        min_padding_s=0.15,
+    )
+    assert proc["cuts_count"] == 1
+    c0, c1 = proc["cuts"][0]
+    # Cut must end >= 0.15s BEFORE real burst onset at 1.60s (i.e. c1 <= 1.45s)
+    assert c1 <= 1.46
+    removed_s = c1 - c0
+    assert removed_s > 0.50
+
+    # Compare RMS in the first 150ms of Burst 2 in raw vs energy-trimmed output
+    raw_onset_rms = _wav_rms(raw_wav, 1.60, 1.75)
+    trimmed_burst2_start = 1.60 - removed_s
+    trimmed_onset_rms = _wav_rms(out_wav, trimmed_burst2_start, trimmed_burst2_start + 0.15)
+    assert raw_onset_rms > 0.05
+    assert trimmed_onset_rms >= raw_onset_rms * 0.95
+
+    # Verify a naive alignment cut (g0+half .. g1-half = 0.65 .. 1.75) WOULD cut through [1.60, 1.75]!
+    naive_cuts = compute_naive_alignment_cuts(raw_words, max_sentence_silence=0.10)
+    assert len(naive_cuts) == 1
+    nc0, nc1 = naive_cuts[0]
+    # Naive cut ends at 1.75s, which chops off the entire first 150ms [1.60, 1.75] of Burst 2!
+    assert nc1 >= 1.74
+    naive_clipped_onset_s = max(0.0, min(1.75, nc1) - max(1.60, nc0))
+    assert naive_clipped_onset_s >= 0.14
+
+
+def test_chunk_script_boundaries() -> None:
+    p1 = " ".join(["First paragraph sentence one is here."] * 4)
+    p2 = " ".join(["Second paragraph sentence two is here."] * 4)
+    script = f"[Scene_01] {p1}\n\n[Scene_02] {p2}"
+    assert len(chunk_script(script, max_chunk_seconds=0, speed=1.15)) == 1
+    chunks = chunk_script(script, max_chunk_seconds=12.0, speed=1.15)
+    assert len(chunks) == 2
+    assert "[Scene" not in chunks[0] and "[Scene" not in chunks[1]

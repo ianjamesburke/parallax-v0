@@ -1545,6 +1545,219 @@ def compute_vo_cache_keys(
     return raw_key, proc_key
 
 
+PAUSE_TRIM_NOISE_DB = -35.0
+PAUSE_TRIM_MIN_SILENCE_S = 0.12
+PAUSE_TRIM_DEFAULT_PADDING_S = 0.15
+PAUSE_TRIM_ESCALATION_LEVELS: tuple[float | None, ...] = (0.15, 0.30, 0.50, None)
+LONG_TOKEN_THRESHOLD_S = 0.60
+
+
+def detect_energy_silences(
+    audio_path: str | Path,
+    *,
+    noise_db: float = PAUSE_TRIM_NOISE_DB,
+    min_silence_s: float = PAUSE_TRIM_MIN_SILENCE_S,
+    total_duration_s: float | None = None,
+) -> list[dict[str, float]]:
+    """Detect real silence intervals by energy via ffmpeg `silencedetect` (`noise=-35dB:d=0.12`)."""
+    p = Path(audio_path)
+    if not p.is_file():
+        return []
+    res = run_ffmpeg(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-nostats",
+            "-i",
+            str(p),
+            "-af",
+            f"silencedetect=noise={float(noise_db)}dB:d={float(min_silence_s)}",
+            "-f",
+            "null",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if res.returncode != 0:
+        return []
+
+    silences: list[dict[str, float]] = []
+    cur_start: float | None = None
+    for line in (res.stderr or "").splitlines():
+        if "silence_start:" in line:
+            try:
+                cur_start = float(line.split("silence_start:")[1].strip().split()[0])
+            except (ValueError, IndexError):
+                cur_start = None
+        elif "silence_end:" in line and cur_start is not None:
+            try:
+                parts = line.split("silence_end:")[1].split("|")
+                end_t = float(parts[0].strip().split()[0])
+                dur_t = (
+                    float(parts[1].split(":")[1].strip().split()[0])
+                    if len(parts) > 1 and ":" in parts[1]
+                    else max(0.0, end_t - cur_start)
+                )
+                if dur_t >= float(min_silence_s) - 1e-3 and end_t > cur_start:
+                    silences.append(
+                        {
+                            "start": round(cur_start, 4),
+                            "end": round(end_t, 4),
+                            "duration": round(dur_t, 4),
+                        }
+                    )
+            except (ValueError, IndexError):
+                pass
+            cur_start = None
+
+    if cur_start is not None and total_duration_s is not None and float(total_duration_s) > cur_start:
+        dur_t = float(total_duration_s) - cur_start
+        if dur_t >= float(min_silence_s) - 1e-3:
+            silences.append(
+                {
+                    "start": round(cur_start, 4),
+                    "end": round(float(total_duration_s), 4),
+                    "duration": round(dur_t, 4),
+                }
+            )
+    return silences
+
+
+def flag_long_aligned_tokens(
+    raw_words: list[dict[str, Any]],
+    *,
+    threshold_s: float = LONG_TOKEN_THRESHOLD_S,
+) -> list[dict[str, Any]]:
+    """Return metadata for tokens whose aligned span exceeds `threshold_s` (default 0.6s)."""
+    flagged: list[dict[str, Any]] = []
+    for idx, w in enumerate(raw_words):
+        s = float(w.get("start", 0.0))
+        e = float(w.get("end", s))
+        dur = e - s
+        if dur > float(threshold_s) + 1e-6:
+            flagged.append(
+                {
+                    "index": idx,
+                    "word": str(w.get("word", "")),
+                    "start": round(s, 4),
+                    "end": round(e, 4),
+                    "duration_s": round(dur, 4),
+                }
+            )
+    return flagged
+
+
+def compute_naive_alignment_cuts(
+    raw_words: list[dict[str, Any]],
+    *,
+    max_sentence_silence: float = 0.25,
+) -> list[tuple[float, float]]:
+    """Naive alignment-timestamp-only cut intervals (used as baseline reference in tests)."""
+    keep_gap = max(0.0, float(max_sentence_silence))
+    if not raw_words or keep_gap <= 0:
+        return []
+    threshold = max(keep_gap + 0.05, keep_gap * 1.2)
+    half = keep_gap / 2.0
+    cuts: list[tuple[float, float]] = []
+    first_start = float(raw_words[0].get("start", 0.0))
+    if first_start > keep_gap:
+        cuts.append((0.0, round(max(0.0, first_start - half), 4)))
+    for i in range(len(raw_words) - 1):
+        g0 = float(raw_words[i].get("end", 0.0))
+        g1 = float(raw_words[i + 1].get("start", g0))
+        if g1 - g0 > threshold:
+            cuts.append((round(g0 + half, 4), round(g1 - half, 4)))
+    return cuts
+
+
+def compute_energy_pause_cuts(
+    raw_words: list[dict[str, Any]],
+    energy_silences: list[dict[str, Any]],
+    *,
+    max_sentence_silence: float = 0.25,
+    min_padding_s: float | str | None = PAUSE_TRIM_DEFAULT_PADDING_S,
+    long_token_threshold_s: float = LONG_TOKEN_THRESHOLD_S,
+) -> dict[str, Any]:
+    """Compute safe silence cuts centered at the MIDDLE of real energy-silence intervals
+    that lie inside alignment gaps.
+
+    Rules:
+      - Never cuts using alignment timestamps alone: a gap with no energy-silence is untouched.
+      - Keeps `>= min_padding_s` (default 0.15s, escalation 0.15 -> 0.30 -> 0.50 -> None/off)
+        and `>= max_sentence_silence / 2` on each side of the kept speech inside the real silence.
+      - Cuts symmetrically around the midpoint `(es0 + es1) / 2` of the energy-silence interval
+        `[es0, es1]` within the alignment gap.
+      - If an adjacent token is aligned `> long_token_threshold_s` (0.6s), widens the margin `2x`
+        for that gap.
+    """
+    long_tokens = flag_long_aligned_tokens(raw_words, threshold_s=long_token_threshold_s)
+    long_indices = {item["index"] for item in long_tokens}
+
+    if (
+        min_padding_s is None
+        or (isinstance(min_padding_s, str) and min_padding_s.strip().lower() in ("off", "none"))
+        or float(max_sentence_silence) <= 0
+        or not raw_words
+        or not energy_silences
+    ):
+        return {
+            "cuts": [],
+            "long_tokens": long_tokens,
+            "padding_s": None,
+        }
+
+    keep_gap = max(0.0, float(max_sentence_silence))
+    base_pad = max(PAUSE_TRIM_DEFAULT_PADDING_S, float(min_padding_s), keep_gap / 2.0)
+
+    # Build candidate alignment gaps: (g0, g1, adjacent_token_indices)
+    candidate_gaps: list[tuple[float, float, tuple[int, ...]]] = []
+    first_start = float(raw_words[0].get("start", 0.0))
+    if first_start > 0:
+        candidate_gaps.append((0.0, first_start, (0,)))
+    for i in range(len(raw_words) - 1):
+        g0 = float(raw_words[i].get("end", 0.0))
+        g1 = float(raw_words[i + 1].get("start", g0))
+        if g1 > g0:
+            candidate_gaps.append((g0, g1, (i, i + 1)))
+
+    cuts: list[tuple[float, float]] = []
+    for g0, g1, adj_idxs in candidate_gaps:
+        is_adj_long = any(idx in long_indices for idx in adj_idxs)
+        side_pad = base_pad * (2.0 if is_adj_long else 1.0)
+
+        # Find the longest energy-silence interval intersecting this alignment gap
+        best_es: tuple[float, float] | None = None
+        best_len = 0.0
+        for sil in energy_silences:
+            s0 = float(sil.get("start", 0.0))
+            s1 = float(sil.get("end", s0))
+            es0 = max(s0, g0)
+            es1 = min(s1, g1)
+            if es1 - es0 > best_len:
+                best_len = es1 - es0
+                best_es = (es0, es1)
+
+        if best_es is None:
+            continue
+        es0, es1 = best_es
+        # Only cut around the midpoint of [es0, es1] if at least side_pad remains on EACH side
+        if (es1 - es0) <= (2.0 * side_pad + 0.02):
+            continue
+        mid = 0.5 * (es0 + es1)
+        half_cut = 0.5 * (es1 - es0) - side_pad
+        c0 = round(mid - half_cut, 4)
+        c1 = round(mid + half_cut, 4)
+        if c1 > c0 + 1e-4:
+            cuts.append((c0, c1))
+
+    return {
+        "cuts": cuts,
+        "long_tokens": long_tokens,
+        "padding_s": round(base_pad, 4),
+    }
+
+
 def process_voiceover_audio(
     *,
     raw_audio_path: str | Path,
@@ -1553,8 +1766,17 @@ def process_voiceover_audio(
     speed: float = 1.15,
     max_sentence_silence: float = 0.25,
     raw_duration_s: float | None = None,
+    min_padding_s: float | str | None = PAUSE_TRIM_DEFAULT_PADDING_S,
+    noise_db: float = PAUSE_TRIM_NOISE_DB,
+    min_silence_s: float = PAUSE_TRIM_MIN_SILENCE_S,
+    energy_silences: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Cut inter-word silences > threshold down to `max_sentence_silence`, apply `speed`, and remap words."""
+    """Energy-based pause trim + speed adjustment + word-timing remap.
+
+    Detects real silence with ffmpeg `silencedetect` (`noise=-35dB:d=0.12`) and cuts
+    only at the middle of an energy-silence interval inside an alignment gap, keeping
+    `>= min_padding_s` (default 0.15s; 2x around tokens aligned `> 0.6s`) on each side.
+    """
     raw_p = Path(raw_audio_path)
     out_p = Path(out_audio_path)
     out_p.parent.mkdir(parents=True, exist_ok=True)
@@ -1567,21 +1789,25 @@ def process_voiceover_audio(
         else (raw_duration_s if (raw_duration_s is not None and raw_duration_s > 0) else max(1.0, last_word_end))
     )
 
-    keep_gap = max(0.0, float(max_sentence_silence))
-    threshold = max(keep_gap + 0.05, keep_gap * 1.2) if keep_gap > 0 else float("inf")
-    half = keep_gap / 2.0
+    if energy_silences is None:
+        if probed_dur is not None and probed_dur > 0:
+            energy_silences = detect_energy_silences(
+                raw_p,
+                noise_db=noise_db,
+                min_silence_s=min_silence_s,
+                total_duration_s=orig_dur,
+            )
+        else:
+            energy_silences = []
 
-    # Determine cut intervals from word timestamps (as in audio2.py)
-    cuts: list[tuple[float, float]] = []
-    if raw_words and keep_gap > 0:
-        first_start = float(raw_words[0].get("start", 0.0))
-        if first_start > keep_gap:
-            cuts.append((0.0, max(0.0, first_start - half)))
-        for i in range(len(raw_words) - 1):
-            g0 = float(raw_words[i].get("end", 0.0))
-            g1 = float(raw_words[i + 1].get("start", g0))
-            if g1 - g0 > threshold:
-                cuts.append((g0 + half, g1 - half))
+    cut_info = compute_energy_pause_cuts(
+        raw_words,
+        energy_silences,
+        max_sentence_silence=max_sentence_silence,
+        min_padding_s=min_padding_s,
+    )
+    cuts: list[tuple[float, float]] = cut_info["cuts"]
+    long_tokens: list[dict[str, Any]] = cut_info["long_tokens"]
 
     timeline_end = max(orig_dur, last_word_end)
     kept: list[tuple[float, float]] = []
@@ -1677,6 +1903,11 @@ def process_voiceover_audio(
         "words": remapped_words,
         "total_duration_s": round(final_dur, 4),
         "cuts_count": len(cuts),
+        "cuts": cuts,
+        "kept_intervals": kept,
+        "energy_silences": energy_silences,
+        "long_tokens": long_tokens,
+        "padding_s": cut_info["padding_s"],
         "speed": spd,
     }
 
