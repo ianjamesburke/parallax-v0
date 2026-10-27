@@ -30,23 +30,23 @@ from parallax.cut import (
 
 
 def test_tokenize_script_splits_em_dash_joined_words() -> None:
-    text = "In 45 AD, hydroxyapatite—the mineral inside enamel—rebuilt the surface."
+    text = "In 45 AD, limestone—the mineral inside salt—rebuilt the surface."
     tokens = tokenize_script(text)
-    assert "hydroxyapatite—" in tokens
+    assert "limestone—" in tokens
     assert "the" in tokens
-    assert "enamel—" in tokens
+    assert "salt—" in tokens
     assert "rebuilt" in tokens
     assert "45" in tokens
 
 
 def test_align_script_words_handles_em_dash_numbers_and_fuzzy_asr() -> None:
-    script = "45 AD. Nano-hydroxyapatite—the mineral—works fast."
-    # ASR transcribed "45" as "forty", "five", and "hydroxyapatite" as "hydroxyappetite"
+    script = "45 AD. Nano-limestone—the mineral—works fast."
+    # ASR transcribed "45" as "forty", "five", and "limestone" as "limestoan"
     asr_words = [
         {"word": "forty", "start": 0.10, "end": 0.30},
         {"word": "five", "start": 0.30, "end": 0.55},
         {"word": "AD", "start": 0.60, "end": 0.90},
-        {"word": "nanohydroxyappetite", "start": 1.30, "end": 1.85},
+        {"word": "nanolimestoan", "start": 1.30, "end": 1.85},
         {"word": "the", "start": 1.90, "end": 2.05},
         {"word": "mineral", "start": 2.10, "end": 2.45},
         {"word": "works", "start": 2.50, "end": 2.80},
@@ -58,7 +58,7 @@ def test_align_script_words_handles_em_dash_numbers_and_fuzzy_asr() -> None:
     assert [w["word"] for w in words] == [
         "45",
         "AD.",
-        "Nano-hydroxyapatite—",
+        "Nano-limestone—",
         "the",
         "mineral—",
         "works",
@@ -67,7 +67,7 @@ def test_align_script_words_handles_em_dash_numbers_and_fuzzy_asr() -> None:
     # "45" coalesced from "forty" (0.10) .. "five" (0.55)
     assert words[0]["start"] == pytest.approx(0.10, abs=1e-3)
     assert words[0]["end"] == pytest.approx(0.55, abs=1e-3)
-    # Silence gap between "AD." (0.90) and "Nano-hydroxyapatite—" (1.30) is preserved!
+    # Silence gap between "AD." (0.90) and "Nano-limestone—" (1.30) is preserved!
     assert words[1]["end"] == pytest.approx(0.90, abs=1e-3)
     assert words[2]["start"] == pytest.approx(1.30, abs=1e-3)
     # Unmatched trailing token "fast." is interpolated between 2.80 and 3.20

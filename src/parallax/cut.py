@@ -230,8 +230,8 @@ def norm_token(word: str) -> str:
 def tokenize_script(text: str) -> list[str]:
     """Tokenise script on whitespace AND em/en dashes while keeping punctuation for captions.
 
-    Em-dash-joined words like ``"hydroxyapatite—the"`` become two tokens:
-    ``["hydroxyapatite—", "the"]``.
+    Em-dash-joined words like ``"limestone—the"`` become two tokens:
+    ``["limestone—", "the"]``.
     """
     raw_tokens = re.findall(r"\S+", text)
     tokens: list[str] = []

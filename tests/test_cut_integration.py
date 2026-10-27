@@ -74,7 +74,7 @@ def synthetic_cut_fixture(tmp_path: Path) -> dict[str, Path]:
     script_path.write_text(
         "45 AD. Harbour walls rose from the bay.\n"
         "Desperate crews poured volcanic ash into the waves.\n"
-        "Seawater locked hydroxyapatite—the mineral—into stone.\n"
+        "Seawater locked limestone—the mineral—into stone.\n"
         "Two millennia later, those piers still stand.",
         encoding="utf-8",
     )
@@ -102,7 +102,7 @@ def synthetic_cut_fixture(tmp_path: Path) -> dict[str, Path]:
             {"word": "waves.", "start": 2.98, "end": 3.10},
             {"word": "Seawater", "start": 3.30, "end": 3.60},
             {"word": "locked", "start": 3.60, "end": 3.85},
-            {"word": "hydroxyapatite", "start": 3.85, "end": 4.20},
+            {"word": "limestone", "start": 3.85, "end": 4.20},
             {"word": "the", "start": 4.20, "end": 4.30},
             {"word": "mineral", "start": 4.30, "end": 4.50},
             {"word": "into", "start": 4.50, "end": 4.62},

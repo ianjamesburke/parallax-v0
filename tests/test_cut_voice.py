@@ -76,7 +76,7 @@ def _wav_rms(wav_path: Path, start_s: float, end_s: float) -> float:
 
 
 def test_expand_numbers_and_align_script_words_keeps_script_numerals() -> None:
-    assert expand_numbers_and_symbols("up to 97% of tooth enamel") == "up to ninety seven percent of tooth enamel"
+    assert expand_numbers_and_symbols("up to 97% of sea salt") == "up to ninety seven percent of sea salt"
     assert expand_numbers_and_symbols("It costs $5 or $1,000 in 45 AD.") == (
         "It costs five dollars or one thousand dollars in forty five AD."
     )
@@ -89,7 +89,7 @@ def test_expand_numbers_and_align_script_words_keeps_script_numerals() -> None:
         "percent",
     ]
 
-    script = "Up to 97% of human tooth enamel costs $5 in 45 AD."
+    script = "Up to 97% of human sea salt costs $5 in 45 AD."
     asr_words = [
         {"word": "up", "start": 0.0, "end": 0.15},
         {"word": "to", "start": 0.15, "end": 0.30},
@@ -98,8 +98,8 @@ def test_expand_numbers_and_align_script_words_keeps_script_numerals() -> None:
         {"word": "percent", "start": 0.90, "end": 1.20},
         {"word": "of", "start": 1.25, "end": 1.35},
         {"word": "human", "start": 1.35, "end": 1.65},
-        {"word": "tooth", "start": 1.65, "end": 1.95},
-        {"word": "enamel", "start": 1.95, "end": 2.30},
+        {"word": "sea", "start": 1.65, "end": 1.95},
+        {"word": "salt", "start": 1.95, "end": 2.30},
         {"word": "costs", "start": 2.35, "end": 2.65},
         {"word": "five", "start": 2.70, "end": 2.95},
         {"word": "dollars", "start": 2.95, "end": 3.30},
@@ -580,10 +580,10 @@ def test_per_chunk_loudnorm_and_loudness_consistency_check(tmp_path: Path, capsy
     assert "chunk 1" in human_warn
 
 
-def test_verifier_flags_missing_tooth_enamel_regenerates_only_failing_chunk_and_keeps_rejected(
+def test_verifier_flags_missing_sea_salt_regenerates_only_failing_chunk_and_keeps_rejected(
     tmp_path: Path,
 ) -> None:
-    """Fake transcriber missing 'tooth enamel' on chunk 2 attempt 1 -> flagged,
+    """Fake transcriber missing 'sea salt' on chunk 2 attempt 1 -> flagged,
     triggers exactly one regeneration of only chunk 2, preserves .rejected, then passes.
     """
     import pytest
@@ -595,9 +595,9 @@ def test_verifier_flags_missing_tooth_enamel_regenerates_only_failing_chunk_and_
     )
     from parallax.voiceover import VoiceSynthesisResult
 
-    # Unit check on diff_script_vs_transcript with "97%" vs "ninety seven percent" and missing "tooth enamel"
+    # Unit check on diff_script_vs_transcript with "97%" vs "ninety seven percent" and missing "sea salt"
     diff_bad = diff_script_vs_transcript(
-        "Up to 97% of human tooth enamel is mineral.",
+        "Up to 97% of human sea salt is mineral.",
         [
             {"word": "up", "start": 0.0, "end": 0.2},
             {"word": "to", "start": 0.2, "end": 0.4},
@@ -611,10 +611,10 @@ def test_verifier_flags_missing_tooth_enamel_regenerates_only_failing_chunk_and_
         ],
     )
     assert diff_bad["passed"] is False
-    assert any(r["words"] == ["tooth", "enamel"] for r in diff_bad["missing_runs"])
+    assert any(r["words"] == ["sea", "salt"] for r in diff_bad["missing_runs"])
 
     para1 = " ".join(["Roman concrete piers stood firm in the bay."] * 5)
-    para2 = " ".join(["Up to 97% of human tooth enamel is pure mineral."] * 4)
+    para2 = " ".join(["Up to 97% of human sea salt is pure mineral."] * 4)
     script = f"{para1}\n\n{para2}"
     chunks = chunk_script(script, max_chunk_seconds=15.0, speed=1.15)
     assert len(chunks) == 2
@@ -656,8 +656,8 @@ def test_verifier_flags_missing_tooth_enamel_regenerates_only_failing_chunk_and_
     def _fake_transcriber(audio_path: str, label: str = "") -> list[dict]:
         data = Path(audio_path).read_bytes()
         if b"c2_attempt1" in data:
-            # Drop "tooth enamel" on the first attempt of chunk 2!
-            text = chunks[1].replace("tooth enamel", "")
+            # Drop "sea salt" on the first attempt of chunk 2!
+            text = chunks[1].replace("sea salt", "")
         elif b"c2_attempt" in data:
             text = chunks[1]
         elif "final" in label:
@@ -753,8 +753,8 @@ def test_verifier_trim_induced_mismatch_escalates_padding(tmp_path: Path) -> Non
             {
                 "words": [
                     {"word": "97%", "start": 0.0, "end": 0.60},
-                    {"word": "tooth", "start": 1.40, "end": 1.70},
-                    {"word": "enamel", "start": 1.70, "end": 2.00},
+                    {"word": "sea", "start": 1.40, "end": 1.70},
+                    {"word": "salt", "start": 1.70, "end": 2.00},
                 ]
             }
         ),
@@ -771,29 +771,29 @@ def test_verifier_trim_induced_mismatch_escalates_padding(tmp_path: Path) -> Non
                 {"word": "ninety", "start": 0.0, "end": 0.2},
                 {"word": "seven", "start": 0.2, "end": 0.4},
                 {"word": "percent", "start": 0.4, "end": 0.6},
-                {"word": "tooth", "start": 1.4, "end": 1.7},
-                {"word": "enamel", "start": 1.7, "end": 2.0},
+                {"word": "sea", "start": 1.4, "end": 1.7},
+                {"word": "salt", "start": 1.7, "end": 2.0},
             ]
         trimmed_eval_count += 1
         if trimmed_eval_count == 1:
             # Simulate initial trim (padding=0.15) clipping "ninety seven"
             return [
                 {"word": "percent", "start": 0.0, "end": 0.2},
-                {"word": "tooth", "start": 0.8, "end": 1.1},
-                {"word": "enamel", "start": 1.1, "end": 1.4},
+                {"word": "sea", "start": 0.8, "end": 1.1},
+                {"word": "salt", "start": 1.1, "end": 1.4},
             ]
         # Escalated padding (0.30) keeps full phrase intact
         return [
             {"word": "ninety", "start": 0.0, "end": 0.2},
             {"word": "seven", "start": 0.2, "end": 0.4},
             {"word": "percent", "start": 0.4, "end": 0.6},
-            {"word": "tooth", "start": 1.0, "end": 1.3},
-            {"word": "enamel", "start": 1.3, "end": 1.6},
+            {"word": "sea", "start": 1.0, "end": 1.3},
+            {"word": "salt", "start": 1.3, "end": 1.6},
         ]
 
     proj = tmp_path / "trim_esc_proj"
     res = resolve_or_generate_voiceover(
-        clean_script="97% tooth enamel",
+        clean_script="97% sea salt",
         project_dir=proj,
         audio_path=raw_wav,
         words_path=words_json,
