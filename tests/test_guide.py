@@ -235,3 +235,16 @@ def test_motion_graphic_guide_instructs_using_motion_styles_and_pil_templates(ca
         assert "text-overlay" in text
         assert "Remotion" not in text
         assert "remotion" not in text
+
+
+def test_existing_clips_entry_point_is_on_first_screen_of_guide_and_help(capsys):
+    assert cli.main(["guide"]) == 0
+    raw = capsys.readouterr().out
+    guide = json.loads(raw)
+    assert list(guide)[:3] == ["guide_version", "cli_version", "start_here"]
+    assert "parallax guide cut" in guide["start_here"] and "parallax cut --help" in guide["start_here"]
+    assert raw.index("start_here") < raw.index('"stages"')
+    assert cli.main(["--help"]) == 0
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Have clips and a script already? Run `parallax guide cut`" in out
+    assert out.index("parallax guide cut") < out.index("Agents: start with")

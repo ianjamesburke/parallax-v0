@@ -235,6 +235,7 @@ def build_guide(group: Any, topic: str | None = None) -> dict:
         return {**header, "topic": topic, "stage": stage, **({"brief": _BRIEF} if topic == "brief" else {})}
     return {
         **header,
+        "start_here": "Have clips and a script already? Run `parallax guide cut` (then `parallax cut --help`). The stages below are for generating footage.",
         "invocation": "`parallax` stands for however you run this checkout or install, e.g. `uv run parallax`.",
         "discovery": ["parallax --help", "parallax <command> --help", "parallax schema brief", "parallax schema plan", "parallax schema cli", "parallax guide", "parallax guide <topic>"],
         "topics": {
