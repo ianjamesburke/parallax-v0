@@ -3334,7 +3334,24 @@ def resolve_or_generate_voiceover(
                 and not final_verify.get("passed", True)
                 and not residual_mismatches
             ):
-                residual_mismatches.append({"chunk_index": None, **final_verify})
+                # Every chunk already passed its own check, so a failing whole-file transcript is most likely a
+                # flaky ASR pass over the 2-3 minute file (seen once in four offline runs on the same cached
+                # audio: whisper emitted noise tokens and skipped a minute of speech). Transcribe once more
+                # before failing; the stitched audio is deterministic, so a real defect fails again.
+                if not quiet:
+                    print("  final voiceover check failed; re-transcribing once to rule out an ASR flake", flush=True)
+                retry_verify = verify_audio_against_script(
+                    dst_audio,
+                    clean_script,
+                    transcriber=transcriber,
+                    label="final voiceover (retry)",
+                )
+                if retry_verify.get("passed", False) or float(retry_verify.get("similarity", 0.0)) > float(
+                    final_verify.get("similarity", 0.0)
+                ):
+                    final_verify = {**retry_verify, "first_attempt_similarity": final_verify.get("similarity")}
+                if not final_verify.get("skipped") and not final_verify.get("passed", True):
+                    residual_mismatches.append({"chunk_index": None, **final_verify})
     else:
         final_verify = {"status": "disabled", "passed": True, "skipped": True, "missing_runs": [], "extra_runs": []}
 

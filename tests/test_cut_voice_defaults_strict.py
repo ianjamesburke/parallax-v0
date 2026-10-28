@@ -121,3 +121,53 @@ def test_cli_exit_code_is_nonzero_when_voiceover_verification_fails(monkeypatch,
     script.write_text("Hello there.", encoding="utf-8")
     code = cli.main(["cut", "--script", str(script), "--clips", str(tmp_path), "--out", str(tmp_path / "o.mp4")])
     assert code == 1
+
+
+def _two_chunk_script() -> str:
+    para1 = " ".join(["Alpha sentence one is spoken clearly."] * 5)
+    para2 = " ".join(["Beta sentence two follows right after."] * 5)
+    return f"{para1}\n\n{para2}"
+
+
+def _patched_verify(monkeypatch, final_results: list[dict]):
+    import parallax.cut as cut_mod
+
+    labels: list[str] = []
+
+    def fake_verify(audio_path, script_text, *, transcriber=None, label="voiceover", **kw):
+        labels.append(label)
+        if label.startswith("final voiceover"):
+            return dict(final_results[len([x for x in labels if x.startswith("final voiceover")]) - 1])
+        return {"status": "passed", "passed": True, "skipped": False, "similarity": 1.0, "missing_runs": [],
+                "extra_runs": [], "expected_words": [], "actual_words": [], "max_missing_run": 0}
+
+    monkeypatch.setattr(cut_mod, "verify_audio_against_script", fake_verify)
+    return labels
+
+
+_BAD = {"status": "failed", "passed": False, "skipped": False, "similarity": 0.6, "missing_runs": [],
+        "extra_runs": [], "expected_words": [], "actual_words": [], "max_missing_run": 0}
+_GOOD = {**_BAD, "status": "passed", "passed": True, "similarity": 0.99}
+
+
+def test_flaky_final_transcript_is_retried_once_when_every_chunk_passed(tmp_path: Path, monkeypatch) -> None:
+    labels = _patched_verify(monkeypatch, [_BAD, _GOOD])
+    provider = _SineProvider(tmp_path)
+    res = resolve_or_generate_voiceover(
+        clean_script=_two_chunk_script(), project_dir=tmp_path / "p", vo_chunk_seconds=12.0, provider=provider,
+        transcriber=lambda *a, **k: [], quiet=True,
+    )
+    assert [x for x in labels if x.startswith("final")] == ["final voiceover", "final voiceover (retry)"]
+    assert res["verification"]["passed"] is True
+    assert res["verification"]["final"]["first_attempt_similarity"] == 0.6
+    assert provider.calls == 2  # no extra TTS for the retry
+
+
+def test_final_transcript_that_fails_twice_still_fails_closed(tmp_path: Path, monkeypatch) -> None:
+    _patched_verify(monkeypatch, [_BAD, _BAD])
+    with pytest.raises(CutError) as exc_info:
+        resolve_or_generate_voiceover(
+            clean_script=_two_chunk_script(), project_dir=tmp_path / "p", vo_chunk_seconds=12.0,
+            provider=_SineProvider(tmp_path), transcriber=lambda *a, **k: [], quiet=True,
+        )
+    assert exc_info.value.exit_code == 1
