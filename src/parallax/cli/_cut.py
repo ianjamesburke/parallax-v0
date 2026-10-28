@@ -172,15 +172,15 @@ def cut_cmd(
         "--speed",
         help="Voiceover speed multiplier (default: 1.15; use --speed 1.0 to disable).",
     ),
-    voice: str = typer.Option(
-        "nova",
+    voice: Optional[str] = typer.Option(
+        None,
         "--voice",
-        help="TTS voice name or ElevenLabs voice ID (default: nova).",
+        help="TTS voice name or ElevenLabs voice ID (default: Charon for tts-gemini, nova for tts-mini).",
     ),
     voice_model: str = typer.Option(
-        "tts-mini",
+        "tts-gemini",
         "--voice-model",
-        help="TTS backend alias: tts-mini, tts-gemini, elevenlabs, seed-audio (default: tts-mini).",
+        help="TTS backend alias: tts-gemini, tts-mini, elevenlabs, seed-audio (default: tts-gemini; tts-mini is not reliable for long scripts).",
     ),
     style: Optional[str] = typer.Option(
         None,
@@ -228,9 +228,9 @@ def cut_cmd(
         help="Max per-chunk TTS regeneration retries when verification detects missing words or low similarity (default: 2).",
     ),
     strict_vo: bool = typer.Option(
-        False,
+        True,
         "--strict-vo/--no-strict-vo",
-        help="Fail with exit code 1 if voiceover verification still has residual mismatches after retries (default: off).",
+        help="Exit 1 and render nothing if voiceover verification still has mismatches after retries (default: on). `--no-strict-vo` renders anyway with a warning.",
     ),
     fps: int = typer.Option(
         24,
@@ -315,7 +315,7 @@ def cut_cmd(
     ),
 ) -> int:
     """Cut a folder of clips to a script: voiceover (cached), word alignment, midpoint-of-gap scene plan, manifest.yaml, captioned MP4, and XML editor export from ONE manifest."""
-    from ..cut import CutError, run_cut
+    from ..cut import CutError, default_voice_for, run_cut
 
     try:
         wpc = _parse_words_per_chunk(words_per_chunk)
@@ -334,7 +334,7 @@ def cut_cmd(
             words_path=words,
             process_audio=process_audio,
             speed=speed,
-            voice=voice,
+            voice=voice or default_voice_for(voice_model),
             voice_model=voice_model,
             style=style,
             max_sentence_silence=max_sentence_silence,

@@ -231,6 +231,7 @@ def test_cut_overrun_exits_2_without_allow_hold(
         cli.app,
         [
             "cut",
+            "--no-strict-vo",
             "--script",
             str(fx["script"]),
             "--clips",
@@ -255,6 +256,7 @@ def test_cut_overrun_exits_2_without_allow_hold(
         cli.app,
         [
             "cut",
+            "--no-strict-vo",
             "--script",
             str(fx["script"]),
             "--clips",
@@ -288,6 +290,7 @@ def test_cut_full_cli_run_and_from_manifest_round_trip(
         cli.app,
         [
             "cut",
+            "--no-strict-vo",
             "--script",
             str(fx["script"]),
             "--clips",

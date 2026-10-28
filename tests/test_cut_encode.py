@@ -183,6 +183,7 @@ def test_cut_default_drive_safe_encode_and_odd_resolution_rounding(tmp_path: Pat
         cli.app,
         [
             "cut",
+            "--no-strict-vo",
             "--script",
             str(script_path),
             "--clips",

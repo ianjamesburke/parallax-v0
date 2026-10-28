@@ -248,3 +248,19 @@ def test_existing_clips_entry_point_is_on_first_screen_of_guide_and_help(capsys)
     out = " ".join(capsys.readouterr().out.split())
     assert "Have clips and a script already? Run `parallax guide cut`" in out
     assert out.index("parallax guide cut") < out.index("Agents: start with")
+
+
+def test_cut_guide_documents_cut_map_format_so_agents_need_not_read_source(capsys):
+    assert cli.main(["guide", "cut"]) == 0
+    topic = json.loads(capsys.readouterr().out)
+    fmt = topic["cut_map_format"]
+    assert set(fmt["segment_fields"]) == {"anchor", "clip", "in", "note"}
+    assert "required" in fmt["segment_fields"]["anchor"] and "required" in fmt["segment_fields"]["clip"]
+    assert "SCRIPT ORDER" in fmt["file"]
+    # the documented example must be a map the real loader accepts
+    import yaml
+    example = yaml.safe_load(fmt["example"])
+    assert example["version"] == 1 and all({"anchor", "clip"} <= set(s) for s in example["segments"])
+    assert set().union(*(set(s) for s in example["segments"])) <= set(fmt["segment_fields"])
+    assert "tts-gemini" in topic["voice_defaults"] and "Charon" in topic["voice_defaults"]
+    assert "--no-strict-vo" in topic["voiceover_hygiene"]["verification"]

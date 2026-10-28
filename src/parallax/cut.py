@@ -102,6 +102,18 @@ _NUMBER_WORDS: dict[str, str] = {
 }
 
 
+DEFAULT_VOICE_MODEL = "tts-gemini"
+DEFAULT_VOICE = "Charon"
+# `tts-mini` is an audio chat model and tends to answer delivery instructions instead of
+# reading long scripts verbatim, so it is not the default for `cut`.
+_MODEL_DEFAULT_VOICE = {"tts-mini": "nova", "tts-gemini": "Charon"}
+
+
+def default_voice_for(voice_model: str) -> str:
+    """Voice used when `--voice` is omitted: a voice that exists for `voice_model`."""
+    return _MODEL_DEFAULT_VOICE.get(voice_model, DEFAULT_VOICE)
+
+
 class CutError(Exception):
     """Raised when `parallax cut` cannot proceed (exit code 1 or 2)."""
 
@@ -2589,6 +2601,33 @@ def _format_residual_mismatch_summary(residual: list[dict[str, Any]]) -> str:
     return "; ".join(parts)
 
 
+def _format_strict_vo_failure(
+    residual: list[dict[str, Any]],
+    *,
+    voice_model: str,
+    retries: int,
+) -> str:
+    """Short, actionable message naming each failed chunk (the full diff stays in voiceover.verify.json)."""
+    lines = [
+        f"Voiceover verification FAILED after {retries} retries (voice model {voice_model}); nothing was rendered."
+    ]
+    for item in residual:
+        idx = item.get("chunk_index")
+        loc = f"chunk {idx}" if idx is not None else "final voiceover"
+        heard = " ".join(str(w) for w in (item.get("actual_words") or [])[:14])
+        bits = [f"similarity {float(item.get('similarity', 0.0)):.2f}"]
+        runs = item.get("missing_runs") or []
+        if runs:
+            bits.append(f"{len(runs)} missing run(s), first at {float(runs[0].get('start_s', 0.0)):.1f}s")
+        lines.append(f"  - {loc}: " + ", ".join(bits) + (f"; heard: {heard!r}" if heard else ""))
+    lines.append(
+        "Failed takes are kept as *.rejected under cache/vo/chunks/ and failed chunks were evicted from the cache, "
+        "so re-running regenerates them. Details: voiceover.verify.json. Try --voice-model tts-gemini, or pass "
+        "--no-strict-vo to render anyway."
+    )
+    return "\n".join(lines)
+
+
 def resolve_or_generate_voiceover(
     *,
     clean_script: str,
@@ -2596,8 +2635,8 @@ def resolve_or_generate_voiceover(
     audio_path: str | Path | None = None,
     words_path: str | Path | None = None,
     process_audio: bool = False,
-    voice: str = "nova",
-    voice_model: str = "tts-mini",
+    voice: str = DEFAULT_VOICE,
+    voice_model: str = DEFAULT_VOICE_MODEL,
     style: str | None = None,
     speed: float = 1.15,
     max_sentence_silence: float = 0.25,
@@ -2608,7 +2647,7 @@ def resolve_or_generate_voiceover(
     vo_normalize: bool = True,
     vo_verify: bool = True,
     vo_retries: int = 2,
-    strict_vo: bool = False,
+    strict_vo: bool = True,
     provider: Any | None = None,
     transcriber: Any | None = None,
     force: bool = False,
@@ -2920,6 +2959,16 @@ def resolve_or_generate_voiceover(
             if verify_json_path.is_file()
             else {"enabled": bool(vo_verify), "status": "cached", "skipped": True, "passed": True}
         )
+        if strict_vo and not verify_report.get("passed", True) and not verify_report.get("skipped", False):
+            raise CutError(
+                _format_strict_vo_failure(
+                    list(verify_report.get("residual_mismatches") or []),
+                    voice_model=voice_model,
+                    retries=int(verify_report.get("retries_used") or 0),
+                ),
+                exit_code=1,
+                report={"status": "vo_verify_failed", "verification": verify_report},
+            )
         return {
             "source": "cached",
             "cache_tier": "processed",
@@ -2962,6 +3011,7 @@ def resolve_or_generate_voiceover(
     chunk_verify_reports: list[dict[str, Any]] = []
     trim_escalations = []
     residual_mismatches = []
+    failed_chunk_cache_files: list[Path] = []
     max_retries = max(0, int(vo_retries))
 
     for chunk_idx, chunk_text in enumerate(chunks):
@@ -3162,6 +3212,9 @@ def resolve_or_generate_voiceover(
             chunk_verify_reports.append(chunk_rep)
             if not proc_verify.get("passed", True):
                 residual_mismatches.append(chunk_rep)
+                failed_chunk_cache_files.extend(
+                    [c_raw_mp3, c_raw_json, c_proc_mp3, c_proc_json]
+                )
         elif vo_verify and raw_verify.get("skipped"):
             chunk_verify_reports.append({"chunk_index": chunk_idx, "retries": 0, **raw_verify})
 
@@ -3245,11 +3298,18 @@ def resolve_or_generate_voiceover(
     )
 
     if strict_vo and residual_mismatches:
+        # Never let a rejected voiceover be served from cache on the next run.
+        for stale in [*failed_chunk_cache_files, proc_audio_cache, proc_words_cache, dst_audio]:
+            if stale.is_file():
+                if stale.name.endswith(".raw.mp3"):
+                    shutil.copy2(stale, stale.with_name(stale.name + ".rejected"))
+                stale.unlink(missing_ok=True)
         raise CutError(
-            f"Voiceover verification failed (--strict-vo): {_format_residual_mismatch_summary(residual_mismatches)}",
+            _format_strict_vo_failure(residual_mismatches, voice_model=voice_model, retries=retries_used),
             exit_code=1,
             report={
                 "status": "vo_verify_failed",
+                "failed_chunks": [m.get("chunk_index") for m in residual_mismatches],
                 "verification": verify_report,
                 "tts_calls": tts_calls,
                 "tts_cost_usd": round(float(total_cost_usd), 6),
@@ -3766,8 +3826,8 @@ def run_cut(
     words_path: str | Path | None = None,
     process_audio: bool = False,
     speed: float = 1.15,
-    voice: str = "nova",
-    voice_model: str = "tts-mini",
+    voice: str = DEFAULT_VOICE,
+    voice_model: str = DEFAULT_VOICE_MODEL,
     style: str | None = None,
     max_sentence_silence: float = 0.25,
     vo_chunk_seconds: float = 60.0,
@@ -3777,7 +3837,7 @@ def run_cut(
     vo_normalize: bool = True,
     vo_verify: bool = True,
     vo_retries: int = 2,
-    strict_vo: bool = False,
+    strict_vo: bool = True,
     provider: Any | None = None,
     transcriber: Any | None = None,
     fps: int = 24,

@@ -319,6 +319,24 @@ TOPICS: dict[str, dict] = {
                 {"anchor": "Desperate,", "clip": "Scene_02"},
             ],
         },
+        "cut_map_format": {
+            "file": "`cut-map.yaml` (or `.json`), passed with `--map`. Top level: `version: 1` and a non-empty `segments` list, in SCRIPT ORDER. Any other key is an error.",
+            "segment_fields": {
+                "anchor": "required. The first words of the script line where this clip starts (2-5 words, copied from the script; punctuation and case ignored; numerals match as spelled in the script). Must appear after the previous segment's anchor.",
+                "clip": "required. Clip filename or stem from `--clips` (`Scene_07.mp4` or `Scene_07`).",
+                "in": "optional. Seconds into the clip to start from (default: continue where the clip last stopped, or 0). Must be < clip duration.",
+                "note": "optional free text for humans; ignored.",
+            },
+            "rules": [
+                "A segment runs from its anchor to the next segment's anchor (the last one to the end of the audio), so one anchor per cut you want on screen.",
+                "The same clip may appear several times; later uses continue from where the previous one ended, and restart at 0 with a warning when the remainder is too short. Use `in` to pick a specific moment.",
+                "A clip shorter than its slot is an overrun: `--plan-only` exits 2 and names the segment. Add a segment (another anchor inside that line) or map a longer clip. `--allow-hold` freezes the last frame instead.",
+                "Bad maps exit 2 with every error at once (unknown clip, anchor not found plus closest script sentences, anchors out of order); fix them all, then re-run `--plan-only` (free).",
+                "With no `--map`, `parallax cut --plan-only` writes `<project>/cut-map.template.yaml` with one empty `clip:` per sentence: fill in the clips and rename it.",
+            ],
+            "example": "version: 1\nsegments:\n  - anchor: \"45 AD.\"\n    clip: Scene_01.mp4\n  - anchor: \"Why deer antlers?\"\n    clip: Scene_07\n    in: 1.5\n  - anchor: \"Case closed?\"\n    clip: Scene_09.mp4\n    note: payoff beat",
+        },
+        "voice_defaults": "Narration defaults to `--voice-model tts-gemini --voice Charon` (reads long scripts verbatim). `tts-mini` is an audio chat model that can answer the delivery instructions instead of reading, so choose it only for short lines. Pick any other Gemini voice with `--voice` (Kore, Puck, Fenrir, Aoede...).",
         "mapping_resolution_order": [
             "1. `--map FILE` (YAML or JSON): validates all segments at once (unknown clip, missing anchor with closest candidate sentences, non-monotonic anchors).",
             "2. Name inference (when `--map` is omitted): (i) inline script markers (`[Scene_03]`, `[scene 3]`, `Scene 3:`), stripped from spoken/caption text; (ii) numbered clips (`Scene_01`, `clip2`, ...) when paragraph count == clip count; (iii) numbered clips when sentence count == clip count.",
@@ -334,7 +352,7 @@ TOPICS: dict[str, dict] = {
         "voiceover_hygiene": {
             "energy_pause_trim": "Cuts only at the midpoint of ffmpeg `silencedetect` intervals (-35dB, >=0.12s) inside alignment gaps, keeping >=0.15s lead-in/lead-out (2x margin around tokens aligned >0.6s) and expanding numerals (e.g. `97%` -> `ninety seven percent`) for alignment matching while preserving script text in captions.",
             "loudness": "`--vo-normalize/--no-vo-normalize` (default on) runs per-chunk two-pass EBU R128 `loudnorm` to `--vo-lufs` (default -16 LUFS, TP -1.5, LRA 11), measures integrated LUFS per chunk and on the final concatenated voiceover, writes `<project>/voiceover.loudness.json`, and warns if any chunk deviates from the mean chunk LUFS by more than `--vo-lufs-tolerance` (default 1.5 LU).",
-            "verification": "`--vo-verify/--no-vo-verify` (default on) transcribes raw and trimmed audio to verify no script words were dropped: provider omissions trigger up to `--vo-retries` (default 2) per-chunk regenerations (saving `.rejected` takes), and trim-induced losses escalate pause-trim margins (`0.15s -> 0.30s -> 0.50s -> untrimmed`). Residual mismatches warn by default or exit 1 with `--strict-vo`.",
+            "verification": "`--vo-verify/--no-vo-verify` (default on) transcribes raw and trimmed audio to verify no script words were dropped: provider omissions trigger up to `--vo-retries` (default 2) per-chunk regenerations (saving `.rejected` takes), and trim-induced losses escalate pause-trim margins (`0.15s -> 0.30s -> 0.50s -> untrimmed`). If chunks still fail after retries, `cut` exits 1, names the failed chunks, evicts them from the cache and renders nothing (`--strict-vo` is the default; `--no-strict-vo` renders anyway with a warning).",
         },
         "encode_preset": "`--encode-preset drive-safe|source` (default `drive-safe`): H.264 High@L4.0, yuv420p, CFR, `-bf 2 -g 48`, even dimensions, stereo 48kHz AAC-LC (`+faststart`, stripped encoder tags) for Google Drive, QuickTime, and iOS preview compatibility.",
         "next": None,

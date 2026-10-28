@@ -274,6 +274,8 @@ def test_chunked_voiceover_per_chunk_cache_and_word_offset(tmp_path: Path) -> No
 
     # 1. First run: N=3 provider calls, raw + processed chunk files created, word timings offset with gap
     r1 = resolve_or_generate_voiceover(
+        voice="nova",
+        voice_model="tts-mini",
         clean_script=script,
         project_dir=proj,
         speed=1.15,
@@ -309,6 +311,8 @@ def test_chunked_voiceover_per_chunk_cache_and_word_offset(tmp_path: Path) -> No
     # 2. Rerun with identical arguments: 0 provider calls
     calls.clear()
     r2 = resolve_or_generate_voiceover(
+        voice="nova",
+        voice_model="tts-mini",
         clean_script=script,
         project_dir=proj,
         speed=1.15,
@@ -325,6 +329,8 @@ def test_chunked_voiceover_per_chunk_cache_and_word_offset(tmp_path: Path) -> No
     # 3. Speed change (1.15 -> 1.25): 0 provider calls (re-processed from per-chunk raw cache)
     calls.clear()
     r3 = resolve_or_generate_voiceover(
+        voice="nova",
+        voice_model="tts-mini",
         clean_script=script,
         project_dir=proj,
         speed=1.25,
@@ -344,6 +350,8 @@ def test_chunked_voiceover_per_chunk_cache_and_word_offset(tmp_path: Path) -> No
     para2_edited = para2.replace("Beta sentence two", "Delta revised sentence", 1)
     script_edited = f"{para1}\n\n{para2_edited}\n\n{para3}"
     r4 = resolve_or_generate_voiceover(
+        voice="nova",
+        voice_model="tts-mini",
         clean_script=script_edited,
         project_dir=proj,
         speed=1.15,
@@ -671,6 +679,8 @@ def test_verifier_flags_missing_sea_salt_regenerates_only_failing_chunk_and_keep
 
     proj = tmp_path / "verify_retry_proj"
     res = resolve_or_generate_voiceover(
+        voice="nova",
+        voice_model="tts-mini",
         clean_script=script,
         project_dir=proj,
         vo_chunk_seconds=15.0,
@@ -700,6 +710,8 @@ def test_verifier_flags_missing_sea_salt_regenerates_only_failing_chunk_and_keep
 
     proj_res = tmp_path / "verify_residual_proj"
     res_residual = resolve_or_generate_voiceover(
+        voice="nova",
+        voice_model="tts-mini",
         clean_script=chunks[0],
         project_dir=proj_res,
         vo_chunk_seconds=0,
@@ -721,6 +733,8 @@ def test_verifier_flags_missing_sea_salt_regenerates_only_failing_chunk_and_keep
     proj_strict = tmp_path / "verify_strict_proj"
     with pytest.raises(CutError) as exc_info:
         resolve_or_generate_voiceover(
+            voice="nova",
+            voice_model="tts-mini",
             clean_script=chunks[0],
             project_dir=proj_strict,
             vo_chunk_seconds=0,
@@ -732,7 +746,7 @@ def test_verifier_flags_missing_sea_salt_regenerates_only_failing_chunk_and_keep
             quiet=True,
         )
     assert exc_info.value.exit_code == 1
-    assert "--strict-vo" in str(exc_info.value)
+    assert "--no-strict-vo" in str(exc_info.value) or "--strict-vo" in str(exc_info.value)
 
 
 def test_verifier_trim_induced_mismatch_escalates_padding(tmp_path: Path) -> None:
@@ -793,6 +807,8 @@ def test_verifier_trim_induced_mismatch_escalates_padding(tmp_path: Path) -> Non
 
     proj = tmp_path / "trim_esc_proj"
     res = resolve_or_generate_voiceover(
+        voice="nova",
+        voice_model="tts-mini",
         clean_script="97% sea salt",
         project_dir=proj,
         audio_path=raw_wav,
