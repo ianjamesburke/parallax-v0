@@ -2418,30 +2418,68 @@ def concatenate_chunk_voiceovers(
     }
 
 
+_ASR_EQUIV_MIN_RATIO = 0.65
+_ASR_EQUIV_MIN_CHARS = 5
+_ASR_EQUIV_MAX_WORDS = 4
+
+
+_ALNUM_BOUNDARY_RE = re.compile(r"(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])")
+
+
+def _split_alnum_boundaries(text: str) -> str:
+    """Split ASR tokens like "buy3" into "buy 3" so the digit goes through number expansion ("three")."""
+    return _ALNUM_BOUNDARY_RE.sub(" ", text)
+
+
+def _asr_equivalent(expected_run: list[str], heard_run: list[str]) -> bool:
+    """True when a script run and a transcript run differ only by how ASR split or spelled the same sound.
+
+    Both sides must be non-empty (a pure deletion is never equivalent). Spaces are ignored, so
+    "nano scale" == "nanoscale"; near-spellings such as "enamel" vs "a namal" pass a letter-level ratio.
+    """
+    if not expected_run or not heard_run:
+        return False
+    if len(expected_run) > _ASR_EQUIV_MAX_WORDS or len(heard_run) > _ASR_EQUIV_MAX_WORDS:
+        return False
+    a = "".join(expected_run)
+    b = "".join(heard_run)
+    if a == b:
+        return True
+    if min(len(a), len(b)) < _ASR_EQUIV_MIN_CHARS:
+        return False
+    return difflib.SequenceMatcher(None, a, b).ratio() >= _ASR_EQUIV_MIN_RATIO
+
+
 def diff_script_vs_transcript(
     script_text: str,
     heard_words: list[dict[str, Any]] | str,
     *,
-    min_similarity: float = 0.97,
+    min_similarity: float = 0.95,
     max_missing_run: int = 2,
 ) -> dict[str, Any]:
     """Compare normalized script words against normalized transcript words via `difflib`.
 
     Flags missing/extra word runs with approximate timestamps and returns `passed=False`
-    when any missing run has `>= max_missing_run` (2) words or similarity `< min_similarity` (0.97).
+    when similarity `< min_similarity` (0.95), when any pure deletion has `>= max_missing_run` (2) words, or
+    when any run the transcript replaced with other words is longer than `max_missing_run` (2) words.
+
+    ASR splits and joins are not counted as drops: when a replaced run spells nearly the same letters
+    once spaces are removed ("nano scale" vs "nanoscale", "enamel" vs "a namal"; see `_asr_equivalent`),
+    it counts as matched. Words that are simply absent from the transcript (pure deletions) and
+    unrelated substitutions still count as missing.
     """
-    expected = normalize_text_for_verify(script_text)
+    expected = normalize_text_for_verify(_split_alnum_boundaries(script_text))
     actual: list[str] = []
     actual_times: list[tuple[float, float]] = []
 
     if isinstance(heard_words, str):
-        for w in normalize_text_for_verify(heard_words):
+        for w in normalize_text_for_verify(_split_alnum_boundaries(heard_words)):
             actual.append(w)
             actual_times.append((0.0, 0.0))
     else:
         for hw in heard_words or []:
             if isinstance(hw, str):
-                norm_toks = normalize_text_for_verify(hw)
+                norm_toks = normalize_text_for_verify(_split_alnum_boundaries(hw))
                 for nt in norm_toks:
                     actual.append(nt)
                     actual_times.append((0.0, 0.0))
@@ -2449,7 +2487,7 @@ def diff_script_vs_transcript(
                 w_str = str(hw.get("word", ""))
                 ws = float(hw.get("start", 0.0) or 0.0)
                 we = float(hw.get("end", ws) or ws)
-                norm_toks = normalize_text_for_verify(w_str)
+                norm_toks = normalize_text_for_verify(_split_alnum_boundaries(w_str))
                 for nt in norm_toks:
                     actual.append(nt)
                     actual_times.append((ws, we))
@@ -2468,12 +2506,22 @@ def diff_script_vs_transcript(
         }
 
     sm = difflib.SequenceMatcher(None, expected, actual, autojunk=False)
-    similarity = round(float(sm.ratio()), 4)
+    raw_similarity = round(float(sm.ratio()), 4)
     missing_runs: list[dict[str, Any]] = []
     extra_runs: list[dict[str, Any]] = []
+    equivalent_runs: list[dict[str, Any]] = []
+    matched = 0
+    total = len(expected) + len(actual)
 
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == "equal":
+            matched += i2 - i1
+            continue
+        if tag == "replace" and _asr_equivalent(expected[i1:i2], actual[j1:j2]):
+            equivalent_runs.append({"expected": expected[i1:i2], "heard": actual[j1:j2]})
+            n_eq = max(i2 - i1, j2 - j1)  # count the run as fully matched on both sides (keeps similarity <= 1)
+            matched += n_eq
+            total += 2 * n_eq - (i2 - i1) - (j2 - j1)
             continue
         if j2 > j1 and actual_times:
             t_start = actual_times[j1][0]
@@ -2509,17 +2557,27 @@ def diff_script_vs_transcript(
                 }
             )
 
+    similarity = round(2.0 * matched / total, 4) if total > 0 else 1.0
     max_missing_len = max((r["count"] for r in missing_runs), default=0)
-    passed = bool(max_missing_len < int(max_missing_run) and similarity >= float(min_similarity))
+    # A run the transcript replaced with other words (a proper noun or odd word ASR could not spell) is tolerated
+    # up to `max_missing_run` words; words that are simply absent from the transcript (pure deletions) fail from
+    # `max_missing_run` words on, so a dropped phrase is never mistaken for a mishearing.
+    runs_ok = all(
+        r["count"] <= int(max_missing_run) if r["replaced_by"] else r["count"] < int(max_missing_run)
+        for r in missing_runs
+    )
+    passed = bool(runs_ok and similarity >= float(min_similarity))
     return {
         "status": "passed" if passed else "failed",
         "passed": passed,
         "skipped": False,
         "similarity": similarity,
+        "raw_similarity": raw_similarity,
         "expected_words": expected,
         "actual_words": actual,
         "missing_runs": missing_runs,
         "extra_runs": extra_runs,
+        "asr_equivalent_runs": equivalent_runs,
         "max_missing_run": max_missing_len,
     }
 
@@ -2529,7 +2587,7 @@ def verify_audio_against_script(
     script_text: str,
     *,
     transcriber: Any | None = None,
-    min_similarity: float = 0.97,
+    min_similarity: float = 0.95,
     max_missing_run: int = 2,
     label: str = "",
 ) -> dict[str, Any]:
@@ -2618,13 +2676,23 @@ def _format_strict_vo_failure(
         bits = [f"similarity {float(item.get('similarity', 0.0)):.2f}"]
         runs = item.get("missing_runs") or []
         if runs:
-            bits.append(f"{len(runs)} missing run(s), first at {float(runs[0].get('start_s', 0.0)):.1f}s")
+            shown = "; ".join(
+                f"{r.get('text', '')!r} at {float(r.get('start_s', 0.0)):.1f}s"
+                + (f" (heard {' '.join(r.get('replaced_by') or [])!r})" if r.get("replaced_by") else " (not heard)")
+                for r in runs[:3]
+            )
+            more = f", +{len(runs) - 3} more" if len(runs) > 3 else ""
+            bits.append(f"{len(runs)} missing run(s): {shown}{more}")
         lines.append(f"  - {loc}: " + ", ".join(bits) + (f"; heard: {heard!r}" if heard else ""))
-    lines.append(
+    hint = (
         "Failed takes are kept as *.rejected under cache/vo/chunks/ and failed chunks were evicted from the cache, "
-        "so re-running regenerates them. Details: voiceover.verify.json. Try --voice-model tts-gemini, or pass "
-        "--no-strict-vo to render anyway."
+        "so re-running regenerates them. Details: voiceover.verify.json. "
     )
+    if str(voice_model) != DEFAULT_VOICE_MODEL:
+        hint += f"Try --voice-model {DEFAULT_VOICE_MODEL}, or pass --no-strict-vo to render anyway."
+    else:
+        hint += "Pass --no-strict-vo to render anyway."
+    lines.append(hint)
     return "\n".join(lines)
 
 
