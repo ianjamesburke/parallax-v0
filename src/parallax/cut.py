@@ -3187,12 +3187,49 @@ def resolve_or_generate_voiceover(
             "extra_runs": [],
         }
         chunk_retries = 0
+        asr_retries = 0
+
+        def _retry_chunk_transcription(
+            audio_path: Path,
+            verification: dict[str, Any],
+            *,
+            label: str,
+        ) -> dict[str, Any]:
+            """Rule out one flaky ASR pass before rejecting or regenerating a take."""
+            nonlocal asr_retries
+            if verification.get("skipped") or verification.get("passed", True):
+                return verification
+            asr_retries += 1
+            if not quiet:
+                print(
+                    f"  chunk {chunk_idx} check failed; re-transcribing the same take once to rule out an ASR flake",
+                    flush=True,
+                )
+            retry = verify_audio_against_script(
+                audio_path,
+                chunk_text,
+                transcriber=transcriber,
+                label=f"{label} (ASR retry)",
+            )
+            # Retain the failed result when the retry is no better, so a real
+            # omission remains diagnosable.  A pass (or a better diagnostic)
+            # is the authoritative second transcription.
+            if retry.get("passed", False) or float(retry.get("similarity", 0.0)) > float(
+                verification.get("similarity", 0.0)
+            ):
+                retry = {**retry, "first_attempt_similarity": verification.get("similarity")}
+                return retry
+            return {**verification, "second_attempt_similarity": retry.get("similarity")}
+
         if vo_verify:
             raw_verify = verify_audio_against_script(
                 c_raw_mp3,
                 chunk_text,
                 transcriber=transcriber,
                 label=f"chunk {chunk_idx} raw",
+            )
+            raw_verify = _retry_chunk_transcription(
+                c_raw_mp3, raw_verify, label=f"chunk {chunk_idx} raw"
             )
             while (
                 not raw_verify.get("skipped")
@@ -3217,6 +3254,9 @@ def resolve_or_generate_voiceover(
                     chunk_text,
                     transcriber=transcriber,
                     label=f"chunk {chunk_idx} retry {chunk_retries}",
+                )
+                raw_verify = _retry_chunk_transcription(
+                    c_raw_mp3, raw_verify, label=f"chunk {chunk_idx} retry {chunk_retries}"
                 )
 
         if chunk_idx == 0 and c_raw_mp3.is_file():
@@ -3243,6 +3283,9 @@ def resolve_or_generate_voiceover(
                     transcriber=transcriber,
                     label=f"chunk {chunk_idx} processed",
                 )
+                proc_verify = _retry_chunk_transcription(
+                    c_proc_mp3, proc_verify, label=f"chunk {chunk_idx} processed"
+                )
                 if _trim_introduced_mismatch(raw_verify, proc_verify):
                     for esc_pad in PAUSE_TRIM_ESCALATION_LEVELS[1:]:
                         proc_c = process_voiceover_audio(
@@ -3262,6 +3305,11 @@ def resolve_or_generate_voiceover(
                             transcriber=transcriber,
                             label=f"chunk {chunk_idx} processed (padding={esc_pad})",
                         )
+                        proc_verify = _retry_chunk_transcription(
+                            c_proc_mp3,
+                            proc_verify,
+                            label=f"chunk {chunk_idx} processed (padding={esc_pad})",
+                        )
                         trim_escalations.append(
                             {
                                 "chunk_index": chunk_idx,
@@ -3275,6 +3323,8 @@ def resolve_or_generate_voiceover(
             chunk_rep = {
                 "chunk_index": chunk_idx,
                 "retries": chunk_retries,
+                "asr_retries": asr_retries,
+                "retranscribed": asr_retries > 0,
                 **proc_verify,
             }
             chunk_verify_reports.append(chunk_rep)
@@ -3284,7 +3334,10 @@ def resolve_or_generate_voiceover(
                     [c_raw_mp3, c_raw_json, c_proc_mp3, c_proc_json]
                 )
         elif vo_verify and raw_verify.get("skipped"):
-            chunk_verify_reports.append({"chunk_index": chunk_idx, "retries": 0, **raw_verify})
+            chunk_verify_reports.append(
+                {"chunk_index": chunk_idx, "retries": 0, "asr_retries": asr_retries,
+                 "retranscribed": asr_retries > 0, **raw_verify}
+            )
 
         c_proc_json.write_text(
             json.dumps(

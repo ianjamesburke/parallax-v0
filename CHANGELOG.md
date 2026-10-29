@@ -1,6 +1,13 @@
 # Changelog
 
 Newest releases appear first.
+## [Unreleased]
+
+### Changes
+- fix(audio): default standalone `audio voiceover` narration to Gemini Charon, while preserving `nova` for an explicit `tts-mini` selection
+- fix(cut): retry a failed per-chunk ASR verification once before evicting cached audio or regenerating TTS
+- docs(guide): route script-plus-footage workflows directly to `parallax cut`
+
 ## [0.6.2] — 2026-10-26
 
 ### Changes

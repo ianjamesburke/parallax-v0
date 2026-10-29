@@ -45,6 +45,30 @@ def test_cut_defaults_to_tts_gemini_charon_and_strict_verify(monkeypatch, tmp_pa
         assert params["strict_vo"].default is True
 
 
+def test_audio_voiceover_defaults_to_gemini_charon_and_keeps_tts_mini_nova(monkeypatch, tmp_path: Path) -> None:
+    """Standalone narration resolves a compatible voice after the backend is parsed."""
+    from parallax.cli import _audio
+
+    captured: list[dict] = []
+    source = tmp_path / "provider.mp3"
+    source.write_bytes(b"mock audio")
+
+    def fake_generate(**kwargs):
+        captured.append(kwargs)
+        return {"audio_path": str(source), "raw_audio_path": str(source), "total_duration_s": 1.0, "words": []}
+
+    monkeypatch.setattr("parallax.voiceover.generate_voiceover_dict", fake_generate)
+    # The command imports the callable into its local scope, so intercept it at
+    # its source and avoid ffmpeg by opting out of the default speed transform.
+    assert cli.main(["audio", "voiceover", "--text", "Read this.", "--out", str(tmp_path / "a.mp3"), "--speed", "1.0"]) == 0
+    assert captured[-1]["voice_model"] == "tts-gemini"
+    assert captured[-1]["voice"] == "Charon"
+
+    assert cli.main(["audio", "voiceover", "--text", "Read this.", "--out", str(tmp_path / "b.mp3"), "--speed", "1.0", "--voice-model", "tts-mini"]) == 0
+    assert captured[-1]["voice_model"] == "tts-mini"
+    assert captured[-1]["voice"] == "nova"
+
+
 class _SineProvider:
     def __init__(self, tmp: Path) -> None:
         self.calls = 0
@@ -171,3 +195,60 @@ def test_final_transcript_that_fails_twice_still_fails_closed(tmp_path: Path, mo
             provider=_SineProvider(tmp_path), transcriber=lambda *a, **k: [], quiet=True,
         )
     assert exc_info.value.exit_code == 1
+
+
+def test_flaky_chunk_transcript_is_retried_without_tts_or_cache_eviction(tmp_path: Path, monkeypatch) -> None:
+    """A CPU-starved ASR pass must not turn a good cached take into paid regeneration."""
+    import parallax.cut as cut_mod
+
+    labels: list[str] = []
+
+    def fake_verify(audio_path, script_text, *, transcriber=None, label="voiceover", **kw):
+        labels.append(label)
+        if label == "chunk 0 raw":
+            return dict(_BAD)
+        return dict(_GOOD)
+
+    monkeypatch.setattr(cut_mod, "verify_audio_against_script", fake_verify)
+    provider = _SineProvider(tmp_path)
+    project = tmp_path / "chunk_asr_flake"
+    result = resolve_or_generate_voiceover(
+        clean_script=_two_chunk_script(), project_dir=project, vo_chunk_seconds=12.0,
+        provider=provider, transcriber=lambda *a, **k: [], quiet=True,
+    )
+
+    chunk = result["verification"]["chunks"][0]
+    assert "chunk 0 raw (ASR retry)" in labels
+    assert chunk["passed"] is True
+    assert chunk["retranscribed"] is True and chunk["asr_retries"] == 1
+    assert provider.calls == 2  # one take per chunk, with no paid regeneration
+    report = json.loads((project / "voiceover.verify.json").read_text(encoding="utf-8"))
+    assert report["chunks"][0]["retranscribed"] is True
+    assert list((project / "cache" / "vo" / "chunks").glob("*.raw.mp3"))
+    assert not list((project / "cache" / "vo" / "chunks").glob("*.rejected"))
+
+
+def test_chunk_deletion_in_both_transcripts_still_fails_closed(tmp_path: Path, monkeypatch) -> None:
+    """The ASR retry is a flake guard, not permission to accept real omissions."""
+    import parallax.cut as cut_mod
+
+    deletion = {
+        **_BAD,
+        "missing_runs": [{"words": ["dropped", "words"]}],
+        "max_missing_run": 2,
+    }
+    labels: list[str] = []
+
+    def fake_verify(audio_path, script_text, *, transcriber=None, label="voiceover", **kw):
+        labels.append(label)
+        return dict(deletion)
+
+    monkeypatch.setattr(cut_mod, "verify_audio_against_script", fake_verify)
+    with pytest.raises(CutError) as exc_info:
+        resolve_or_generate_voiceover(
+            clean_script=_two_chunk_script(), project_dir=tmp_path / "real_deletion", vo_chunk_seconds=12.0,
+            provider=_SineProvider(tmp_path), transcriber=lambda *a, **k: [], vo_retries=0, quiet=True,
+        )
+    assert exc_info.value.exit_code == 1
+    assert "chunk 0 raw (ASR retry)" in labels
+    assert exc_info.value.report["verification"]["chunks"][0]["retranscribed"] is True
