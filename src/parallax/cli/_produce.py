@@ -38,7 +38,7 @@ def _produce_cmd(
     resolution: Optional[str] = typer.Option(None, "--resolution", help="Override output resolution, e.g. 480x854 or 1080x1920."),
     stills_only: bool = typer.Option(False, "--stills-only", help="Generate stills only (writes stills_only: true into plan); skips voiceover, animation, and assembly."),
 ) -> int:
-    """Generate stills, narration, and video from a plan or brief. Spends money; prints the estimated cost first; refuses while reference gates are open."""
+    """Generate stills, narration, and video from a plan or brief. For a script plus existing footage, use `parallax cut` instead. Spends money; prints the estimated cost first; refuses while reference gates are open."""
     if plan is None and brief is None:
         typer.echo("Error: one of --plan or --brief is required", err=True)
         return 2

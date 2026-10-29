@@ -22,7 +22,7 @@ TOPICS: dict[str, dict] = {
         "next": "assemble",
     },
     "mock": {"summary":"Iterate structure, timing, and captions in PARALLAX_TEST_MODE=1, then rerun the same commands for real.", "next":"produce_loop"},
-    "voiceover": {"summary":"Seed Audio requires a natural-language voice_prompt. Social default: A fast documentary narrator revealing a secret: fast-paced social-media-ad delivery, rapid with minimal pauses between lines, highly expressive animated storyteller building intrigue, deep, low, warm, slightly gravelly male voice, punchy emphasis on key words.", "next":"assemble"},
+    "voiceover": {"redirect": "For a script plus existing clips or footage, use `parallax cut` (read `parallax guide cut`).", "summary":"Seed Audio requires a natural-language voice_prompt. Social default: A fast documentary narrator revealing a secret: fast-paced social-media-ad delivery, rapid with minimal pauses between lines, highly expressive animated storyteller building intrigue, deep, low, warm, slightly gravelly male voice, punchy emphasis on key words.", "next":"assemble"},
     "single_shot": {
         "summary": "One camera move, using separate frozen start and end frames when the view, scale, or subject changes.",
         "separate_stills": {
@@ -73,6 +73,7 @@ TOPICS: dict[str, dict] = {
         "next": "produce_loop",
     },
     "produce_loop": {
+        "redirect": "For a script plus existing clips or footage, use `parallax cut` (read `parallax guide cut`).",
         "summary": "brief.yaml (human spec) -> `parallax plan` -> plan.yaml (engine spec) -> `parallax produce` -> <folder>/parallax/output/vN/.",
         "paths": {
             "folder": "--folder is the project root. Pass an absolute path; paths inside plan.yaml are relative to it.",
@@ -148,7 +149,7 @@ TOPICS: dict[str, dict] = {
         "plan_fields": {
             "image_model": "Alias for stills (default mid).",
             "video_model": "Alias for animation (default draft).",
-            "voice_model": "Alias for narration (default tts-mini).",
+            "voice_model": "Alias for plan.yaml narration (this separate production-pipeline setting defaults to tts-mini).",
             "per_scene": "A scene may override image_model, video_model, voice_model.",
         },
         "tiers": "`draft` / `mid` / `premium` exist per kind; `--hq` on produce selects the premium tier. Named aliases (e.g. grok-image, veo-lite, tts-gemini) come from the catalog.",
@@ -242,6 +243,7 @@ TOPICS: dict[str, dict] = {
         "next": "voiceover_broll",
     },
     "voiceover_broll": {
+        "redirect": "For a script plus existing clips or footage, use `parallax cut` (read `parallax guide cut`).",
         "summary": "Voiceover-led social video: the narrator tells the story, visuals demonstrate it. Characters take part in scenes; they do not present to the viewer.",
         "mode": "A first-person voiceover does not imply a talking avatar. Choose on-screen presenter delivery only when requested.",
         "scene_rules": [
@@ -352,7 +354,7 @@ TOPICS: dict[str, dict] = {
         "voiceover_hygiene": {
             "energy_pause_trim": "Cuts only at the midpoint of ffmpeg `silencedetect` intervals (-35dB, >=0.12s) inside alignment gaps, keeping >=0.15s lead-in/lead-out (2x margin around tokens aligned >0.6s) and expanding numerals (e.g. `97%` -> `ninety seven percent`) for alignment matching while preserving script text in captions.",
             "loudness": "`--vo-normalize/--no-vo-normalize` (default on) runs per-chunk two-pass EBU R128 `loudnorm` to `--vo-lufs` (default -16 LUFS, TP -1.5, LRA 11), measures integrated LUFS per chunk and on the final concatenated voiceover, writes `<project>/voiceover.loudness.json`, and warns if any chunk deviates from the mean chunk LUFS by more than `--vo-lufs-tolerance` (default 1.5 LU).",
-            "verification": "`--vo-verify/--no-vo-verify` (default on) transcribes raw and trimmed audio to verify no script words were dropped: provider omissions trigger up to `--vo-retries` (default 2) per-chunk regenerations (saving `.rejected` takes), and trim-induced losses escalate pause-trim margins (`0.15s -> 0.30s -> 0.50s -> untrimmed`). If chunks still fail after retries, `cut` exits 1, names the failed chunks, evicts them from the cache and renders nothing (`--strict-vo` is the default; `--no-strict-vo` renders anyway with a warning).",
+            "verification": "`--vo-verify/--no-vo-verify` (default on) transcribes raw and trimmed audio to verify no script words were dropped: a failed chunk is transcribed once more before provider omissions trigger up to `--vo-retries` (default 2) per-chunk regenerations (saving `.rejected` takes), and trim-induced losses escalate pause-trim margins (`0.15s -> 0.30s -> 0.50s -> untrimmed`). If both transcripts still fail, `cut` exits 1, names the failed chunks, evicts them from the cache and renders nothing (`--strict-vo` is the default; `--no-strict-vo` renders anyway with a warning).",
         },
         "encode_preset": "`--encode-preset drive-safe|source` (default `drive-safe`): H.264 High@L4.0, yuv420p, CFR, `-bf 2 -g 48`, even dimensions, stereo 48kHz AAC-LC (`+faststart`, stripped encoder tags) for Google Drive, QuickTime, and iOS preview compatibility.",
         "next": None,

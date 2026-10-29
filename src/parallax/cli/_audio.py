@@ -5,6 +5,8 @@ from typing import Optional
 
 import typer
 
+from ..cut import DEFAULT_VOICE, DEFAULT_VOICE_MODEL, default_voice_for
+
 
 audio_app = typer.Typer(
     help="Audio utilities.",
@@ -285,15 +287,15 @@ def audio_pad_onsets(
 def audio_voiceover(
     text: Optional[str] = typer.Option(None, "--text", help="Text to synthesize. Reads from stdin if omitted."),
     out: str = typer.Option(..., "--out", "--output", help="Output audio file path (e.g. /tmp/out.mp3)."),
-    voice: str = typer.Option("nova", "--voice", help="Voice name or ElevenLabs voice ID (default: nova)."),
-    voice_model: str = typer.Option("tts-mini", "--voice-model", help="TTS backend: tts-mini, tts-gemini, elevenlabs (default: tts-mini)."),
+    voice: Optional[str] = typer.Option(None, "--voice", help=f"Voice name or ElevenLabs voice ID (default: {DEFAULT_VOICE} for {DEFAULT_VOICE_MODEL}; nova for tts-mini)."),
+    voice_model: str = typer.Option(DEFAULT_VOICE_MODEL, "--voice-model", help=f"TTS backend: tts-gemini, tts-mini, elevenlabs (default: {DEFAULT_VOICE_MODEL}; use tts-mini only for short lines)."),
     speed: Optional[float] = typer.Option(1.15, "--speed", help="atempo multiplier applied after synthesis (default: 1.15; use --speed 1.0 to disable)."),
     style: Optional[str] = typer.Option(None, "--style", help="Delivery style preset: rapid_fire, fast, calm, natural."),
     voice_prompt: Optional[str] = typer.Option(None, "--voice-prompt", help="Natural-language voice description (required for seed-audio)."),
     trim_pauses: bool = typer.Option(False, "--trim-pauses", help="Opt in to timestamp-based pause trimming. By default, preserve the provider's original audio."),
     no_verify: bool = typer.Option(False, "--no-verify", help="Skip local transcript verification of synthesized speech."),
 ) -> int:
-    """Synthesize speech. Spends money; prints the estimated cost first."""
+    """Synthesize speech. For a script plus existing footage, use `parallax cut` instead. Spends money; prints the estimated cost first."""
     import shutil
     import tempfile
     from pathlib import Path as _P
@@ -302,11 +304,13 @@ def audio_voiceover(
     from ..preflight import print_estimate
     from ..shim import is_test_mode
     from ..voiceover import generate_voiceover_dict
-
     text_val = text or sys.stdin.read().strip()
     if not text_val:
         print("ERROR: provide --text or pipe text via stdin.", file=sys.stderr)
         return 1
+    # Keep standalone audio defaults in lockstep with `cut`, including the
+    # compatible fallback for an explicitly selected tts-mini backend.
+    voice = voice or default_voice_for(voice_model)
 
     spec = TTS_MODELS.get(voice_model)
     if not is_test_mode():
