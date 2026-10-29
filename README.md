@@ -8,6 +8,7 @@ Agentic creative production CLI. A brief goes in, a finished short-form video co
 curl -LsSf https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/install.sh | sh   # install
 parallax --help       # every command
 parallax guide        # how to author a brief and drive the pipeline
+parallax guide cut    # cut a folder of existing clips to a script + voiceover + XML export
 PARALLAX_TEST_MODE=1 parallax produce --folder ./my-project --brief ./my-project/brief.yaml   # free stub run, try this first
 parallax update       # upgrade later
 ```
@@ -63,11 +64,12 @@ These work with no key and no provider calls:
 
 - `parallax storyboard`: storyboard packages, HTML previews, optional PDF.
 - `parallax ingest`: local WhisperX transcription with word timestamps (the first run may download model weights).
+- `parallax cut`: script-anchored clip assembly, caption burn, and XML editor export when `--audio`/`--words`, `--plan-only`, `--from-manifest`, or a cached voiceover is used (only uncached TTS synthesis uses `OPENROUTER_API_KEY`).
 - `parallax video ...` local tools: `assemble` clips with voiceover and captions, `ken-burns`, `text-overlay`, `app-screen`, `end-card`, `diagram`, and `motion --from-spec` / `--from-html` re-renders.
 - `parallax export editor`: an xmeml v4 and FCPXML 1.10 timeline, assets, and SRT captions for Premiere, Resolve, and Final Cut.
 - `parallax validate`, `plan`, `guide`, and `schema`.
 
-Anything that generates with a provider (`produce`, `image generate`, `video animate`, `audio voiceover`) needs the key, and so does `credits`.
+Anything that generates with a provider (`produce`, `image generate`, `video animate`, `audio voiceover`, or `cut` when synthesizing a new TTS voiceover) needs the key, and so does `credits`.
 
 For dry runs of the paid pipeline without spending: `export PARALLAX_TEST_MODE=1` — the pipeline produces stub PNGs / mp4s / mp3s end-to-end with no network calls.
 
@@ -157,6 +159,50 @@ Writes `<folder>/editor-handoff/` (override with `--out`):
 - `captions/captions.srt` — SubRip subtitle file chunked from `vo_words.json`
 - `reference/` — optional copy of the finished MP4 from the produce run
 - `README.txt` & `handoff.json` — import instructions and machine-readable frame/second manifest
+
+### Cut existing clips to a script (`parallax cut`)
+
+When you already have a folder of clips and a script, `parallax cut` produces the voiceover (or reuses cached/supplied audio), aligns script tokens to word timestamps, computes midpoint-of-gap scene boundaries with per-clip capacity redistribution and reuse-trim continuation, writes `<project>/manifest.yaml`, renders a captioned MP4 from that manifest, and exports an editor handoff package (`<project>/assets/timeline.xml` + `timeline.fcpxml` + `captions.srt`) from the **same** manifest so the video and XML timeline always match:
+
+```sh
+# 1. Dry-run plan (zero paid calls, zero renders; exits 2 with a MAPPING NEEDED report + template if unmapped)
+parallax cut --script ./script.txt --clips ./clips/ --map ./cut-map.yaml --out ./final.mp4 --plan-only
+
+# 2. Full run (synthesizes or reuses cached TTS at 1.15x with <=0.25s sentence silence, renders MP4 + XML export)
+parallax cut --script ./script.txt --clips ./clips/ --map ./cut-map.yaml --out ./final.mp4
+
+# 3. Key-free run with supplied voiceover audio and word timings
+parallax cut --script ./script.txt --clips ./clips/ --map ./cut-map.yaml --audio ./vo.mp3 --words ./words.json --out ./final.mp4
+
+# 4. Re-render and re-export after hand-editing manifest.yaml
+parallax cut --from-manifest ./final.cut/manifest.yaml --out ./final.mp4
+```
+
+**Agent workflow (`parallax guide cut`):**
+1. Inspect the clips in `--clips` using your own vision (or `parallax ingest ./clips/ --estimate`). Parallax never calls a model to guess visual clip-to-script matching.
+2. Provide `--map cut-map.yaml` (or omit `--map` when the script has inline `[Scene_01]` / `Scene 1:` markers or numbered clips matching the paragraph or sentence count; otherwise `parallax cut` exits `2`, prints a `MAPPING NEEDED` report, and writes `<project>/cut-map.template.yaml`).
+3. Run `parallax cut ... --plan-only` to verify anchors, slot durations, clip reuse trims, and any overruns before spending or rendering.
+4. Run `parallax cut ...` to produce `<out>`, `<project>/manifest.yaml`, and `<project>/assets/timeline.xml` (verified with `consistency: manifest==xml ok`).
+
+**Mapping format (`cut-map.yaml`):**
+
+```yaml
+version: 1
+segments:               # in script order
+  - anchor: "45 AD."    # >=1 opening word where this segment starts (matched forward-only from previous anchor)
+    clip: Scene_01.mp4  # filename, stem, or relative path inside --clips
+    in: 0.0             # optional in-point seconds (default: continue where previous use of this clip ended)
+    note: "Opening hook"
+  - anchor: "Desperate,"
+    clip: Scene_02
+```
+
+**Idempotent voiceover cache, chunked hygiene & Drive-safe encode:**
+- **Chunked TTS & per-chunk cache (`--vo-chunk-seconds 60`, `--vo-gap 0.25`)**: Long scripts are split at paragraph/sentence boundaries (pass `--vo-chunk-seconds 0` for a single TTS call). Each chunk is cached raw (`<project>/cache/vo/chunks/<sha256>.raw.{mp3,json}`) and processed (`<proc_key>.proc.{mp3,json}`). Editing a single sentence re-synthesizes only that chunk; changing `--speed` (default `1.15`), `--max-sentence-silence` (default `0.25`), or `--vo-lufs` (default `-16`) re-processes cached raw chunks locally with **zero** new TTS calls. Pass `--force` to bypass caches.
+- **Energy-based pause trim**: Sentence pauses are trimmed only at the **midpoint** of real acoustic silence intervals (`silencedetect` `-35dB`, `>=0.12s`) inside word-alignment gaps, keeping `>=0.15s` lead-in/lead-out (`2x` margin around tokens aligned `>0.6s`) and expanding numerals (e.g. `97%` -> `ninety seven percent`) for alignment matching while keeping script text (`97%`) in captions and the manifest.
+- **Loudness normalization & consistency check (`--vo-lufs -16`, `--vo-lufs-tolerance 1.5`, `--vo-normalize/--no-vo-normalize`)**: Each chunk is two-pass normalized with EBU R128 `loudnorm` (`I=-16:TP=-1.5:LRA=11`) before concatenation. Integrated LUFS is measured per chunk (post-normalisation) and on the final concatenated voiceover, written to `<project>/voiceover.loudness.json`, and a non-fatal warning is emitted if any chunk deviates from the mean chunk loudness by more than `--vo-lufs-tolerance` (default `1.5` LU).
+- **Script verification & retry (`--vo-verify/--no-vo-verify`, `--vo-retries 2`, `--strict-vo`)**: Post-TTS and post-trim audio are verified against the script. Provider omissions trigger up to `--vo-retries` per-chunk regenerations (saving failed takes as `.rejected`), while trim-induced word losses automatically escalate pause-trim safety margins (`0.15s -> 0.30s -> 0.50s -> untrimmed`). If chunks still fail after retries, `cut` exits `1`, names them and renders nothing (`--strict-vo` is the default; `--no-strict-vo` renders anyway with a warning). Default voice is `tts-gemini` / `Charon`.
+- **Drive-safe MP4 encode (`--encode-preset drive-safe|source`)**: Both `parallax cut` and `parallax video assemble` default to `--encode-preset drive-safe` (H.264 `high@4.0`, `yuv420p`, CFR, `-bf 2 -g 48`, even dimensions, stereo 48kHz AAC-LC, `+faststart`, stripped encoder metadata) for reliable Google Drive, QuickTime, and iOS preview playback.
 
 ## Storyboard package
 

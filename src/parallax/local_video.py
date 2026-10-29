@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json
 from pathlib import Path
-from .ffmpeg_utils import parse_resolution, probe_duration, run_ffmpeg
+from .ffmpeg_utils import ENCODE_PRESETS, drive_safe_encode_args, even_dimensions, parse_resolution, probe_duration, run_ffmpeg
 from .settings import _ASPECT_TO_RESOLUTION
 
 def resolution(aspect: str, requested: str | None = None) -> tuple[int, int]:
@@ -21,14 +21,21 @@ def ken_burns(image: str, duration: float, out: str, *, move="in", zoom=1.12, as
     if r.returncode: raise RuntimeError(r.stderr[:500])
     return str(p)
 
-def assemble(shots: list[dict], out: str, *, aspect="9:16", resolution_: str | None=None, fps=30, voice: str|None=None, voice_offset=0., captions=False, words=None, caption_style="anton", caption_y: float=.65, report: str | None=None, caption_size: int=55, words_per_chunk="smart") -> str:
+def assemble(shots: list[dict], out: str, *, aspect="9:16", resolution_: str | None=None, fps=30, voice: str|None=None, voice_offset=0., captions=False, words=None, caption_style="anton", caption_y: float=.65, report: str | None=None, caption_size: int=55, words_per_chunk="smart", encode_preset: str="source") -> str:
     """Assemble local shots. Clip manifest entries accept `trim_start`, output
     `duration`, and `speed`; e.g. seconds 1.5–4.0 at 1.25x is
     `{\"path\": \"clip.mp4\", \"trim_start\": 1.5, \"duration\": 2.0, \"speed\": 1.25}`.
     """
     import tempfile
     from .captions import burn_captions
-    w,h=resolution(aspect, resolution_); outp=Path(out); outp.parent.mkdir(parents=True,exist_ok=True)
+    if encode_preset not in ENCODE_PRESETS:
+        raise ValueError(f"encode_preset must be one of {ENCODE_PRESETS}, got {encode_preset!r}")
+    w,h=resolution(aspect, resolution_)
+    if encode_preset == "drive-safe":
+        w,h = even_dimensions(w,h)
+        if fps == 30:
+            fps = 24
+    outp=Path(out); outp.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="parallax-assemble-") as td:
         clips=[]
         for i,s in enumerate(shots):
@@ -36,7 +43,7 @@ def assemble(shots: list[dict], out: str, *, aspect="9:16", resolution_: str | N
             if Path(path).suffix.lower() in {".png",".jpg",".jpeg",".webp"}:
                 # ken_burns accepts aspect presets only; explicitly scale its output below.
                 ken_burns(path,dur,str(cp),move=s.get("move","in"),aspect=aspect,fps=fps)
-                if resolution_:
+                if resolution_ or encode_preset == "drive-safe":
                     scaled=Path(td)/f"{i}-scaled.mp4"
                     r=run_ffmpeg(["ffmpeg","-y","-hide_banner","-loglevel","error","-i",str(cp),"-vf",f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps={fps},setsar=1","-an","-frames:v",str(round(dur*fps)),"-c:v","libx264","-pix_fmt","yuv420p",str(scaled)],capture_output=True,text=True)
                     if r.returncode: raise RuntimeError(r.stderr[:500])
@@ -55,10 +62,22 @@ def assemble(shots: list[dict], out: str, *, aspect="9:16", resolution_: str | N
             # Input timestamps are not honoured after a complex graph. Delay samples here.
             delay=max(0,round(float(voice_offset)*1000))
             cmd += ["-i",voice,"-filter_complex",f"[1:a]adelay={delay}:all=1,apad,atrim=duration={total:.6f}[a]","-map","0:v","-map","[a]"]
-        cmd += ["-t",f"{total:.6f}","-c:v","libx264","-pix_fmt","yuv420p","-c:a","aac",str(base)]
+        cmd += ["-t",f"{total:.6f}"]
+        if encode_preset == "drive-safe":
+            cmd += drive_safe_encode_args(fps=fps, include_audio=bool(voice))
+        else:
+            cmd += ["-c:v","libx264","-pix_fmt","yuv420p","-c:a","aac"]
+        cmd.append(str(base))
         r=run_ffmpeg(cmd,capture_output=True,text=True)
         if r.returncode: raise RuntimeError(r.stderr[:500])
-        if captions and words: return burn_captions(str(base), words, str(outp), caption_style=caption_style, shift_s=voice_offset, caption_y=caption_y, report_path=report, fontsize=caption_size, words_per_chunk=words_per_chunk)
+        if captions and words:
+            if encode_preset == "drive-safe":
+                cap_tmp = Path(td)/"captioned.mp4"
+                burn_captions(str(base), words, str(cap_tmp), caption_style=caption_style, shift_s=voice_offset, caption_y=caption_y, report_path=report, fontsize=caption_size, words_per_chunk=words_per_chunk)
+                r2=run_ffmpeg(["ffmpeg","-y","-hide_banner","-loglevel","error","-i",str(cap_tmp),*drive_safe_encode_args(fps=fps, include_audio=bool(voice)),str(outp)],capture_output=True,text=True)
+                if r2.returncode: raise RuntimeError(r2.stderr[:500])
+                return str(outp)
+            return burn_captions(str(base), words, str(outp), caption_style=caption_style, shift_s=voice_offset, caption_y=caption_y, report_path=report, fontsize=caption_size, words_per_chunk=words_per_chunk)
         base.replace(outp)
     return str(outp)
 

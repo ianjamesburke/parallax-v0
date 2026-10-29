@@ -1162,7 +1162,13 @@ def export_editor_package(
     vo_duration_s = _probe_media_duration_s(audio_src)
     if vo_duration_s <= 0:
         vo_duration_s = float(scenes[-1].get("end_s") or sum(float(s.get("duration_s", 5.0)) for s in scenes))
-    vo_frames = max(len(scenes), round(vo_duration_s * fps))
+    has_explicit_end = all(
+        s.get("start_s") is not None and s.get("end_s") is not None for s in scenes
+    )
+    if has_explicit_end and float(scenes[-1].get("end_s") or 0.0) > 0:
+        vo_frames = max(len(scenes), round(float(scenes[-1]["end_s"]) * fps))
+    else:
+        vo_frames = max(len(scenes), round(vo_duration_s * fps))
     vo_channels, vo_samplerate = _probe_audio_stream_info(audio_src)
 
     # Resolve optional music file before cleaning out_dir

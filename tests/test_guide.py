@@ -105,7 +105,15 @@ def test_guide_topics_chain_and_cross_references_resolve(capsys):
         assert target is None or target in names
         for ref in (data["stage"].get("see", []) if "stage" in data else data.get("see", [])):
             assert ref in names
-    assert {"produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll", "single_shot", "character_first"} <= names
+    assert {"produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll", "single_shot", "character_first", "cut"} <= names
+
+
+def test_cut_guide_topic_documents_agent_workflow_and_mapping_format(capsys):
+    topic = _topic(capsys, "cut")
+    assert "agent_workflow" in topic
+    assert topic["mapping_format"]["version"] == 1
+    assert isinstance(topic["mapping_format"]["segments"], list)
+    assert any("parallax cut" in cmd for cmd in topic["commands"])
 
 
 def test_single_shot_guide_derives_end_frame_models_from_catalog(capsys):
@@ -227,3 +235,32 @@ def test_motion_graphic_guide_instructs_using_motion_styles_and_pil_templates(ca
         assert "text-overlay" in text
         assert "Remotion" not in text
         assert "remotion" not in text
+
+
+def test_existing_clips_entry_point_is_on_first_screen_of_guide_and_help(capsys):
+    assert cli.main(["guide"]) == 0
+    raw = capsys.readouterr().out
+    guide = json.loads(raw)
+    assert list(guide)[:3] == ["guide_version", "cli_version", "start_here"]
+    assert "parallax guide cut" in guide["start_here"] and "parallax cut --help" in guide["start_here"]
+    assert raw.index("start_here") < raw.index('"stages"')
+    assert cli.main(["--help"]) == 0
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Have clips and a script already? Run `parallax guide cut`" in out
+    assert out.index("parallax guide cut") < out.index("Agents: start with")
+
+
+def test_cut_guide_documents_cut_map_format_so_agents_need_not_read_source(capsys):
+    assert cli.main(["guide", "cut"]) == 0
+    topic = json.loads(capsys.readouterr().out)
+    fmt = topic["cut_map_format"]
+    assert set(fmt["segment_fields"]) == {"anchor", "clip", "in", "note"}
+    assert "required" in fmt["segment_fields"]["anchor"] and "required" in fmt["segment_fields"]["clip"]
+    assert "SCRIPT ORDER" in fmt["file"]
+    # the documented example must be a map the real loader accepts
+    import yaml
+    example = yaml.safe_load(fmt["example"])
+    assert example["version"] == 1 and all({"anchor", "clip"} <= set(s) for s in example["segments"])
+    assert set().union(*(set(s) for s in example["segments"])) <= set(fmt["segment_fields"])
+    assert "tts-gemini" in topic["voice_defaults"] and "Charon" in topic["voice_defaults"]
+    assert "--no-strict-vo" in topic["voiceover_hygiene"]["verification"]

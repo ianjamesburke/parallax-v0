@@ -171,7 +171,7 @@ _STAGES = [
         ],
         "preconditions": ["human approved the storyboard", "no open reference gates", "human has seen the printed estimate"],
         "human_decision": {"question": "Is the estimate `parallax produce` prints acceptable for this project?", "ask_only_if_unresolved": False},
-        "see": ["produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll", "export"],
+        "see": ["produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll", "export", "cut"],
         "review_boundary": "Dry run first with PARALLAX_TEST_MODE=1 (stub assets, no network),; it writes nothing into plan.yaml. Lock approved assets before re-running; unlocked scenes regenerate and cost money.",
         "spends_money": True,
         "next": None,
@@ -235,6 +235,7 @@ def build_guide(group: Any, topic: str | None = None) -> dict:
         return {**header, "topic": topic, "stage": stage, **({"brief": _BRIEF} if topic == "brief" else {})}
     return {
         **header,
+        "start_here": "Have clips and a script already? Run `parallax guide cut` (then `parallax cut --help`). The stages below are for generating footage.",
         "invocation": "`parallax` stands for however you run this checkout or install, e.g. `uv run parallax`.",
         "discovery": ["parallax --help", "parallax <command> --help", "parallax schema brief", "parallax schema plan", "parallax schema cli", "parallax guide", "parallax guide <topic>"],
         "topics": {

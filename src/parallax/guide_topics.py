@@ -57,7 +57,7 @@ TOPICS: dict[str, dict] = {
             "# --shots shots.json also accepts clip {\"path\": \"clip.mp4\", \"trim_start\": 1.5, \"duration\": 2.0, \"speed\": 1.25}",
             "parallax video captions --video final.mp4 --words words.json --report boxes.json --out captioned.mp4",
         ],
-        "contract": "All commands use local ffmpeg only. text-overlay outputs a silent clip appropriate for scene_type: motion_graphic clip_path. Caption reports expose actual safe-area boxes.",
+        "contract": "All commands use local ffmpeg only. text-overlay outputs a silent clip appropriate for scene_type: motion_graphic clip_path. Caption reports expose actual safe-area boxes. `video assemble` defaults to `--encode-preset drive-safe` (H.264 High@L4.0, yuv420p, CFR, -bf 2 -g 48, AAC-LC 48kHz stereo, +faststart, stripped encoder tags; pass `--encode-preset source` for legacy settings).",
         "social_ad_example": "9:16 social ad: shots.json starts with animated clips using trim_start and speed; after about 15 seconds use stills with move: pan-left/pan-right; insert the count-up graphic as a motion_graphic clip; then assemble at 1080x1920 with the delayed VO, --caption-y .72, and --report.",
     },
     "character_first": {
@@ -300,6 +300,61 @@ TOPICS: dict[str, dict] = {
             "README.txt": "Import steps for Premiere Pro, DaVinci Resolve, Final Cut Pro, and CapCut.",
             "handoff.json": "Machine-readable manifest with relative file paths, frame and second timings, fps, and warnings.",
         },
+        "next": "cut",
+    },
+    "cut": {
+        "summary": "Assemble a folder of existing clips to a script (`parallax cut`): voiceover (with idempotent cache), script-token alignment, midpoint-of-gap scene plan, manifest.yaml, captioned MP4, and XML editor export from ONE manifest.",
+        "design_principle": "Parallax never guesses clip-to-script visual matching with a model. The calling agent inspects clips (with its own vision or `parallax ingest`), writes `cut-map.yaml` (or relies on deterministic name/marker inference), runs `parallax cut --plan-only`, then runs `parallax cut`.",
+        "agent_workflow": [
+            {"step": 1, "do": "Inspect clips in `--clips DIR` (e.g. `parallax ingest <dir> --estimate` or sample frames with your own vision)."},
+            {"step": 2, "do": "Author `cut-map.yaml` mapping script opening phrases (`anchor`) to clip filenames/stems in script order, or run `parallax cut --script script.txt --clips clips/ --out out.mp4 --plan-only` first to generate `<project>/cut-map.template.yaml`."},
+            {"step": 3, "do": "Dry-run the plan with `parallax cut --script script.txt --clips clips/ --map cut-map.yaml --out out.mp4 --plan-only` (zero paid calls, zero renders; exits 0 if renderable, 2 on mapping/overrun issues)."},
+            {"step": 4, "do": "Run `parallax cut --script script.txt --clips clips/ --map cut-map.yaml --out out.mp4` to synthesize/reuse cached voiceover, write `<project>/manifest.yaml`, render the captioned video, and export `<project>/assets/timeline.xml`."},
+            {"step": 5, "do": "If you hand-edit `<project>/manifest.yaml` timings or trims, re-run `parallax cut --from-manifest <project>/manifest.yaml --out out.mp4` so the MP4 and `timeline.xml` stay 100% identical."},
+        ],
+        "mapping_format": {
+            "version": 1,
+            "segments": [
+                {"anchor": "45 AD.", "clip": "Scene_01.mp4", "in": 0.0, "note": "optional note"},
+                {"anchor": "Desperate,", "clip": "Scene_02"},
+            ],
+        },
+        "cut_map_format": {
+            "file": "`cut-map.yaml` (or `.json`), passed with `--map`. Top level: `version: 1` and a non-empty `segments` list, in SCRIPT ORDER. Any other key is an error.",
+            "segment_fields": {
+                "anchor": "required. The first words of the script line where this clip starts (2-5 words, copied from the script; punctuation and case ignored; numerals match as spelled in the script). Must appear after the previous segment's anchor.",
+                "clip": "required. Clip filename or stem from `--clips` (`Scene_07.mp4` or `Scene_07`).",
+                "in": "optional. Seconds into the clip to start from (default: continue where the clip last stopped, or 0). Must be < clip duration.",
+                "note": "optional free text for humans; ignored.",
+            },
+            "rules": [
+                "A segment runs from its anchor to the next segment's anchor (the last one to the end of the audio), so one anchor per cut you want on screen.",
+                "The same clip may appear several times; later uses continue from where the previous one ended, and restart at 0 with a warning when the remainder is too short. Use `in` to pick a specific moment.",
+                "A clip shorter than its slot is an overrun: `--plan-only` exits 2 and names the segment. Add a segment (another anchor inside that line) or map a longer clip. `--allow-hold` freezes the last frame instead.",
+                "Bad maps exit 2 with every error at once (unknown clip, anchor not found plus closest script sentences, anchors out of order); fix them all, then re-run `--plan-only` (free).",
+                "With no `--map`, `parallax cut --plan-only` writes `<project>/cut-map.template.yaml` with one empty `clip:` per sentence: fill in the clips and rename it.",
+            ],
+            "example": "version: 1\nsegments:\n  - anchor: \"45 AD.\"\n    clip: Scene_01.mp4\n  - anchor: \"Why deer antlers?\"\n    clip: Scene_07\n    in: 1.5\n  - anchor: \"Case closed?\"\n    clip: Scene_09.mp4\n    note: payoff beat",
+        },
+        "voice_defaults": "Narration defaults to `--voice-model tts-gemini --voice Charon` (reads long scripts verbatim). `tts-mini` is an audio chat model that can answer the delivery instructions instead of reading, so choose it only for short lines. Pick any other Gemini voice with `--voice` (Kore, Puck, Fenrir, Aoede...).",
+        "mapping_resolution_order": [
+            "1. `--map FILE` (YAML or JSON): validates all segments at once (unknown clip, missing anchor with closest candidate sentences, non-monotonic anchors).",
+            "2. Name inference (when `--map` is omitted): (i) inline script markers (`[Scene_03]`, `[scene 3]`, `Scene 3:`), stripped from spoken/caption text; (ii) numbered clips (`Scene_01`, `clip2`, ...) when paragraph count == clip count; (iii) numbered clips when sentence count == clip count.",
+            "3. Otherwise exits 2 with a `MAPPING NEEDED` report and writes `<project>/cut-map.template.yaml`.",
+        ],
+        "commands": [
+            "parallax cut --script script.txt --clips clips/ --map cut-map.yaml --out out.mp4 --plan-only",
+            "parallax cut --script script.txt --clips clips/ --map cut-map.yaml --out out.mp4",
+            "parallax cut --script script.txt --clips clips/ --map cut-map.yaml --audio vo.mp3 --words words.json --out out.mp4",
+            "parallax cut --from-manifest out.cut/manifest.yaml --out out.mp4",
+        ],
+        "voiceover_cache": "Idempotent two-tier + per-chunk cache under `<project>/cache/vo/` and `<project>/cache/vo/chunks/`: `--vo-chunk-seconds` (default 60; 0 disables chunking) splits scripts at paragraph/sentence boundaries with `--vo-gap` (default 0.25s) silence between chunks. Editing one sentence re-synthesizes only that chunk; changing `--speed` (default 1.15), `--max-sentence-silence` (default 0.25), or `--vo-lufs` (default -16) re-processes cached raw chunks locally with zero TTS calls. Pass `--force` to bypass.",
+        "voiceover_hygiene": {
+            "energy_pause_trim": "Cuts only at the midpoint of ffmpeg `silencedetect` intervals (-35dB, >=0.12s) inside alignment gaps, keeping >=0.15s lead-in/lead-out (2x margin around tokens aligned >0.6s) and expanding numerals (e.g. `97%` -> `ninety seven percent`) for alignment matching while preserving script text in captions.",
+            "loudness": "`--vo-normalize/--no-vo-normalize` (default on) runs per-chunk two-pass EBU R128 `loudnorm` to `--vo-lufs` (default -16 LUFS, TP -1.5, LRA 11), measures integrated LUFS per chunk and on the final concatenated voiceover, writes `<project>/voiceover.loudness.json`, and warns if any chunk deviates from the mean chunk LUFS by more than `--vo-lufs-tolerance` (default 1.5 LU).",
+            "verification": "`--vo-verify/--no-vo-verify` (default on) transcribes raw and trimmed audio to verify no script words were dropped: provider omissions trigger up to `--vo-retries` (default 2) per-chunk regenerations (saving `.rejected` takes), and trim-induced losses escalate pause-trim margins (`0.15s -> 0.30s -> 0.50s -> untrimmed`). If chunks still fail after retries, `cut` exits 1, names the failed chunks, evicts them from the cache and renders nothing (`--strict-vo` is the default; `--no-strict-vo` renders anyway with a warning).",
+        },
+        "encode_preset": "`--encode-preset drive-safe|source` (default `drive-safe`): H.264 High@L4.0, yuv420p, CFR, `-bf 2 -g 48`, even dimensions, stereo 48kHz AAC-LC (`+faststart`, stripped encoder tags) for Google Drive, QuickTime, and iOS preview compatibility.",
         "next": None,
     },
 }
