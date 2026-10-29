@@ -14,7 +14,7 @@ Schema (informal):
 
     goal: "Promote the new Lion energy drink"
     aspect: 9:16          # 9:16 | 16:9 | 1:1 | 4:3 | 3:4
-    voice: nova            # TTS voice name (OpenAI: nova, shimmer, alloy, echo, fable, onyx)
+    voice: Charon          # TTS voice name (Gemini default; choose nova with tts-mini)
     voice_speed: 1.15
     success_criteria:
       - "Hook lands in <2s"
@@ -211,7 +211,7 @@ class Brief(BaseModel):
     concept_id: str | None = None
     headline: str | None = None  # opening overlay, never included in voiceover
     aspect: Literal["9:16", "16:9", "1:1", "4:3", "3:4"] = "9:16"
-    voice: str = "nova"
+    voice: str = "Charon"
     voice_prompt: str | None = None
     brand: dict[str, Any] | None = None
     voice_speed: float = 1.15

@@ -60,7 +60,7 @@ def test_brief_defaults_apply_when_optional_fields_omitted(tmp_path):
     })
     brief = Brief.from_yaml(p)
     assert brief.aspect == "9:16"
-    assert brief.voice == "nova"
+    assert brief.voice == "Charon"
     assert brief.voice_speed == 1.15
     assert brief.script.scenes[0].shot_type == "broll"
     assert brief.script.scenes[0].animate is False

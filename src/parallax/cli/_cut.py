@@ -225,7 +225,7 @@ def cut_cmd(
     vo_retries: int = typer.Option(
         2,
         "--vo-retries",
-        help="Max per-chunk TTS regeneration retries when verification detects missing words or low similarity (default: 2).",
+        help="Max per-chunk TTS regeneration retries; use 0 to cap spend while verification fails closed (default: 2).",
     ),
     strict_vo: bool = typer.Option(
         True,

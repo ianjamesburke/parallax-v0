@@ -197,11 +197,9 @@ def test_generate_voiceover_routes_to_gemini_by_default(tmp_path, monkeypatch):
     from parallax import openrouter
     monkeypatch.setattr(openrouter, "generate_tts", fake_tts)
 
-    out = json.loads(voiceover.generate_voiceover(
-        "hi", voice="nova", out_dir=str(tmp_path),
-    ))
-    assert captured["alias"] == "tts-mini"
-    assert captured["voice"] == "nova"
+    out = json.loads(voiceover.generate_voiceover("hi", out_dir=str(tmp_path)))
+    assert captured["alias"] == "tts-gemini"
+    assert captured["voice"] == "Charon"
     assert Path(out["audio_path"]).exists()
 
 

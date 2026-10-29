@@ -51,6 +51,7 @@ from .models import TTS_MODELS
 from .preflight import print_estimate
 from .settings import _ASPECT_TO_RESOLUTION
 from .shim import is_test_mode
+from .voice_defaults import DEFAULT_VOICE, DEFAULT_VOICE_MODEL, default_voice_for
 from .voiceover import (
     ElevenLabsVoiceProvider,
     OpenRouterVoiceProvider,
@@ -100,18 +101,6 @@ _NUMBER_WORDS: dict[str, str] = {
     "eighty": "80",
     "ninety": "90",
 }
-
-
-DEFAULT_VOICE_MODEL = "tts-gemini"
-DEFAULT_VOICE = "Charon"
-# `tts-mini` is an audio chat model and tends to answer delivery instructions instead of
-# reading long scripts verbatim, so it is not the default for `cut`.
-_MODEL_DEFAULT_VOICE = {"tts-mini": "nova", "tts-gemini": "Charon"}
-
-
-def default_voice_for(voice_model: str) -> str:
-    """Voice used when `--voice` is omitted: a voice that exists for `voice_model`."""
-    return _MODEL_DEFAULT_VOICE.get(voice_model, DEFAULT_VOICE)
 
 
 class CutError(Exception):
