@@ -13,7 +13,8 @@
 # and `capabilities.end_frame` flags end-frame conditioning.
 #
 # `request:` holds extra explicit API parameters. veo-lite sets generate_audio:false
-# because parallax strips clip audio at assembly; paying for it would cost 67% more.
+# and resolution:720p because parallax strips clip audio at assembly: it bills
+# $0.03/s at 720p without audio, versus about $0.05/s at silent 1080p.
 #
 # Seedance and Grok generate at 480p by default (animate_resolution) and are upscaled
 # at assembly. The `size` sent comes from the plan's animate_resolution, so a model
@@ -130,9 +131,9 @@
   tier: default
   cost: 0.03
   unit: second
-  description: "Google Veo 3.1 Lite at 720p without audio. Measured $0.030/s (4 s clip = $0.120, output 720x1280): cheaper than seedance and native 720p. Set animate_resolution: 720x1280 in the plan."
+  description: "Google Veo 3.1 Lite: $0.030/s at 720p without audio (4 s clip = $0.120, output 720x1280); parallax sends 720p by default. Silent 1080p bills about $0.05/s. Cheaper than seedance and native 720p. Set animate_resolution: 720x1280 in the plan."
   fallback: seedance
-  request: {generate_audio: false}
+  request: {generate_audio: false, resolution: "720p"}
   durations: [8, 4, 6]
   capabilities:
     aspect_ratios: ["9:16", "16:9"]

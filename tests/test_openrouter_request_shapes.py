@@ -223,6 +223,7 @@ def test_video_real_passes_size_and_aspect_ratio_only_when_specified(monkeypatch
     openrouter.generate_video("x", alias="seedance", duration_s=4, out_dir=tmp_path)
     body = rec.posts[-1][1]
     assert "size" not in body and "aspect_ratio" not in body
+    assert "resolution" not in body, "catalog defaults must not leak to other models"
 
     # With both
     state["calls"] = 0
@@ -231,6 +232,40 @@ def test_video_real_passes_size_and_aspect_ratio_only_when_specified(monkeypatch
     body = rec.posts[-1][1]
     assert body["size"] == "1280x720"
     assert body["aspect_ratio"] == "16:9"
+    assert "resolution" not in body
+
+
+def test_veo_lite_sends_default_or_requested_resolution(monkeypatch, tmp_path):
+    """Veo Lite's 720p price requires both silent audio and its API tier."""
+    rec = _Recorder()
+
+    def fake_post(url, *, headers, json, timeout):
+        rec.posts.append((url, json))
+        return _FakeResponse(202, {"id": "x", "polling_url": "https://example.com/x", "status": "pending"})
+
+    state = {"calls": 0}
+    def stateful_get(url, *, headers, timeout):
+        state["calls"] += 1
+        if state["calls"] % 2:
+            return _FakeResponse(200, {"status": "completed", "unsigned_urls": ["https://example.com/x/content"]})
+        return _FakeResponse(200, content=b"BYTES")
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", stateful_get)
+    monkeypatch.setattr(openrouter, "_VIDEO_POLL_INTERVAL_S", 0.0)
+
+    openrouter.generate_video("x", alias="veo-lite", duration_s=4, out_dir=tmp_path)
+    body = rec.posts[-1][1]
+    assert body["generate_audio"] is False
+    assert body["resolution"] == "720p"
+
+    openrouter.generate_video("x", alias="veo-lite", duration_s=4, out_dir=tmp_path, resolution="1080p")
+    assert rec.posts[-1][1]["resolution"] == "1080p"
+
+    openrouter.generate_video("x", alias="veo-lite", duration_s=4, out_dir=tmp_path, size="1080x1920")
+    body = rec.posts[-1][1]
+    assert body["size"] == "1080x1920"
+    assert body["resolution"] == "1080p"
 
 
 def test_video_real_strips_openrouter_prefix_from_model_id(monkeypatch, tmp_path):

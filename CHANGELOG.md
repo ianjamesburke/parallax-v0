@@ -6,6 +6,7 @@ Newest releases appear first.
 ### Changes
 - fix(produce): default plan narration to Gemini Charon while retaining `tts-mini` / `nova` for explicit or legacy named mini voices
 - docs(cut): document `--vo-retries 0` as the fail-closed TTS-spend cap
+- fix: send Veo Lite's `resolution: 720p` by default with audio disabled ($0.03/s); silent 1080p is about $0.05/s
 - fix(audio): default standalone `audio voiceover` narration to Gemini Charon, while preserving `nova` for an explicit `tts-mini` selection
 - fix(cut): retry a failed per-chunk ASR verification once before evicting cached audio or regenerating TTS
 - docs(guide): route script-plus-footage workflows directly to `parallax cut`
