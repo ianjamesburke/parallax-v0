@@ -46,6 +46,9 @@ class ModelSpec:
     # Only set for models that generate at a fixed lower resolution and get
     # upscaled during ffmpeg assembly (e.g. "480p" for Seedance).
     native_resolution: str | None = None
+    # Provider resolution tiers accepted by this model (e.g. "720p").
+    # Kept separately from native_resolution, which describes its usual output.
+    resolutions: tuple[str, ...] = ()
     # Explicit extra API parameters for the generation request. Image kind:
     # {"quality": "low"} or {"resolution": "1K"}, chosen per entry as the smallest
     # output with a short side of at least 720 px. Video kind: e.g. {"generate_audio": False}.

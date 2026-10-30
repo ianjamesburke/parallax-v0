@@ -318,6 +318,7 @@ def generate_video(
     out_dir: Path | None = None,
     size: str | None = None,
     aspect_ratio: str | None = None,
+    resolution: str | None = None,
     allow_fallback: bool = False,
     on_submit=None,
 ) -> Path:
@@ -325,6 +326,8 @@ def generate_video(
     `aspect_ratio` is e.g. '9:16'. Each video model has its own
     `supported_sizes` list (verifiable via `/api/v1/videos/models`); requesting
     a size outside that list will fail at submit time with a clear error.
+    `resolution` is an optional provider tier such as '720p' and overrides a
+    catalog request default.
 
     `end_image_path` — when set, is sent as a `last_frame` conditioning image
     alongside the `first_frame` start image, directing the model to interpolate
@@ -360,6 +363,7 @@ def generate_video(
         primary_call=lambda spec: _video_real(
             prompt, spec, image_path, duration_s, out_dir,
             size=size, aspect_ratio=aspect_ratio,
+            resolution=resolution,
             end_image_path=end_image_path,
             input_references=input_references,
             on_submit=on_submit,
