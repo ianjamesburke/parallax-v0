@@ -149,12 +149,12 @@ TOPICS: dict[str, dict] = {
         "plan_fields": {
             "image_model": "Alias for stills (default mid).",
             "video_model": "Alias for animation (default draft).",
-            "voice_model": "Alias for plan.yaml narration (this separate production-pipeline setting defaults to tts-mini).",
+            "voice_model": "Alias for plan.yaml narration (default tts-gemini with Charon).",
             "per_scene": "A scene may override image_model, video_model, voice_model.",
         },
         "tiers": "`draft` / `mid` / `premium` exist per kind; `--hq` on produce selects the premium tier. Named aliases (e.g. grok-image, veo-lite, tts-gemini) come from the catalog.",
         "choose_by": ["the approved references (the model's max reference count and supported inputs)", "output aspect and resolution", "shot duration", "the agreed budget"],
-        "tts": "`tts-gemini` uses the dedicated `/audio/speech` endpoint (voices: Kore, Fenrir, Aoede, Sulafat, etc.), reads long multi-scene scripts verbatim without chat-model abridgement, and passes inline [emotional] tags (e.g. `[dramatically] Hello.`) to the model. `tts-mini` (OpenAI chat_audio, voices: nova, alloy, shimmer, etc.) strips tags and is best for short scripts; prefer `voice_model: tts-gemini` with a matching Gemini voice (`Kore`, `Aoede`, etc.) for multi-scene scripts (10+ scenes).",
+            "tts": "Plan narration defaults to `tts-gemini` / `Charon`. `tts-gemini` uses the dedicated `/audio/speech` endpoint (voices: Kore, Fenrir, Aoede, Sulafat, etc.), reads long multi-scene scripts verbatim without chat-model abridgement, and passes inline [emotional] tags (e.g. `[dramatically] Hello.`) to the model. `tts-mini` (OpenAI chat_audio, voices: nova, alloy, shimmer, etc.) strips tags and is best for short scripts; select `voice_model: tts-mini` with its matching voice when needed.",
         "style_fields": "Plan `style` and `style_hint` steer voice synthesis only, not still generation. Put the art style in each executable still prompt.",
         "next": "cost",
     },
@@ -354,7 +354,7 @@ TOPICS: dict[str, dict] = {
         "voiceover_hygiene": {
             "energy_pause_trim": "Cuts only at the midpoint of ffmpeg `silencedetect` intervals (-35dB, >=0.12s) inside alignment gaps, keeping >=0.15s lead-in/lead-out (2x margin around tokens aligned >0.6s) and expanding numerals (e.g. `97%` -> `ninety seven percent`) for alignment matching while preserving script text in captions.",
             "loudness": "`--vo-normalize/--no-vo-normalize` (default on) runs per-chunk two-pass EBU R128 `loudnorm` to `--vo-lufs` (default -16 LUFS, TP -1.5, LRA 11), measures integrated LUFS per chunk and on the final concatenated voiceover, writes `<project>/voiceover.loudness.json`, and warns if any chunk deviates from the mean chunk LUFS by more than `--vo-lufs-tolerance` (default 1.5 LU).",
-            "verification": "`--vo-verify/--no-vo-verify` (default on) transcribes raw and trimmed audio to verify no script words were dropped: a failed chunk is transcribed once more before provider omissions trigger up to `--vo-retries` (default 2) per-chunk regenerations (saving `.rejected` takes), and trim-induced losses escalate pause-trim margins (`0.15s -> 0.30s -> 0.50s -> untrimmed`). If both transcripts still fail, `cut` exits 1, names the failed chunks, evicts them from the cache and renders nothing (`--strict-vo` is the default; `--no-strict-vo` renders anyway with a warning).",
+            "verification": "To cap TTS spend, pass `--vo-retries 0` and keep verification on: it fails closed without extra spend; do not use `--no-vo-verify` or `--vo-chunk-seconds 0`. `--vo-verify/--no-vo-verify` (default on) transcribes raw and trimmed audio to verify no script words were dropped: a failed chunk is transcribed once more before provider omissions trigger up to `--vo-retries` (default 2) per-chunk regenerations (saving `.rejected` takes), and trim-induced losses escalate pause-trim margins (`0.15s -> 0.30s -> 0.50s -> untrimmed`). If both transcripts still fail, `cut` exits 1, names the failed chunks, evicts them from the cache and renders nothing (`--strict-vo` is the default; `--no-strict-vo` renders anyway with a warning).",
         },
         "encode_preset": "`--encode-preset drive-safe|source` (default `drive-safe`): H.264 High@L4.0, yuv420p, CFR, `-bf 2 -g 48`, even dimensions, stereo 48kHz AAC-LC (`+faststart`, stripped encoder tags) for Google Drive, QuickTime, and iOS preview compatibility.",
         "next": None,

@@ -27,6 +27,7 @@ from .ffmpeg_utils import run_ffmpeg
 from .log import get_logger
 from .models import TTS_MODELS
 from .shim import is_test_mode, output_dir
+from .voice_defaults import DEFAULT_VOICE, DEFAULT_VOICE_MODEL
 
 log = get_logger(__name__)
 
@@ -281,11 +282,11 @@ def _restore_pronunciations(
 
 def generate_voiceover_dict(
     text: str,
-    voice: str = "nova",
+    voice: str = DEFAULT_VOICE,
     out_dir: str | None = None,
     style: str | None = None,
     style_hint: str | None = None,
-    voice_model: str = "tts-mini",
+    voice_model: str = DEFAULT_VOICE_MODEL,
     pronunciations: dict[str, str] | None = None,
     trim_pauses: bool | float = True,
     verify: bool = False,
@@ -300,8 +301,8 @@ def generate_voiceover_dict(
     Speed adjustment is
     handled separately by `audio.speedup` / `stage_speed_adjust`.
 
-    `voice` is an OpenAI voice name (e.g. 'nova', 'shimmer', 'alloy'). See
-    `parallax models show tts-mini` for the full list.
+    By default this uses Gemini's Charon voice. Select `tts-mini` explicitly
+    for its OpenAI-style voices (e.g. `nova`, `shimmer`, `alloy`).
 
     `style` accepts presets from `gemini_tts.STYLE_PRESETS`
     (`rapid_fire`, `fast`, `calm`, `natural`); `style_hint` is freeform.
@@ -407,11 +408,11 @@ def generate_voiceover_dict(
 
 def generate_voiceover(
     text: str,
-    voice: str = "nova",
+    voice: str = DEFAULT_VOICE,
     out_dir: str | None = None,
     style: str | None = None,
     style_hint: str | None = None,
-    voice_model: str = "tts-mini",
+    voice_model: str = DEFAULT_VOICE_MODEL,
     pronunciations: dict[str, str] | None = None,
     trim_pauses: bool | float = True,
     voice_prompt: str | None = None,
@@ -602,7 +603,7 @@ class OpenRouterVoiceProvider:
 
     def __init__(
         self,
-        voice_model: str = "tts-mini",
+        voice_model: str = DEFAULT_VOICE_MODEL,
         *,
         style_hint: str | None = None,
         voice_prompt: str | None = None,
@@ -616,7 +617,7 @@ class OpenRouterVoiceProvider:
     def synthesize(
         self,
         text: str,
-        voice: str = "nova",
+        voice: str = DEFAULT_VOICE,
         style: str | None = None,
         *,
         out_dir: str | Path | None = None,
@@ -692,7 +693,7 @@ class ElevenLabsVoiceProvider:
 
 
 def get_voice_provider(
-    voice_model: str = "tts-mini",
+    voice_model: str = DEFAULT_VOICE_MODEL,
     *,
     style_hint: str | None = None,
     voice_prompt: str | None = None,
@@ -737,4 +738,3 @@ def coerce_synthesis_result(
         cost = float(raw_res[3]) if len(raw_res) > 3 else default_cost_usd
         return VoiceSynthesisResult(audio_path=apath, words=words, duration_s=dur, cost_usd=cost)
     raise TypeError(f"Unsupported VoiceProvider.synthesize return type: {type(raw_res).__name__}")
-

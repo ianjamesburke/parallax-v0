@@ -180,7 +180,7 @@ def plan_from_brief(
     *,
     image_model: str = "mid",
     video_model: str = "draft",
-    voice_model: str = "tts-mini",
+    voice_model: str | None = None,
     caption_style: str = "anton",
     stills_only: bool = False,
 ) -> PlanResult:
@@ -199,6 +199,8 @@ def plan_from_brief(
         video_model: Video model alias. Currently unused at the plan
             level but accepted so callers can pass it without raising;
             reserved for the upcoming per-scene model split.
+        voice_model: Narration model alias. When omitted, Gemini is used
+            with Charon except for a known legacy mini voice such as nova.
         caption_style: Caption preset name written into
             `plan.caption_style`. Defaults to "anton".
 
@@ -232,7 +234,10 @@ def plan_from_brief(
     plan = brief.to_plan_skeleton(stills_only=stills_only)
     plan["image_model"] = image_model
     plan["video_model"] = video_model
+    from .voice_defaults import resolve_voice_defaults
+    voice_model, voice = resolve_voice_defaults(voice_model, plan.get("voice"))
     plan["voice_model"] = voice_model
+    plan["voice"] = voice
     plan["caption_style"] = caption_style
     resolved_brief = brief_path.expanduser().resolve()
     plan["source_brief"] = str(resolved_brief.relative_to(folder)) if resolved_brief.is_relative_to(folder) else str(resolved_brief)

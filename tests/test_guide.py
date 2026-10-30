@@ -274,4 +274,6 @@ def test_cut_guide_documents_cut_map_format_so_agents_need_not_read_source(capsy
     assert example["version"] == 1 and all({"anchor", "clip"} <= set(s) for s in example["segments"])
     assert set().union(*(set(s) for s in example["segments"])) <= set(fmt["segment_fields"])
     assert "tts-gemini" in topic["voice_defaults"] and "Charon" in topic["voice_defaults"]
+    assert "--vo-retries 0" in topic["voiceover_hygiene"]["verification"]
+    assert "--no-vo-verify" in topic["voiceover_hygiene"]["verification"]
     assert "--no-strict-vo" in topic["voiceover_hygiene"]["verification"]

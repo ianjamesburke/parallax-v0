@@ -2,8 +2,12 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-10-29 — [FIX] Gemini defaults for plan and produce narration
+Plan/produce narration now shares the standalone and cut default: `tts-gemini` / `Charon`, including raw-dict settings, preflight cost estimates, generated plans, provider APIs, and test-mode scaffolding. An explicit `voice_model: tts-mini` still supplies `nova` when voice is omitted. For compatibility, a plan that names a known mini voice such as `nova` without a model infers `tts-mini`; all other omitted-model plans resolve to Gemini Charon. `parallax guide cut` now recommends `--vo-retries 0` with verification left on as the no-extra-regeneration spend cap.
+**Breaks if:** a no-voice/no-model plan does not resolve to Gemini Charon; an explicit mini model does not resolve to nova; or a legacy `voice: nova` plan fails validation because it was silently paired with Gemini.
+
 ## 2026-10-29 — [FIX] Existing-footage cut routing and resilient voiceover checks
-Standalone `parallax audio voiceover` now defaults to `tts-gemini` / `Charon`; explicitly selecting `--voice-model tts-mini` without `--voice` still resolves to `nova`. `models list` presents Gemini as the default TTS choice. The plan/produce pipeline retains its independently configured `tts-mini` default. The guide and relevant command help now send a script plus existing clips to `parallax cut`, rather than the generated-footage pipeline or hand assembly. `cut` re-transcribes a failed raw or processed chunk once before a provider retry, cache eviction, or strict failure; `voiceover.verify.json` records `asr_retries` and `retranscribed` per chunk. A repeated transcript loss still fails closed.
+Standalone `parallax audio voiceover` now defaults to `tts-gemini` / `Charon`; explicitly selecting `--voice-model tts-mini` without `--voice` still resolves to `nova`. `models list` presents Gemini as the default TTS choice. The guide and relevant command help now send a script plus existing clips to `parallax cut`, rather than the generated-footage pipeline or hand assembly. `cut` re-transcribes a failed raw or processed chunk once before a provider retry, cache eviction, or strict failure; `voiceover.verify.json` records `asr_retries` and `retranscribed` per chunk. A repeated transcript loss still fails closed.
 **Breaks if:** `parallax audio voiceover --help` names `tts-mini` as its default; `parallax guide` routes existing clips to intake/produce; or a one-off chunk ASR failure triggers another TTS call or deletes a passing cached take.
 
 ## 2026-10-19 — [FIX] Agent guide front door, recoverable paid runs, and end-frame estimates
