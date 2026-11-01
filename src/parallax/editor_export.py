@@ -18,7 +18,7 @@ from typing import Any
 import yaml
 
 from .assembly import _make_kb_clip, _resolve_auto_trim
-from .captions.chunker import _fixed_chunk_words, _smart_chunk_words
+from .captions.chunker import chunk_words
 from .ffmpeg_utils import (
     parse_resolution,
     pipe_rawvideo_frames,
@@ -311,18 +311,18 @@ def _format_srt_timestamp(seconds: float) -> str:
 
 
 def _build_srt(words: list[dict[str, Any]], words_per_chunk: int | str = "smart") -> str:
-    """Build SubRip (.srt) content from word timings using Parallax's chunker."""
-    if isinstance(words_per_chunk, str) and words_per_chunk.strip().lower() == "smart":
-        chunks = _smart_chunk_words(words, max_letters=4)
-    else:
+    """Build SubRip (.srt) content from word timings using Parallax's chunker.
+
+    Same word policy as burned captions (default style limits: ≤3 words, a 3rd
+    only when short); no font is involved, so there is no width split.
+    """
+    if not (isinstance(words_per_chunk, str) and words_per_chunk.strip().lower() == "smart"):
         try:
-            max_w = int(words_per_chunk)
+            n = int(words_per_chunk)
         except (TypeError, ValueError):
-            max_w = 0
-        if max_w >= 1:
-            chunks = _fixed_chunk_words(words, max_words=max_w)
-        else:
-            chunks = _smart_chunk_words(words, max_letters=4)
+            n = 0
+        words_per_chunk = n if n >= 1 else "smart"
+    chunks = chunk_words(words, words_per_chunk)
 
     blocks: list[str] = []
     prev_end_ms = 0

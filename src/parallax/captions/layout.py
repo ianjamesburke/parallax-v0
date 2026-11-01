@@ -77,24 +77,50 @@ def _restore_case(wrapped: str, original: str) -> str:
     return "".join(ch if ch.isspace() else next(it) for ch in wrapped)
 
 
-def layout_caption(text: str, width: int, height: int, fontsize: int, style: dict, center_y: float | None = None) -> dict:
-    """Wrap and shrink text until its outlined box is within the safe rectangle."""
+def _available_width(width: int, height: int, style: dict) -> int:
+    """Glyph+stroke width one caption line may use inside the safe rectangle.
+
+    The safe-area promise includes drawtext's box border, karaoke highlight
+    padding and shadow, not just the glyphs Pillow happens to measure.
+    """
     rect = safe_rectangle(width, height, style)
     avail_w = min(rect["right"] - rect["left"], round(width * float(style.get("max_line_width", .84))))
+    return avail_w - 2 * _visual_padding(style)[0]
+
+
+def fits_one_line(text: str, width: int, height: int, fontsize: int, style: dict) -> bool:
+    """True when `text` (as drawn: cased, stroked) fits one line at `fontsize`."""
+    font = _font(style, int(fontsize))
+    source = apply_case(style, text).replace("\n", " ")
+    return _measure(font, source, int(style.get("borderw", 0)))[0] <= _available_width(width, height, style)
+
+
+def layout_caption(text: str, width: int, height: int, fontsize: int, style: dict, center_y: float | None = None) -> dict:
+    """Wrap and shrink text until its outlined box is within the safe rectangle.
+
+    With `max_lines` 1 (every preset's default) the text is never wrapped or
+    character-split: an over-wide line only shrinks the font. Callers split
+    multi-word chunks first (`chunker.split_chunks_to_fit`) so in practice only
+    a single over-long word reaches the shrink loop.
+    """
+    rect = safe_rectangle(width, height, style)
+    avail_w = _available_width(width, height, style)
     avail_h = rect["bottom"] - rect["top"]
     stroke = int(style.get("borderw", 0))
     pad_x, pad_y = _visual_padding(style)
-    # The safe-area promise includes drawtext's box border and shadow, not just
-    # the glyphs Pillow happens to measure.
-    avail_w -= 2 * pad_x
+    max_lines = max(1, int(style.get("max_lines", 1)))
     # Measure the text as it will be drawn (uppercase/lowercase presets), but
     # return it in the caller's casing; drawtext applies the case transform.
     source = apply_case(style, text)
     for size in range(int(fontsize), 7, -1):
         font = _font(style, size)
-        wrapped = _wrap(source, font, avail_w, int(style.get("max_lines", 2)), stroke)
-        # Still too wide? Character-wrap the final long token before shrinking.
-        if _measure(font, wrapped, stroke)[0] > avail_w:
+        if max_lines == 1:
+            wrapped = " ".join(source.split())
+        else:
+            wrapped = _wrap(source, font, avail_w, max_lines, stroke)
+        # Still too wide? Character-wrap the final long token before shrinking
+        # (multi-line styles only; single-line captions shrink instead).
+        if max_lines > 1 and _measure(font, wrapped, stroke)[0] > avail_w:
             chars = []
             line = ""
             for char in source:
@@ -102,7 +128,7 @@ def layout_caption(text: str, width: int, height: int, fontsize: int, style: dic
                     chars.append(line); line = char
                 else: line += char
             if line: chars.append(line)
-            wrapped = "\n".join(chars[:int(style.get("max_lines", 2))])
+            wrapped = "\n".join(chars[:max_lines])
         lines = wrapped.split("\n")
         line_heights = [_measure(font, line, stroke)[1] for line in lines]
         bw = max(_measure(font, line, stroke)[0] for line in lines)

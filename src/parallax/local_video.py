@@ -99,7 +99,8 @@ def text_overlay(source: str, text: str, duration: float, out: str, *, preset="p
     from PIL import Image, ImageDraw
     from .captions.layout import layout_caption, _font
     from .captions.styles import resolve_caption_style, _FONTS_DIR
-    w,h=resolution(aspect, resolution_); style=resolve_caption_style("anton")
+    # Title overlays are not captions: keep the two-line wrap the single-line caption rule removed.
+    w,h=resolution(aspect, resolution_); style={**resolve_caption_style("anton"),"max_lines":2}
     layout=layout_caption(text,w,h,size,style)
     if position == "upper": layout["y"] = max(layout["safe"]["top"], h//3)
     elif position == "lower": layout["y"] = min(layout["safe"]["bottom"]-(layout["box"]["bottom"]-layout["box"]["top"]), h*2//3)
