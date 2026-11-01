@@ -237,8 +237,8 @@ def test_default_policy_on_pa9_words(name, wpc):
 
 
 def test_content_triples_rejected():
+    style = resolve_caption_style("karaoke")
     assert [c["text"] for c in chunk_words(_words("gel injected into"), "smart", style)] == ["gel", "injected into"]
-    assert [c["text"] for c in chunk_words(_words("gel injected into"), "smart", style)] == ["gel injected", "into"]  # 15 letters > 14; legacy greedy split
     assert [c["text"] for c in chunk_words(_words("really does."), "smart", style)] == ["really does."]
     assert [c["text"] for c in chunk_words(_words("lip filler really"), "smart", style)] == ["lip filler", "really"]
     for text in ("lip filler really", "gel injected into", "tiny delicate lip tissue"):
