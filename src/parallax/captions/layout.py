@@ -1,10 +1,9 @@
 """Measured, platform-safe caption layout shared by burn and text overlays."""
 from __future__ import annotations
 
-from pathlib import Path
 from PIL import ImageFont
 
-from .styles import _FONTS_DIR
+from .styles import apply_case, resolve_font_path
 
 
 def safe_rectangle(width: int, height: int, style: dict) -> dict[str, int]:
@@ -18,11 +17,8 @@ def safe_rectangle(width: int, height: int, style: dict) -> dict[str, int]:
 
 
 def _font(style: dict, size: int):
-    name = style.get("fontfile")
-    path = _FONTS_DIR / name if name else Path(style.get("system_font") or "")
-    # System Impact is absent on Linux CI; bundled Montserrat is a faithful safe fallback.
-    if not path.is_file(): path = _FONTS_DIR / "Montserrat-Black.ttf"
-    return ImageFont.truetype(str(path), size)
+    # Missing system fonts (e.g. Mac-only Impact) fall back to a bundled bold font.
+    return ImageFont.truetype(str(resolve_font_path(style)), size)
 
 
 def _measure(font, text: str, stroke: int) -> tuple[int, int]:
@@ -34,6 +30,8 @@ def _measure(font, text: str, stroke: int) -> tuple[int, int]:
 def _visual_padding(style: dict) -> tuple[int, int]:
     """Extra pixels painted outside glyph bounds by the selected renderer."""
     pad = int(style.get("boxborderw", 0)) if style.get("box") else 0
+    if style.get("highlight_color"):
+        pad = max(pad, int(style.get("highlight_padding", 10)))
     # drawtext's shadow is offset outwards from the glyph/outline.
     return pad + abs(int(style.get("shadowx", 0))), pad + abs(int(style.get("shadowy", 0)))
 
@@ -70,6 +68,15 @@ def _wrap(text: str, font, limit: int, max_lines: int, stroke: int) -> str:
     return "\n".join(lines[:max_lines])
 
 
+def _restore_case(wrapped: str, original: str) -> str:
+    """Re-apply the caller's original casing to `wrapped` (same non-space chars)."""
+    src = [ch for ch in original if not ch.isspace()]
+    if len([ch for ch in wrapped if not ch.isspace()]) != len(src):
+        return wrapped
+    it = iter(src)
+    return "".join(ch if ch.isspace() else next(it) for ch in wrapped)
+
+
 def layout_caption(text: str, width: int, height: int, fontsize: int, style: dict, center_y: float | None = None) -> dict:
     """Wrap and shrink text until its outlined box is within the safe rectangle."""
     rect = safe_rectangle(width, height, style)
@@ -80,9 +87,9 @@ def layout_caption(text: str, width: int, height: int, fontsize: int, style: dic
     # The safe-area promise includes drawtext's box border and shadow, not just
     # the glyphs Pillow happens to measure.
     avail_w -= 2 * pad_x
-    # Preserve caller text; drawtext performs the preset's uppercase transform.
-    # Fonts here are bold uppercase-friendly, and shrinking below adds margin.
-    source = text
+    # Measure the text as it will be drawn (uppercase/lowercase presets), but
+    # return it in the caller's casing; drawtext applies the case transform.
+    source = apply_case(style, text)
     for size in range(int(fontsize), 7, -1):
         font = _font(style, size)
         wrapped = _wrap(source, font, avail_w, int(style.get("max_lines", 2)), stroke)
@@ -109,7 +116,7 @@ def layout_caption(text: str, width: int, height: int, fontsize: int, style: dic
             # Keep the established lower-third feeling, but clamp to safe area.
             desired = round(height * (float(center_y) if center_y is not None else .65) - box_h / 2 + pad_y)
             y = max(rect["top"] + pad_y, min(rect["bottom"] - pad_y - text_h, desired))
-            return {"text": wrapped, "fontsize": size, "x": x, "y": y,
+            return {"text": _restore_case(wrapped, text), "fontsize": size, "x": x, "y": y,
                     "line_pitch": _line_pitch(font, style),
                     "text_box": {"left": x, "top": y, "right": x + bw, "bottom": y + text_h},
                     "box": {"left": x - pad_x, "top": y - pad_y, "right": x + bw + pad_x, "bottom": y + text_h + pad_y}, "safe": rect}
@@ -117,6 +124,6 @@ def layout_caption(text: str, width: int, height: int, fontsize: int, style: dic
     font = _font(style, 8); wrapped = source[:1]
     bw, bh = _measure(font, wrapped, stroke)
     x, y = rect["left"] + pad_x, rect["top"] + pad_y
-    return {"text": wrapped, "fontsize": 8, "x": x, "y": y, "line_pitch": _line_pitch(font, style),
+    return {"text": _restore_case(wrapped, text), "fontsize": 8, "x": x, "y": y, "line_pitch": _line_pitch(font, style),
             "text_box": {"left": x, "top": y, "right": x + bw, "bottom": y + bh},
             "box": {"left": x - pad_x, "top": y - pad_y, "right": x + bw + pad_x, "bottom": y + bh + pad_y}, "safe": rect}

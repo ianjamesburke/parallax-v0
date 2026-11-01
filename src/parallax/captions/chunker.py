@@ -52,6 +52,7 @@ def _chunk_words(words: list[dict], *, max_words: int | None = None, max_letters
             "text": " ".join(word["word"] for word in current),
             "start": current[0]["start"],
             "end": current[-1]["end"],
+            "words": [{"word": w["word"], "start": w["start"], "end": w["end"]} for w in current],
         })
 
     for index, word in enumerate(words):

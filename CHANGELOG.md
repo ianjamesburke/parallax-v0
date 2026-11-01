@@ -4,6 +4,9 @@ Newest releases appear first.
 ## [Unreleased]
 
 ### Changes
+- feat(captions): `karaoke` preset (per-word drawtext, filled highlight box on the active word; `highlight_color`/`highlight_padding`) and `soft` preset (lowercase, two narrow lines, blurred shadow); new `lowercase` and `shadow_blur`/`shadow_color`/`shadow_opacity` style options
+- fix(cut): `--caption-style` no longer str()-coerces dict styles, and unknown preset names (CLI, manifest, resolver) raise an error listing valid presets instead of silently using bangers
+- fix(captions): missing style fonts (e.g. Mac-only Impact path) fall back to a bundled bold font with a warning instead of ffmpeg's default font
 - fix(produce): default plan narration to Gemini Charon while retaining `tts-mini` / `nova` for explicit or legacy named mini voices
 - docs(cut): document `--vo-retries 0` as the fail-closed TTS-spend cap
 - fix: send Veo Lite's `resolution: 720p` by default with audio disabled ($0.03/s); silent 1080p is about $0.05/s

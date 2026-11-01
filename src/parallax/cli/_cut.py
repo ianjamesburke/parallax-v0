@@ -24,6 +24,21 @@ def _parse_words_per_chunk(val: str) -> int | str:
         raise ValueError(f"--words-per-chunk must be a positive integer or 'smart', got {val!r}") from exc
 
 
+def _parse_caption_style(val: str) -> "str | dict":
+    """Preset name, or an inline JSON style dict; unknown presets raise ValueError."""
+    from ..captions import resolve_caption_style
+
+    cleaned = str(val).strip()
+    spec: "str | dict" = cleaned
+    if cleaned.startswith("{"):
+        try:
+            spec = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"--caption-style JSON is invalid: {exc}") from exc
+    resolve_caption_style(spec)  # validates the name / base
+    return spec
+
+
 def _print_plan_human(res: dict) -> None:
     est_tag = " (estimated from word count / speed)" if res.get("timing_estimated") else ""
     print(f"parallax cut --plan-only: {res.get('status')}  [mapping: {res.get('mapping_source')}]")
@@ -255,7 +270,7 @@ def cut_cmd(
     caption_style: str = typer.Option(
         "bangers",
         "--caption-style",
-        help="Caption preset name: bangers, impact, bebas, anton, clean (default: bangers).",
+        help="Caption preset: bangers, impact, bebas, anton, clean, karaoke (active-word highlight), soft (lowercase, blurred shadow) (default: bangers). Or an inline JSON style, e.g. '{\"base\": \"karaoke\", \"highlight_color\": \"0x2255FF\"}'.",
     ),
     caption_y: float = typer.Option(
         0.65,
@@ -319,6 +334,7 @@ def cut_cmd(
 
     try:
         wpc = _parse_words_per_chunk(words_per_chunk)
+        caption_style = _parse_caption_style(caption_style)
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         raise typer.Exit(code=2)
