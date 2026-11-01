@@ -283,9 +283,9 @@ def cut_cmd(
         help="Caption font size in pixels (default: auto-scaled from 55 at 720px width).",
     ),
     words_per_chunk: str = typer.Option(
-        "3",
+        "smart",
         "--words-per-chunk",
-        help="Max words per one-line caption chunk (default: 3, also the cap; larger values clamp to the style's max_words; 'smart' also accepted).",
+        help="Words per one-line caption: default 'smart' = 1-2 words, a 3rd only when it is a small function word (\"Here's what a\"); 1 or 2 caps lower; 3 = same as smart; larger clamps to the style's max_words. Style three_word_rule: letters|any changes the 3rd-word test.",
     ),
     max_clip_s: Optional[float] = typer.Option(
         None,

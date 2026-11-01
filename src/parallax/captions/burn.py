@@ -42,15 +42,18 @@ def burn_captions(
     when ffmpeg lacks libfreetype (e.g. minimal Homebrew builds).
 
     words_json: JSON string of [{word, start, end}] or path to vo_words.json
-    words_per_chunk: int N for at most N-word chunks, or "smart" (default) to
-        group adjacent words while their combined letter count stays ≤4.
-        Both modes end chunks at sentence/phrase punctuation; punctuation is retained.
-        Captions are always ONE line of 1-2 words (3 max): N is clamped to the
-        style's `max_words` (default 3), a 3rd word joins only when the chunk's
-        letters stay within `three_word_max_letters` (default 12), and any
+    words_per_chunk: "smart" (default) or an int N. Captions are always ONE
+        line of 1-2 words (3 max): a 3rd word joins only when at most one word
+        of the chunk is a content word (the rest are small function words such
+        as a/is/of/what/here's; "Here's what a", "Filler is a") and the chunk
+        has ≤ `three_word_max_letters` (default 14) letters. 1 or 2 cap lower;
+        3 behaves like "smart"; larger N clamps to the style's `max_words`
+        (default 3). Style `three_word_rule` "letters" / "any" swaps the
+        function-word test. Chunks end at sentence/phrase punctuation, which is
+        retained. Any
         multi-word chunk too wide for one line at `fontsize` is split into
         more chunks, each timed from its own words. Only a lone over-wide word
-        shrinks. Inline styles may override `max_words` / `max_lines`.
+        shrinks. Inline styles may override `max_words` / `max_lines` / `three_word_rule`.
     caption_style: preset name (bangers/impact/bebas/anton/clean/karaoke/soft;
         unknown names raise ValueError listing the presets), an inline
         dict with optional `base: <preset>` for partial override, or a fully

@@ -4,6 +4,7 @@ Newest releases appear first.
 ## [Unreleased]
 
 ### Changes
+- feat(captions): default chunking is 1-2 words per caption; a 3rd word joins only when at most one of the three is a content word (small function words like a/is/of/what/here's ride along: "Here's what a", "Filler is a"; "gel injected into" splits). Applies to `smart`/default and integer 3 everywhere (burn, `cut` now defaults to `smart`, plan, local video, SRT); integer 1/2 cap lower. New style key `three_word_rule` (`function_words` default | `letters` | `any`), `three_word_max_letters` default 14; no lone dangling function words
 - feat(captions): captions are always a single line of 1-2 words (3 max) for every preset — new style keys `max_lines` (default 1), `max_words` (default 3; larger `words_per_chunk` clamps to it) and `three_word_max_letters` (default 12); chunks too wide for one line split into more chunks timed from their own words (karaoke highlight still tracks the spoken word); `soft` widens to `max_line_width` 0.72; SRT export follows the same word limits
 - feat(captions): `karaoke` preset (per-word drawtext, filled highlight box on the active word; `highlight_color`/`highlight_padding`) and `soft` preset (lowercase, two narrow lines, blurred shadow); new `lowercase` and `shadow_blur`/`shadow_color`/`shadow_opacity` style options
 - fix(cut): `--caption-style` no longer str()-coerces dict styles, and unknown preset names (CLI, manifest, resolver) raise an error listing valid presets instead of silently using bangers

@@ -3567,7 +3567,7 @@ def build_manifest_dict(
     words_path: Path,
     resolution: str,
     fps: int,
-    words_per_chunk: int | str = 3,
+    words_per_chunk: int | str = "smart",
     cut_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the project `manifest.yaml` dictionary compatible with `export_editor_package`."""
@@ -3695,7 +3695,7 @@ def render_from_manifest(
     do_captions = captions if captions is not None else bool(cut_cfg.get("captions", True))
     c_style = _resolve_cut_caption_style(caption_style, cut_cfg)
     c_y = float(caption_y if caption_y is not None else cut_cfg.get("caption_y", 0.65))
-    wpc = words_per_chunk if words_per_chunk is not None else manifest.get("words_per_chunk", cut_cfg.get("words_per_chunk", 3))
+    wpc = words_per_chunk if words_per_chunk is not None else manifest.get("words_per_chunk", cut_cfg.get("words_per_chunk", "smart"))
     c_size_raw = caption_size if caption_size is not None else cut_cfg.get("caption_size")
     resolved_c_size = int(c_size_raw) if c_size_raw is not None else max(18, round(55 * (w / 720.0)))
 
@@ -3988,7 +3988,7 @@ def run_cut(
     caption_style: str | dict = "bangers",
     caption_y: float = 0.65,
     caption_size: int | None = None,
-    words_per_chunk: int | str = 3,
+    words_per_chunk: int | str = "smart",
     max_clip_s: float | None = None,
     allow_hold: bool = False,
     export_editor: bool = True,

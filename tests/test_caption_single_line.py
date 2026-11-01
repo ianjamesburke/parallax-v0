@@ -44,7 +44,14 @@ def _capture_burn(monkeypatch, words, style, fontsize, **kw):
             return real(video, chunks, *args)
 
         monkeypatch.setattr(burn_module, "_burn_captions_drawtext", spy)
-        burn_captions("in.mp4", json.dumps(words), "/tmp/never-written.mp4",
+        payload = json.dumps(words)
+        if len(payload) > 200:  # burn_captions probes the arg as a path first; long inline JSON overflows NAME_MAX
+            import tempfile
+            fh = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+            fh.write(payload)
+            fh.close()
+            payload = fh.name
+        burn_captions("in.mp4", payload, "/tmp/never-written.mp4",
                       caption_style=style, fontsize=fontsize, **kw)
     argv = run.call_args.args[0]
     flag = "-filter_complex" if "-filter_complex" in argv else "-vf"
@@ -58,7 +65,8 @@ def test_every_preset_is_single_line_three_words_max(name):
     style = resolve_caption_style(name)
     assert style["max_lines"] == 1
     assert style["max_words"] == 3
-    assert style["three_word_max_letters"] == 12
+    assert style["three_word_max_letters"] == 14
+    assert style["three_word_rule"] == "function_words"
 
 
 def test_all_seven_presets_covered():
@@ -70,12 +78,12 @@ def test_all_seven_presets_covered():
 def test_integer_words_per_chunk_clamped_to_max_words():
     words = _words("a b c d e f g h")
     with patch("parallax.captions.chunker.log") as log:
-        chunks = chunk_words(words, 5, resolve_caption_style("karaoke"))
+        chunks = chunk_words(words, 5, {**resolve_caption_style("karaoke"), "three_word_rule": "any"})
     assert [len(c["words"]) for c in chunks] == [3, 3, 2]
     assert log.info.call_args.args[1:] == (5, 3, 3)
 
 
-def test_three_words_only_when_short():
+def test_three_words_only_when_function_words():
     style = resolve_caption_style("bangers")
     assert [c["text"] for c in chunk_words(_words("is a gel"), 3, style)] == ["is a gel"]
     long = chunk_words(_words("absolutely beautiful results"), 3, style)
@@ -83,15 +91,18 @@ def test_three_words_only_when_short():
     assert all(len(c["words"]) <= 2 for c in long)
 
 
-def test_three_word_letter_budget_ignores_punctuation():
-    # 12 letters exactly (16 characters); quotes, apostrophe and period do not count.
-    chunks = chunk_words(_words("“Here’s what lip.”"), 3, resolve_caption_style("bangers"))
-    assert len(chunks) == 1
+def test_three_word_letter_guard_ignores_punctuation():
+    # "letters" rule: 12 letters exactly (16 characters); quotes, apostrophe and period do not count.
+    style = {**resolve_caption_style("bangers"), "three_word_rule": "letters", "three_word_max_letters": 12}
+    assert len(chunk_words(_words("“Here’s what lip.”"), 3, style)) == 1
+    assert len(chunk_words(_words("“Here’s what lips.”"), 3, style)) == 2
 
 
 def test_connector_carry_still_applies_under_letter_budget():
     chunks = chunk_words(_words("cats and elephants"), 3, resolve_caption_style("bangers"))
     assert [c["text"] for c in chunks] == ["cats", "and elephants"]
+    letters = {**resolve_caption_style("bangers"), "three_word_rule": "letters"}
+    assert [c["text"] for c in chunk_words(_words("cats and elephants"), 3, letters)] == ["cats", "and elephants"]
 
 
 def test_smart_mode_obeys_max_words():
@@ -106,7 +117,7 @@ def test_punctuation_still_ends_chunks():
 
 
 def test_inline_override_of_max_words_and_max_lines():
-    style = _parse_caption_style('{"base":"karaoke","max_words":4,"max_lines":2}')
+    style = _parse_caption_style('{"base":"karaoke","three_word_rule":"any","max_words":4,"max_lines":2}')
     assert style["max_words"] == 4 and style["max_lines"] == 2
     resolved = resolve_caption_style(style)
     assert [len(c["words"]) for c in chunk_words(_words("a b c d e f"), 5, resolved)] == [4, 2]
@@ -118,13 +129,15 @@ def test_inline_override_of_max_words_and_max_lines():
 def test_srt_export_obeys_three_word_cap():
     srt = _build_srt(_words("a b c d e f g"), words_per_chunk=5)
     texts = [block.split("\n")[2] for block in srt.strip().split("\n\n")]
-    assert texts == ["a b c", "d e f", "g"]
+    assert texts == ["a b", "c d", "e f", "g"]
+    any_srt = _build_srt(_words("a b c d e f g"), words_per_chunk=3)
+    assert [len(b.split("\n")[2].split()) for b in any_srt.strip().split("\n\n")] == [2, 2, 2, 1]
 
 
 # ─── width split ─────────────────────────────────────────────────────────
 
 def test_split_chunks_to_fit_uses_each_pieces_own_timings():
-    chunk = chunk_words(_words("one two three", step=1.0), 3, {"three_word_max_letters": 99})[0]
+    chunk = chunk_words(_words("one two three", step=1.0), 3, {"three_word_rule": "any"})[0]
     pieces = split_chunks_to_fit([chunk], lambda text: len(text.split()) == 1)
     assert [p["text"] for p in pieces] == ["one", "two", "three"]
     for piece, word in zip(pieces, chunk["words"]):
@@ -167,7 +180,7 @@ def test_karaoke_highlight_windows_follow_words_after_split(monkeypatch):
     words = [{"word": "lip", "start": 0.0, "end": 0.3},
              {"word": "filler", "start": 0.5, "end": 0.9},
              {"word": "really", "start": 1.0, "end": 1.4}]
-    style = {"base": "karaoke", "three_word_max_letters": 99, "animation": {"type": "none"}}
+    style = {"base": "karaoke", "three_word_rule": "any", "animation": {"type": "none"}}
     resolved = resolve_caption_style(style)
     # Pick a size where "LIP FILLER" fits one line but "LIP FILLER REALLY" does not.
     size = next(s for s in range(40, 200)
@@ -205,3 +218,87 @@ def test_real_burn_single_line(tmp_path, name):
     boxes = json.loads(report.read_text())["boxes"]
     assert boxes and all("\n" not in b["text"] and len(b["text"].split()) <= 3 for b in boxes)
     assert all(b["inside_safe"] for b in boxes)
+
+
+# ─── default policy: 1-2 words, 3 only for function words ───────────────
+
+PA9 = json.loads((Path(__file__).parent / "fixtures" / "pa9_words.json").read_text())
+PA9_SEQUENCE = ["Here’s what a", "lip filler", "really does.", "Filler is a",
+                "gel injected", "into delicate", "lip tissue.", "It attracts"]
+
+
+@pytest.mark.parametrize("name", list(CAPTION_STYLES))
+@pytest.mark.parametrize("wpc", ["smart", 3])
+def test_default_policy_on_pa9_words(name, wpc):
+    chunks = chunk_words(PA9, wpc, resolve_caption_style(name))
+    assert [c["text"] for c in chunks] == PA9_SEQUENCE
+    triples = [c["text"] for c in chunks if len(c["words"]) == 3]
+    assert triples == ["Here’s what a", "Filler is a"]
+
+
+def test_content_triples_rejected():
+    style = resolve_caption_style("karaoke")
+    assert [c["text"] for c in chunk_words(_words("gel injected into"), "smart", style)] == ["gel", "injected into"]
+    assert [c["text"] for c in chunk_words(_words("really does."), "smart", style)] == ["really does."]
+    assert [c["text"] for c in chunk_words(_words("lip filler really"), "smart", style)] == ["lip filler", "really"]
+    for text in ("lip filler really", "gel injected into", "tiny delicate lip tissue"):
+        assert all(len(c["words"]) <= 2 for c in chunk_words(_words(text), "smart", style))
+
+
+def test_function_word_matching_ignores_case_punctuation_and_curly_apostrophes():
+    style = resolve_caption_style("karaoke")
+    for text in ("HERE’S WHAT A", "Here's what, a", "“It’s the” gel"):
+        assert len(chunk_words(_words(text), "smart", style)[0]["words"]) >= 2
+    assert [c["text"] for c in chunk_words(_words("IT’S THE GEL"), "smart", style)] == ["IT’S THE GEL"]
+    assert [c["text"] for c in chunk_words(_words("Here’s what a"), "smart", style)] == ["Here’s what a"]
+
+
+def test_no_dangling_function_word_cards():
+    style = resolve_caption_style("karaoke")
+    # trailing function word is not stranded alone, nor does a pair end on "into"
+    assert [c["text"] for c in chunk_words(_words("big gel into it."), "smart", style)] == ["big gel", "into it."]
+    assert [c["text"] for c in chunk_words(_words("injected into delicate tissue"), "smart", style)] == \
+        ["injected", "into delicate", "tissue"]
+    # a lone "a" joins the previous allowed unit
+    assert [c["text"] for c in chunk_words(_words("Filler is a"), "smart", style)] == ["Filler is a"]
+
+
+def test_integer_two_caps_at_two_and_one_is_single():
+    style = resolve_caption_style("karaoke")
+    assert all(len(c["words"]) <= 2 for c in chunk_words(PA9, 2, style))
+    assert [c["text"] for c in chunk_words(PA9, 2, style)][:2] == ["Here’s what", "a lip"]
+    assert all(len(c["words"]) == 1 for c in chunk_words(PA9, 1, style))
+
+
+def test_rule_override_via_inline_json():
+    words = _words("gel injected into")
+    any_style = resolve_caption_style(_parse_caption_style('{"base":"karaoke","three_word_rule":"any"}'))
+    assert [c["text"] for c in chunk_words(words, "smart", any_style)] == ["gel injected into"]
+    four = resolve_caption_style(_parse_caption_style('{"base":"karaoke","three_word_rule":"any","max_words":4}'))
+    assert [len(c["words"]) for c in chunk_words(_words("a b c d e"), 4, four)] == [4, 1]
+    letters = resolve_caption_style({"base": "karaoke", "three_word_rule": "letters"})
+    assert [c["text"] for c in chunk_words(words, 3, letters)] == ["gel injected", "into"]  # 15 letters > 14; legacy greedy split
+    with pytest.raises(ValueError, match="three_word_rule"):
+        chunk_words(words, "smart", {"three_word_rule": "bogus"})
+
+
+def test_default_burn_without_words_per_chunk_makes_multiword_chunks(monkeypatch):
+    captured, _ = _capture_burn(monkeypatch, PA9, "karaoke", 55, animation_override="none")
+    assert [c["text"] for c in captured] == PA9_SEQUENCE
+    assert not all(len(c["words"]) == 1 for c in captured)
+
+
+def test_default_burn_karaoke_highlights_match_word_timings(monkeypatch):
+    captured, graph = _capture_burn(monkeypatch, PA9, "karaoke", 55,
+                                    gap_hold_frames=0, animation_override="none")
+    assert [w for c in captured for w in c["words"]] == [{k: w[k] for k in ("word", "start", "end")} for w in PA9]
+    hl = [p for p in graph.split(",drawtext=") if "box=1" in p]
+    wins = [tuple(map(float, re.search(r"enable='gte\(t,([\d.]+)\)\*lt\(t,([\d.]+)\)'", p).groups())) for p in hl]
+    assert len(wins) == len(PA9)
+    assert [w[0] for w in wins] == pytest.approx([w["start"] for w in PA9], abs=0.001)
+
+
+def test_srt_default_follows_policy():
+    srt = _build_srt(PA9)
+    texts = [block.split("\n")[2] for block in srt.strip().split("\n\n")]
+    assert texts == PA9_SEQUENCE
