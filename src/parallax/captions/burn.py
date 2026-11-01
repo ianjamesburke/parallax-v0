@@ -45,7 +45,8 @@ def burn_captions(
     words_per_chunk: int N for at most N-word chunks, or "smart" (default) to
         group adjacent words while their combined letter count stays ≤4.
         Both modes end chunks at sentence/phrase punctuation; punctuation is retained.
-    caption_style: preset name (bangers/impact/bebas/anton/clean), an inline
+    caption_style: preset name (bangers/impact/bebas/anton/clean/karaoke/soft;
+        unknown names raise ValueError listing the presets), an inline
         dict with optional `base: <preset>` for partial override, or a fully
         custom dict. Style carries its own animation profile — see
         `resolve_caption_style` and `CAPTION_STYLES`.
@@ -105,6 +106,9 @@ def burn_captions(
         for c in chunks:
             c["start"] = max(0.0, round(c["start"] + shift_s, 3))
             c["end"] = max(c["start"] + 0.05, round(c["end"] + shift_s, 3))
+            if c.get("words"):
+                c["words"] = [{**w, "start": max(0.0, round(w["start"] + shift_s, 3)),
+                               "end": max(0.0, round(w["end"] + shift_s, 3))} for w in c["words"]]
 
     style = resolve_caption_style(caption_style)
     # Animation comes from the style preset by default. Plan-level

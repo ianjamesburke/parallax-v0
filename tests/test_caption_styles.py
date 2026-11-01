@@ -14,6 +14,8 @@ caption styles inline — `caption_style: <dict>` in plan.yaml.
 
 from __future__ import annotations
 
+import pytest
+
 from parallax.captions import (
     CAPTION_STYLES,
     _expand_animation_keyframes,
@@ -34,9 +36,14 @@ def test_resolve_by_preset_name_returns_preset():
     assert style["animation"]["type"] == "pop"
 
 
-def test_resolve_unknown_preset_falls_back_to_bangers():
-    style = resolve_caption_style("does-not-exist")
-    assert style["fontfile"] == "Bangers-Regular.ttf"
+def test_resolve_unknown_preset_raises_listing_presets():
+    with pytest.raises(ValueError) as exc:
+        resolve_caption_style("does-not-exist")
+    msg = str(exc.value)
+    assert "does-not-exist" in msg
+    for name in CAPTION_STYLES:
+        assert name in msg
+    assert "karaoke" in msg and "soft" in msg
 
 
 def test_resolve_none_returns_bangers():

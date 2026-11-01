@@ -283,6 +283,7 @@ TOPICS: dict[str, dict] = {
             "Explicit duration_s / start_offset_s and overlapping transitions intentionally depart from word-synchronous timing; inspect them before adding a compensating offset.",
         ],
         "captions": {
+            "presets": "caption_style presets: bangers, impact, bebas, anton, clean, karaoke (white caps with a highlight box on the word being spoken; keys highlight_color, highlight_padding, highlight_text_color), soft (lowercase, no box, two narrow lines, blurred shadow; keys shadow_blur, shadow_color, shadow_opacity, shadowx/shadowy). Style option `lowercase` (wins over `uppercase`). Unknown preset names are an error; inline dicts may use `base: <preset>`. `parallax cut --caption-style` also takes inline JSON.",
             "fields": "Plan fields caption_style, fontsize, words_per_chunk ('smart' or an integer), caption_shift_s, captions ('skip' disables).",
             "words_per_chunk": "Both modes stop at sentence or phrase punctuation. An integer N makes groups of at most N words; 'smart' keeps mostly one-word groups, so use an integer for short phrases.",
             "portrait_start": "caption_style {base: anton, y_expr: \"h*64/100-th\"}, fontsize 44, words_per_chunk 3. y_expr places the text bottom at 64% of frame height; fontsize is the 1080px-wide baseline and scales with output width.",

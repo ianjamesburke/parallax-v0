@@ -33,7 +33,7 @@ from typing import Any
 import yaml
 
 from . import audio as _audio_mod
-from .captions import burn_captions
+from .captions import burn_captions, resolve_caption_style
 from .captions.chunker import _fixed_chunk_words, _smart_chunk_words
 from .editor_export import _build_srt, export_editor_package
 from .ffmpeg_utils import (
@@ -3632,12 +3632,26 @@ def _resolve_manifest_asset(raw_path: str | None, manifest_dir: Path) -> Path | 
     return (Path.cwd() / p).resolve()
 
 
+def _resolve_cut_caption_style(caption_style: str | dict | None, cut_cfg: dict) -> str | dict:
+    """Pick the caption style (CLI value, else manifest `cut.caption_style`, else bangers).
+
+    Dict/inline styles pass through intact (no str() coercion); unknown preset
+    names raise CutError listing the valid presets.
+    """
+    c_style = caption_style or cut_cfg.get("caption_style") or "bangers"
+    try:
+        resolve_caption_style(c_style)
+    except (ValueError, TypeError) as exc:
+        raise CutError(str(exc), exit_code=2) from exc
+    return c_style
+
+
 def render_from_manifest(
     manifest_path: str | Path,
     out_path: str | Path,
     *,
     captions: bool | None = None,
-    caption_style: str | None = None,
+    caption_style: str | dict | None = None,
     caption_y: float | None = None,
     caption_size: int | None = None,
     words_per_chunk: int | str | None = None,
@@ -3679,7 +3693,7 @@ def render_from_manifest(
     fps_val = int(fps if fps is not None else (manifest.get("fps") or cut_cfg.get("fps") or 24))
 
     do_captions = captions if captions is not None else bool(cut_cfg.get("captions", True))
-    c_style = caption_style or str(cut_cfg.get("caption_style") or "bangers")
+    c_style = _resolve_cut_caption_style(caption_style, cut_cfg)
     c_y = float(caption_y if caption_y is not None else cut_cfg.get("caption_y", 0.65))
     wpc = words_per_chunk if words_per_chunk is not None else manifest.get("words_per_chunk", cut_cfg.get("words_per_chunk", 3))
     c_size_raw = caption_size if caption_size is not None else cut_cfg.get("caption_size")
@@ -3971,7 +3985,7 @@ def run_cut(
     aspect: str | None = None,
     resolution: str | None = None,
     captions: bool = True,
-    caption_style: str = "bangers",
+    caption_style: str | dict = "bangers",
     caption_y: float = 0.65,
     caption_size: int | None = None,
     words_per_chunk: int | str = 3,
