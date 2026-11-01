@@ -31,16 +31,23 @@ _FONTS_DIR = Path(__file__).resolve().parent.parent / "fonts"
 #                            too wide for one line is split into more chunks.
 #   max_words              — hard cap on words per on-screen chunk; a larger
 #                            integer `words_per_chunk` is clamped to it.
-#   three_word_max_letters — a 3rd (or later) word joins a chunk only if the
-#                            chunk's letters (alphanumerics, punctuation
-#                            ignored) stay within this budget, so 3-word cards
-#                            are reserved for short words ("is a gel").
+#   three_word_rule        — when a 3rd word may join a chunk (see chunker.py):
+#                            "function_words" (default): only if at most ONE
+#                            word of the chunk is a content word, i.e. the
+#                            extras are small function words ("Here's what a",
+#                            "Filler is a"); "letters": any 3 words whose
+#                            letters fit three_word_max_letters; "any": always.
+#   three_word_max_letters — extra guard on 3-word chunks (alphanumerics only,
+#                            punctuation ignored); None disables it. Under the
+#                            "letters" rule it is the only test.
 DEFAULT_MAX_LINES = 1
 DEFAULT_MAX_WORDS = 3
-DEFAULT_THREE_WORD_MAX_LETTERS = 12
+DEFAULT_THREE_WORD_MAX_LETTERS = 14
+DEFAULT_THREE_WORD_RULE = "function_words"
 _SINGLE_LINE = {
     "max_lines": DEFAULT_MAX_LINES,
     "max_words": DEFAULT_MAX_WORDS,
+    "three_word_rule": DEFAULT_THREE_WORD_RULE,
     "three_word_max_letters": DEFAULT_THREE_WORD_MAX_LETTERS,
 }
 

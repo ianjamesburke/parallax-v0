@@ -910,7 +910,7 @@ class TestCut:
         assert captured["speed"] == 1.15
         assert captured["max_sentence_silence"] == 0.25
         assert captured["fps"] == 24
-        assert captured["words_per_chunk"] == 3
+        assert captured["words_per_chunk"] == "smart"
         assert captured["export_editor"] is True
         out_text = capsys.readouterr().out
         assert "consistency: manifest==xml ok" in out_text
