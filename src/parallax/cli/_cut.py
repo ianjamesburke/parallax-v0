@@ -285,7 +285,7 @@ def cut_cmd(
     words_per_chunk: str = typer.Option(
         "3",
         "--words-per-chunk",
-        help="Max words per caption chunk (default: 3; 'smart' also accepted).",
+        help="Max words per one-line caption chunk (default: 3, also the cap; larger values clamp to the style's max_words; 'smart' also accepted).",
     ),
     max_clip_s: Optional[float] = typer.Option(
         None,

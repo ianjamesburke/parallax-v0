@@ -60,8 +60,8 @@ def _captured_graph(style_name, tmp_path, words=WORDS, wpc=3):
 def test_new_presets_resolve():
     k, s = resolve_caption_style("karaoke"), resolve_caption_style("soft")
     assert k["fontfile"] == "Montserrat-ExtraBold.ttf" and k["uppercase"] and k["highlight_color"] == "0xE8457A"
-    assert s["fontfile"] == "Montserrat-SemiBold.ttf" and s["lowercase"] and s["max_lines"] == 2
-    assert s["max_line_width"] == pytest.approx(0.62) and not s["box"] and not s["borderw"]
+    assert s["fontfile"] == "Montserrat-SemiBold.ttf" and s["lowercase"] and s["max_lines"] == 1
+    assert s["max_line_width"] == pytest.approx(0.72) and not s["box"] and not s["borderw"]
     assert s["shadow_blur"] > 0
     for st in (k, s):
         assert (_FONTS_DIR / st["fontfile"]).is_file()

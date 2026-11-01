@@ -24,6 +24,26 @@ _FONTS_DIR = Path(__file__).resolve().parent.parent / "fonts"
 # Animations: {"type": "none"} or {"type": "pop", "duration_s": float, "scale_keys": [floats]}.
 # `pop` stamps the chunk at each scale_key in order, splitting `duration_s` evenly across
 # the keys (final key = settle size, usually 1.0). Keep `duration_s` ≤ 0.08 for snappy.
+# Owner rule (2026-11-01): captions are ALWAYS one line on screen, usually 1-2
+# words, 3 at most. Every preset shares these defaults; inline styles may still
+# override them (e.g. `{"base": "karaoke", "max_words": 4, "max_lines": 2}`).
+#   max_lines              — physical lines per caption; 1 = never wrap. A chunk
+#                            too wide for one line is split into more chunks.
+#   max_words              — hard cap on words per on-screen chunk; a larger
+#                            integer `words_per_chunk` is clamped to it.
+#   three_word_max_letters — a 3rd (or later) word joins a chunk only if the
+#                            chunk's letters (alphanumerics, punctuation
+#                            ignored) stay within this budget, so 3-word cards
+#                            are reserved for short words ("is a gel").
+DEFAULT_MAX_LINES = 1
+DEFAULT_MAX_WORDS = 3
+DEFAULT_THREE_WORD_MAX_LETTERS = 12
+_SINGLE_LINE = {
+    "max_lines": DEFAULT_MAX_LINES,
+    "max_words": DEFAULT_MAX_WORDS,
+    "three_word_max_letters": DEFAULT_THREE_WORD_MAX_LETTERS,
+}
+
 CAPTION_STYLES: dict[str, dict] = {
     "bangers": {
         # Kill Tony style — chunky, heavy stroke, all-caps. Pops on each chunk.
@@ -39,7 +59,7 @@ CAPTION_STYLES: dict[str, dict] = {
         "x_expr": "(w-tw)/2",
         "y_expr": "h*65/100-th",
         "safe_left": 0.08, "safe_right": 0.08, "safe_top": 0.12, "safe_bottom": 0.20,
-        "max_line_width": 0.84, "max_lines": 2,
+        "max_line_width": 0.84, **_SINGLE_LINE,
         "animation": {"type": "pop", "duration_s": 0.05, "scale_keys": [1.10, 1.0]},
     },
     "impact": {
@@ -58,7 +78,7 @@ CAPTION_STYLES: dict[str, dict] = {
         "x_expr": "(w-tw)/2",
         "y_expr": "h*65/100-th",
         "safe_left": 0.08, "safe_right": 0.08, "safe_top": 0.12, "safe_bottom": 0.20,
-        "max_line_width": 0.84, "max_lines": 2,
+        "max_line_width": 0.84, **_SINGLE_LINE,
         "animation": {"type": "none"},
     },
     "bebas": {
@@ -74,7 +94,7 @@ CAPTION_STYLES: dict[str, dict] = {
         "x_expr": "(w-tw)/2",
         "y_expr": "h*65/100-th",
         "safe_left": 0.08, "safe_right": 0.08, "safe_top": 0.12, "safe_bottom": 0.20,
-        "max_line_width": 0.84, "max_lines": 2,
+        "max_line_width": 0.84, **_SINGLE_LINE,
         "animation": {"type": "pop", "duration_s": 0.05, "scale_keys": [1.12, 1.0]},
     },
     "anton": {
@@ -90,7 +110,7 @@ CAPTION_STYLES: dict[str, dict] = {
         "x_expr": "(w-tw)/2",
         "y_expr": "h*65/100-th",
         "safe_left": 0.08, "safe_right": 0.08, "safe_top": 0.12, "safe_bottom": 0.20,
-        "max_line_width": 0.84, "max_lines": 2,
+        "max_line_width": 0.84, **_SINGLE_LINE,
         "animation": {"type": "none"},
     },
     "clean": {
@@ -108,7 +128,7 @@ CAPTION_STYLES: dict[str, dict] = {
         "x_expr": "(w-tw)/2",
         "y_expr": "h*65/100-th",
         "safe_left": 0.08, "safe_right": 0.08, "safe_top": 0.12, "safe_bottom": 0.20,
-        "max_line_width": 0.84, "max_lines": 2,
+        "max_line_width": 0.84, **_SINGLE_LINE,
         "animation": {"type": "none"},
     },
     "karaoke": {
@@ -128,12 +148,15 @@ CAPTION_STYLES: dict[str, dict] = {
         "x_expr": "(w-tw)/2",
         "y_expr": "h*65/100-th",
         "safe_left": 0.08, "safe_right": 0.08, "safe_top": 0.12, "safe_bottom": 0.20,
-        "max_line_width": 0.84, "max_lines": 2,
+        "max_line_width": 0.84, **_SINGLE_LINE,
         "animation": {"type": "none"},
     },
     "soft": {
-        # Soft — Montserrat SemiBold lowercase, no box/stroke, two narrow lines and
+        # Soft — Montserrat SemiBold lowercase, no box/stroke, one narrow line and
         # a blurred drop shadow (shadow_blur is a gblur sigma; 0 = hard shadow). Static.
+        # max_line_width 0.72 (was 0.62 when soft wrapped to two lines): still
+        # narrower than the 0.84 presets, but wide enough that ordinary two-word
+        # chunks stay together instead of being width-split into one-word cards.
         "fontfile": "Montserrat-SemiBold.ttf",
         "fontcolor": "white",
         "bordercolor": None,
@@ -149,7 +172,7 @@ CAPTION_STYLES: dict[str, dict] = {
         "x_expr": "(w-tw)/2",
         "y_expr": "h*65/100-th",
         "safe_left": 0.08, "safe_right": 0.08, "safe_top": 0.12, "safe_bottom": 0.20,
-        "max_line_width": 0.62, "max_lines": 2,
+        "max_line_width": 0.72, **_SINGLE_LINE,
         "animation": {"type": "none"},
     },
 }
