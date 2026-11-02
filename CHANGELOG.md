@@ -1,7 +1,7 @@
 # Changelog
 
 Newest releases appear first.
-## [Unreleased]
+## [0.6.3] — 2026-11-02
 
 ### Changes
 - fix(vo-verify): with `--audio` + `--words`, verification trusts the supplied words.json (script diff + timing/coverage sanity checks) instead of transcribing with whisper, ending false `vo_verify_failed` from partial whisper transcripts; whisper transcripts that leave audio uncovered are retried (whole file, then 25 s windows) and reported as `vo_transcription_incomplete` without paid TTS regeneration; reports carry `source` (`words_json` | `whisper`) and `reason`
