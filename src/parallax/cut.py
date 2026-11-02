@@ -2571,6 +2571,185 @@ def diff_script_vs_transcript(
     }
 
 
+# Coverage tolerances shared by the words.json and whisper paths. Speech must start within
+# `max(1.5 s, 5% of duration)` of the beginning and end within the same margin of the end of the audio
+# (TTS and editors leave a little head/tail room, never seconds of it). A silent stretch longer than
+# `max(5 s, 10% of duration)` between consecutive words is treated as uncovered audio: processed voiceovers
+# cap pauses well under a second, so a gap that long means the transcript (or words.json) skipped speech.
+_COVERAGE_EDGE_MIN_S = 1.5
+_COVERAGE_EDGE_FRAC = 0.05
+_COVERAGE_GAP_MIN_S = 5.0
+_COVERAGE_GAP_FRAC = 0.10
+# Word timings may overshoot the probed duration by this much (mp3 padding, rounding) before it is an error.
+_WORDS_DURATION_TOLERANCE_S = 0.25
+# Whisper fallback: re-run the whole file once, then transcribe in overlapping windows and stitch.
+_ASR_WINDOW_S = 25.0
+_ASR_WINDOW_OVERLAP_S = 2.0
+
+
+def _coverage_tolerances(duration_s: float) -> tuple[float, float]:
+    return (
+        max(_COVERAGE_EDGE_MIN_S, _COVERAGE_EDGE_FRAC * duration_s),
+        max(_COVERAGE_GAP_MIN_S, _COVERAGE_GAP_FRAC * duration_s),
+    )
+
+
+def _word_spans(words: list[Any]) -> list[tuple[float, float]]:
+    spans: list[tuple[float, float]] = []
+    for w in words or []:
+        if not isinstance(w, dict):
+            continue
+        ws = float(w.get("start", 0.0) or 0.0)
+        we = float(w.get("end", ws) if w.get("end") is not None else ws)
+        spans.append((ws, we))
+    return spans
+
+
+def _speech_coverage(words: list[Any], duration_s: float | None) -> dict[str, Any]:
+    """Summarize how much of `duration_s` the timed `words` cover (first start, last end, largest gap)."""
+    spans = _word_spans(words)
+    if not spans:
+        return {
+            "audio_duration_s": round(float(duration_s), 3) if duration_s else None,
+            "covered_start_s": None,
+            "covered_end_s": None,
+            "covered_s": 0.0,
+            "max_gap_s": None,
+            "complete": not duration_s,
+            "problems": ["no timed words"] if duration_s else [],
+        }
+    first = min(s for s, _ in spans)
+    last = max(e for _, e in spans)
+    ordered = sorted(spans)
+    max_gap = 0.0
+    max_gap_at = 0.0
+    reach = ordered[0][1]
+    for s, e in ordered[1:]:
+        if s - reach > max_gap:
+            max_gap, max_gap_at = s - reach, reach
+        reach = max(reach, e)
+    problems: list[str] = []
+    if duration_s and duration_s > 0:
+        edge_tol, gap_tol = _coverage_tolerances(float(duration_s))
+        if first > edge_tol:
+            problems.append(f"first word starts at {first:.2f}s (allowed <= {edge_tol:.2f}s)")
+        if float(duration_s) - last > edge_tol:
+            problems.append(
+                f"last word ends at {last:.2f}s of {float(duration_s):.2f}s audio "
+                f"({float(duration_s) - last:.2f}s uncovered, allowed <= {edge_tol:.2f}s)"
+            )
+        if max_gap > gap_tol:
+            problems.append(f"{max_gap:.2f}s with no words after {max_gap_at:.2f}s (allowed <= {gap_tol:.2f}s)")
+    return {
+        "audio_duration_s": round(float(duration_s), 3) if duration_s else None,
+        "covered_start_s": round(first, 3),
+        "covered_end_s": round(last, 3),
+        "covered_s": round(last - first, 3),
+        "max_gap_s": round(max_gap, 3),
+        "complete": not problems,
+        "problems": problems,
+    }
+
+
+def verify_words_against_script(
+    words: list[dict[str, Any]],
+    script_text: str,
+    *,
+    audio_duration_s: float | None,
+    min_similarity: float = 0.95,
+    max_missing_run: int = 2,
+) -> dict[str, Any]:
+    """Verify a supplied words.json against the script without transcribing the audio.
+
+    The words.json word sequence goes through the same normalization and ASR-equivalence diff as a whisper
+    transcript. Timings are sanity-checked: every word has start <= end, starts never decrease, no word lies
+    beyond the audio (+`_WORDS_DURATION_TOLERANCE_S`), and the words cover the audio (see `_speech_coverage`).
+    `reason` is `script_mismatch` or `words_timing_invalid` on failure.
+    """
+    report = diff_script_vs_transcript(
+        script_text, words, min_similarity=min_similarity, max_missing_run=max_missing_run
+    )
+    timing_problems: list[str] = []
+    prev_start: float | None = None
+    for i, w in enumerate(words or []):
+        if not isinstance(w, dict) or w.get("start") is None or w.get("end") is None:
+            timing_problems.append(f"word {i} has no start/end timing")
+            continue
+        ws, we = float(w["start"]), float(w["end"])
+        label = f"word {i} {str(w.get('word', ''))!r}"
+        if ws < 0:
+            timing_problems.append(f"{label} starts before 0 ({ws:.3f}s)")
+        if we < ws:
+            timing_problems.append(f"{label} ends before it starts ({ws:.3f}s > {we:.3f}s)")
+        if prev_start is not None and ws < prev_start:
+            timing_problems.append(f"{label} starts at {ws:.3f}s, before the previous word ({prev_start:.3f}s)")
+        if audio_duration_s and we > float(audio_duration_s) + _WORDS_DURATION_TOLERANCE_S:
+            timing_problems.append(
+                f"{label} ends at {we:.3f}s, beyond the {float(audio_duration_s):.3f}s audio"
+            )
+        prev_start = ws if prev_start is None else max(prev_start, ws)
+    coverage = _speech_coverage(words, audio_duration_s)
+    timing_problems.extend(coverage["problems"])
+    report["source"] = "words_json"
+    report["coverage"] = coverage
+    report["timing_problems"] = timing_problems[:20]
+    if len(timing_problems) > 20:
+        report["timing_problems"].append(f"... +{len(timing_problems) - 20} more")
+    if timing_problems:
+        report["passed"] = False
+        report["status"] = "failed"
+        report["reason"] = "words_timing_invalid"
+    elif not report["passed"]:
+        report["reason"] = "script_mismatch"
+    return report
+
+
+def _transcribe_in_windows(audio_path: str | Path, duration_s: float, fn: Any, kwargs: dict[str, Any]) -> list[dict]:
+    """Transcribe `audio_path` in overlapping `_ASR_WINDOW_S` windows and stitch the words on absolute time.
+
+    Each window's words are kept only inside its own slice (overlap split at the midpoint), so a word heard by
+    two windows is counted once.
+    """
+    half = _ASR_WINDOW_OVERLAP_S / 2.0
+    n = max(1, math.ceil(duration_s / _ASR_WINDOW_S))
+    stitched: list[dict] = []
+    with tempfile.TemporaryDirectory(prefix="parallax-asr-win-") as tmp:
+        for k in range(n):
+            w0 = k * _ASR_WINDOW_S
+            clip_start = max(0.0, w0 - half)
+            clip_len = _ASR_WINDOW_S + _ASR_WINDOW_OVERLAP_S
+            keep_lo = 0.0 if k == 0 else w0
+            keep_hi = float("inf") if k == n - 1 else w0 + _ASR_WINDOW_S
+            wav = Path(tmp) / f"win{k:03d}.wav"
+            res = run_ffmpeg(
+                [
+                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                    "-ss", f"{clip_start:.3f}", "-t", f"{clip_len:.3f}", "-i", str(audio_path),
+                    "-ac", "1", "-ar", "16000", str(wav),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if res.returncode != 0 or not wav.is_file():
+                raise RuntimeError(f"could not cut ASR window {k} ({clip_start:.1f}s): {res.stderr.strip()[:200]}")
+            win_kwargs = dict(kwargs)
+            if "label" in win_kwargs:
+                win_kwargs["label"] = f"{kwargs['label']} window {k + 1}/{n}".strip()
+            try:
+                heard = fn(str(wav), **win_kwargs)
+            except RuntimeError:
+                heard = []  # a window of silence or noise yields no words; the stitched diff decides
+            for w in heard or []:
+                if isinstance(w, str):
+                    continue
+                ws = float(w.get("start", 0.0) or 0.0) + clip_start
+                we = float(w.get("end", 0.0) or 0.0) + clip_start
+                if keep_lo <= ws < keep_hi:
+                    stitched.append({**w, "start": round(ws, 3), "end": round(we, 3)})
+    stitched.sort(key=lambda w: w["start"])
+    return stitched
+
+
 def verify_audio_against_script(
     audio_path: str | Path,
     script_text: str,
@@ -2582,6 +2761,11 @@ def verify_audio_against_script(
 ) -> dict[str, Any]:
     """Transcribe `audio_path` via `whisper_backend.transcribe_wav` (or `transcriber`) and verify
     against `script_text`. If whisperx is unavailable, returns a `status='skipped'` report without crashing.
+
+    A failing diff whose transcript leaves part of the audio uncovered (see `_speech_coverage`) is a
+    transcription problem, not a script mismatch: the whole file is re-transcribed once, then transcribed in
+    overlapping `_ASR_WINDOW_S` windows. If the diff still fails while coverage is incomplete, the report has
+    `status='transcription_incomplete'` (`reason` the same) instead of `failed`/`script_mismatch`.
     """
     fn = transcriber
     if fn is None:
@@ -2589,22 +2773,24 @@ def verify_audio_against_script(
 
         fn = _wb.transcribe_wav
 
+    kwargs: dict[str, Any] = {}
     try:
-        kwargs: dict[str, Any] = {}
-        try:
-            sig = inspect.signature(fn)
-            if "label" in sig.parameters or any(
-                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-            ):
-                kwargs["label"] = label
-        except (ValueError, TypeError):
-            pass
+        sig = inspect.signature(fn)
+        if "label" in sig.parameters or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        ):
+            kwargs["label"] = label
+    except (ValueError, TypeError):
+        pass
+
+    try:
         heard = fn(str(audio_path), **kwargs)
     except Exception as exc:
         return {
             "status": "skipped",
             "passed": True,
             "skipped": True,
+            "source": "whisper",
             "note": f"verification skipped ({exc})",
             "similarity": 1.0,
             "expected_words": normalize_text_for_verify(script_text),
@@ -2614,12 +2800,60 @@ def verify_audio_against_script(
             "max_missing_run": 0,
         }
 
-    return diff_script_vs_transcript(
-        script_text,
-        heard,
-        min_similarity=min_similarity,
-        max_missing_run=max_missing_run,
-    )
+    duration = probe_audio_duration(audio_path) if Path(audio_path).is_file() else None
+
+    def _check(words: Any) -> dict[str, Any]:
+        rep = diff_script_vs_transcript(
+            script_text, words, min_similarity=min_similarity, max_missing_run=max_missing_run
+        )
+        rep["source"] = "whisper"
+        rep["coverage"] = _speech_coverage(words if isinstance(words, list) else [], duration)
+        return rep
+
+    report = _check(heard)
+    attempts: list[dict[str, Any]] = []
+    for mode in ("full", "windows"):
+        if report["passed"] or report["coverage"]["complete"]:
+            break
+        cov = report["coverage"]
+        log.warning(
+            "voiceover check %s: transcript covers only %.2fs-%.2fs of %.2fs audio (%s); re-transcribing (%s)",
+            label or Path(audio_path).name,
+            cov.get("covered_start_s") or 0.0,
+            cov.get("covered_end_s") or 0.0,
+            cov.get("audio_duration_s") or 0.0,
+            "; ".join(cov["problems"]),
+            "whole file" if mode == "full" else f"{_ASR_WINDOW_S:.0f}s windows",
+        )
+        try:
+            if mode == "full":
+                retry_words = fn(str(audio_path), **kwargs)
+            else:
+                retry_words = _transcribe_in_windows(audio_path, float(duration or 0.0), fn, kwargs)
+        except Exception as exc:
+            attempts.append({"mode": mode, "error": str(exc)})
+            continue
+        retry = _check(retry_words)
+        attempts.append({"mode": mode, "similarity": retry["similarity"], "coverage": retry["coverage"]})
+        # Keep whichever transcript heard more of the audio, so the final report is the best evidence.
+        if retry["passed"] or float(retry["coverage"]["covered_s"] or 0.0) >= float(cov["covered_s"] or 0.0):
+            report = {**retry, "asr_mode": mode}
+    if attempts:
+        report["asr_attempts"] = attempts
+        report["asr_retries"] = len(attempts)
+    if not report["passed"]:
+        if report["coverage"]["complete"]:
+            report["reason"] = "script_mismatch"
+        else:
+            report["status"] = "transcription_incomplete"
+            report["reason"] = "transcription_incomplete"
+            cov = report["coverage"]
+            report["note"] = (
+                f"whisper transcript covers {cov.get('covered_start_s') or 0.0:.2f}s-{cov.get('covered_end_s') or 0.0:.2f}s "
+                f"of {cov.get('audio_duration_s') or 0.0:.2f}s audio after {len(attempts)} ASR retries "
+                f"({'; '.join(cov['problems'])}); the audio could not be checked against the script"
+            )
+    return report
 
 
 def _trim_introduced_mismatch(raw_verify: dict[str, Any], proc_verify: dict[str, Any]) -> bool:
@@ -2635,13 +2869,88 @@ def _trim_introduced_mismatch(raw_verify: dict[str, Any], proc_verify: dict[str,
     return False
 
 
+def _aggregate_verify_status(residual: list[dict[str, Any]]) -> tuple[str, str | None]:
+    """(status, reason) for a set of residual failures; any genuine mismatch outranks a transcription gap."""
+    if not residual:
+        return "passed", None
+    reasons = [str(r.get("reason") or "script_mismatch") for r in residual]
+    if all(r == "transcription_incomplete" for r in reasons):
+        return "transcription_incomplete", "transcription_incomplete"
+    if "script_mismatch" in reasons:
+        return "failed", "script_mismatch"
+    return "failed", next(r for r in reasons if r != "transcription_incomplete")
+
+
+def _vo_failure_report(verify_report: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    """CutError JSON payload: `vo_transcription_incomplete` when whisper could not cover the audio, else `vo_verify_failed`."""
+    residual = list(verify_report.get("residual_mismatches") or [])
+    status, reason = _aggregate_verify_status(residual)
+    if not residual and verify_report.get("status") == "transcription_incomplete":
+        status, reason = "transcription_incomplete", "transcription_incomplete"
+    sources = sorted({str(r.get("source")) for r in residual if r.get("source")}) or (
+        [str(verify_report["source"])] if verify_report.get("source") else []
+    )
+    return {
+        "status": "vo_transcription_incomplete" if status == "transcription_incomplete" else "vo_verify_failed",
+        "reason": reason or verify_report.get("reason") or "script_mismatch",
+        "source": sources[0] if len(sources) == 1 else (sources or None),
+        "message": _format_residual_mismatch_summary(residual) if residual else verify_report.get("note"),
+        **extra,
+        "verification": verify_report,
+    }
+
+
+def _run_text(run: dict[str, Any]) -> str:
+    return str(run.get("text") or " ".join(str(w) for w in run.get("words") or []))
+
+
+def _describe_residual(item: dict[str, Any]) -> str:
+    """One line per failed check: what went wrong, using which source."""
+    loc = f"chunk {item['chunk_index']}" if item.get("chunk_index") is not None else "final"
+    source = item.get("source") or "whisper"
+    reason = item.get("reason") or "script_mismatch"
+    if reason == "transcription_incomplete":
+        return f"{loc} [{source}]: transcription incomplete, not a script mismatch — {item.get('note') or ''}".rstrip(" —")
+    if reason == "words_timing_invalid":
+        probs = list(item.get("timing_problems") or [])
+        shown = "; ".join(probs[:3]) + (f"; +{len(probs) - 3} more" if len(probs) > 3 else "")
+        return f"{loc} [{source}]: words.json timings invalid — {shown}"
+    runs = item.get("missing_runs") or []
+    extra = [r for r in (item.get("extra_runs") or []) if r.get("count", 0) > 0]
+    bits = [f"sim={float(item.get('similarity', 0.0)):.3f}"]
+    if runs:
+        bits.append(", ".join(f"missing '{_run_text(r)}' (@{float(r.get('start_s', 0.0)):.2f}s)" for r in runs[:5]))
+        if len(runs) > 5:
+            bits.append(f"+{len(runs) - 5} more missing runs")
+    if extra and source == "words_json":
+        bits.append(", ".join(f"extra '{_run_text(r)}' (@{float(r.get('start_s', 0.0)):.2f}s)" for r in extra[:3]))
+    return f"{loc} [{source}]: script mismatch ({'; '.join(bits)})"
+
+
+def _format_supplied_vo_failure(residual: list[dict[str, Any]]) -> str:
+    status, _ = _aggregate_verify_status(residual)
+    if status == "transcription_incomplete":
+        head = (
+            "Voiceover transcription INCOMPLETE (--strict-vo): whisper could not transcribe all of the supplied "
+            "audio, so it could not be checked against the script. This is not a script mismatch."
+        )
+        hint = "Supply word timings with --words FILE.json, or pass --no-strict-vo to render anyway."
+    else:
+        head = "Voiceover verification FAILED (--strict-vo); nothing was rendered."
+        hint = "Fix the voiceover or words.json, or pass --no-strict-vo to render anyway. Details: voiceover.verify.json."
+    return "\n".join([head, *(f"  - {_describe_residual(r)}" for r in residual), hint])
+
+
 def _format_residual_mismatch_summary(residual: list[dict[str, Any]]) -> str:
     parts: list[str] = []
     for item in residual:
         loc = f"chunk {item['chunk_index']}" if item.get("chunk_index") is not None else "final"
+        if (item.get("reason") or "script_mismatch") != "script_mismatch" or item.get("source") == "words_json":
+            parts.append(_describe_residual(item))
+            continue
         runs = item.get("missing_runs") or []
         if runs:
-            run_strs = [f"missing '{r['text']}' (@{r['start_s']:.2f}s)" for r in runs]
+            run_strs = [f"missing '{_run_text(r)}' (@{float(r.get('start_s', 0.0)):.2f}s)" for r in runs]
             parts.append(f"{loc} (sim={item.get('similarity', 0.0):.3f}: {', '.join(run_strs)})")
         else:
             parts.append(f"{loc} (sim={item.get('similarity', 0.0):.3f})")
@@ -2655,12 +2964,23 @@ def _format_strict_vo_failure(
     retries: int,
 ) -> str:
     """Short, actionable message naming each failed chunk (the full diff stays in voiceover.verify.json)."""
-    lines = [
-        f"Voiceover verification FAILED after {retries} retries (voice model {voice_model}); nothing was rendered."
-    ]
+    status, _ = _aggregate_verify_status(residual)
+    if status == "transcription_incomplete":
+        lines = [
+            f"Voiceover transcription INCOMPLETE (voice model {voice_model}); nothing was rendered. Whisper could not "
+            "transcribe all of the synthesized audio, so it could not be verified — this is not a script mismatch, "
+            "and no TTS was regenerated for it."
+        ]
+    else:
+        lines = [
+            f"Voiceover verification FAILED after {retries} retries (voice model {voice_model}); nothing was rendered."
+        ]
     for item in residual:
         idx = item.get("chunk_index")
         loc = f"chunk {idx}" if idx is not None else "final voiceover"
+        if item.get("reason") == "transcription_incomplete":
+            lines.append(f"  - {loc}: {item.get('note') or 'transcription incomplete'}")
+            continue
         heard = " ".join(str(w) for w in (item.get("actual_words") or [])[:14])
         bits = [f"similarity {float(item.get('similarity', 0.0)):.2f}"]
         runs = item.get("missing_runs") or []
@@ -2733,7 +3053,10 @@ def resolve_or_generate_voiceover(
                 raise CutError(f"Supplied words file not found: {src_words}", exit_code=1)
             payload = json.loads(src_words.read_text(encoding="utf-8"))
             raw_words = payload if isinstance(payload, list) else list(payload.get("words") or [])
+            # words.json is the verification source of truth unless it says its own timings are estimates.
+            words_json_trusted = not (isinstance(payload, dict) and payload.get("estimated") is True)
         else:
+            words_json_trusted = False
             # Optional forced alignment via forced_align
             try:
                 from .forced_align import align_words
@@ -2750,17 +3073,28 @@ def resolve_or_generate_voiceover(
         dst_audio = project_dir / f"voiceover{ext}"
         trim_escalations: list[dict[str, Any]] = []
         residual_mismatches: list[dict[str, Any]] = []
+        disabled_verify = {"status": "disabled", "passed": True, "skipped": True, "missing_runs": [], "extra_runs": []}
+        words_verify: dict[str, Any] | None = None
+        if vo_verify and words_json_trusted:
+            words_verify = verify_words_against_script(
+                raw_words, clean_script, audio_duration_s=probe_audio_duration(src_audio)
+            )
+            if not quiet:
+                print("voiceover: verifying supplied words.json against the script (no transcription)", flush=True)
 
         if process_audio:
             raw_copy = project_dir / f"voiceover.provider-raw{ext}"
             if src_audio != raw_copy:
                 shutil.copy2(src_audio, raw_copy)
 
-            raw_verify = (
-                verify_audio_against_script(raw_copy, clean_script, transcriber=transcriber, label="supplied raw")
-                if vo_verify
-                else {"status": "disabled", "passed": True, "skipped": True, "missing_runs": [], "extra_runs": []}
-            )
+            if words_verify is not None:
+                raw_verify = words_verify
+            elif vo_verify:
+                raw_verify = verify_audio_against_script(
+                    raw_copy, clean_script, transcriber=transcriber, label="supplied raw"
+                )
+            else:
+                raw_verify = disabled_verify
 
             proc = process_voiceover_audio(
                 raw_audio_path=raw_copy,
@@ -2773,13 +3107,23 @@ def resolve_or_generate_voiceover(
                 vo_normalize=vo_normalize,
             )
 
-            final_verify = (
-                verify_audio_against_script(dst_audio, clean_script, transcriber=transcriber, label="supplied trimmed")
-                if vo_verify
-                else {"status": "disabled", "passed": True, "skipped": True, "missing_runs": [], "extra_runs": []}
-            )
+            # Trimming only removes silence between words.json boundaries, so the words.json check stands for
+            # the processed take too; the ASR trim check below runs only on the whisper path.
+            if words_verify is not None:
+                final_verify = words_verify
+            elif vo_verify:
+                final_verify = verify_audio_against_script(
+                    dst_audio, clean_script, transcriber=transcriber, label="supplied trimmed"
+                )
+            else:
+                final_verify = disabled_verify
 
-            if vo_verify and proc["cuts_count"] > 0 and _trim_introduced_mismatch(raw_verify, final_verify):
+            if (
+                words_verify is None
+                and vo_verify
+                and proc["cuts_count"] > 0
+                and _trim_introduced_mismatch(raw_verify, final_verify)
+            ):
                 for esc_pad in PAUSE_TRIM_ESCALATION_LEVELS[1:]:
                     proc = process_voiceover_audio(
                         raw_audio_path=raw_copy,
@@ -2813,6 +3157,8 @@ def resolve_or_generate_voiceover(
             verify_report = {
                 "enabled": bool(vo_verify),
                 "status": final_verify.get("status", "disabled"),
+                "source": final_verify.get("source"),
+                "reason": final_verify.get("reason"),
                 "skipped": bool(final_verify.get("skipped", False)),
                 "note": final_verify.get("note"),
                 "passed": len(residual_mismatches) == 0,
@@ -2841,9 +3187,9 @@ def resolve_or_generate_voiceover(
             )
             if strict_vo and residual_mismatches:
                 raise CutError(
-                    f"Voiceover verification failed (--strict-vo): {_format_residual_mismatch_summary(residual_mismatches)}",
+                    _format_supplied_vo_failure(residual_mismatches),
                     exit_code=1,
-                    report={"status": "vo_verify_failed", "verification": verify_report},
+                    report=_vo_failure_report(verify_report),
                 )
             return {
                 "source": "supplied",
@@ -2865,16 +3211,21 @@ def resolve_or_generate_voiceover(
             dur = probe_audio_duration(dst_audio)
             if dur is None or dur <= 0:
                 dur = max((float(w.get("end", 0.0)) for w in raw_words), default=1.0)
-            final_verify = (
-                verify_audio_against_script(dst_audio, clean_script, transcriber=transcriber, label="supplied audio")
-                if vo_verify
-                else {"status": "disabled", "passed": True, "skipped": True, "missing_runs": [], "extra_runs": []}
-            )
+            if words_verify is not None:
+                final_verify = words_verify
+            elif vo_verify:
+                final_verify = verify_audio_against_script(
+                    dst_audio, clean_script, transcriber=transcriber, label="supplied audio"
+                )
+            else:
+                final_verify = disabled_verify
             if vo_verify and not final_verify.get("skipped") and not final_verify.get("passed", True):
                 residual_mismatches.append({"chunk_index": None, **final_verify})
             verify_report = {
                 "enabled": bool(vo_verify),
                 "status": final_verify.get("status", "disabled"),
+                "source": final_verify.get("source"),
+                "reason": final_verify.get("reason"),
                 "skipped": bool(final_verify.get("skipped", False)),
                 "note": final_verify.get("note"),
                 "passed": len(residual_mismatches) == 0,
@@ -2902,9 +3253,9 @@ def resolve_or_generate_voiceover(
             )
             if strict_vo and residual_mismatches:
                 raise CutError(
-                    f"Voiceover verification failed (--strict-vo): {_format_residual_mismatch_summary(residual_mismatches)}",
+                    _format_supplied_vo_failure(residual_mismatches),
                     exit_code=1,
-                    report={"status": "vo_verify_failed", "verification": verify_report},
+                    report=_vo_failure_report(verify_report),
                 )
             return {
                 "source": "supplied",
@@ -3024,7 +3375,7 @@ def resolve_or_generate_voiceover(
                     retries=int(verify_report.get("retries_used") or 0),
                 ),
                 exit_code=1,
-                report={"status": "vo_verify_failed", "verification": verify_report},
+                report=_vo_failure_report(verify_report),
             )
         return {
             "source": "cached",
@@ -3188,6 +3539,10 @@ def resolve_or_generate_voiceover(
             nonlocal asr_retries
             if verification.get("skipped") or verification.get("passed", True):
                 return verification
+            if verification.get("reason") == "transcription_incomplete":
+                # verify_audio_against_script already re-ran whisper (whole file, then windows) for this take.
+                asr_retries += int(verification.get("asr_retries") or 0)
+                return verification
             asr_retries += 1
             if not quiet:
                 print(
@@ -3220,9 +3575,12 @@ def resolve_or_generate_voiceover(
             raw_verify = _retry_chunk_transcription(
                 c_raw_mp3, raw_verify, label=f"chunk {chunk_idx} raw"
             )
+            # A transcript that leaves part of the take unheard says nothing about the take, so it never
+            # triggers a paid regeneration; only a genuine script mismatch does.
             while (
                 not raw_verify.get("skipped")
                 and not raw_verify.get("passed", True)
+                and raw_verify.get("reason") != "transcription_incomplete"
                 and chunk_retries < max_retries
                 and (synthesized_this_chunk or provider is not None)
             ):
@@ -3319,9 +3677,11 @@ def resolve_or_generate_voiceover(
             chunk_verify_reports.append(chunk_rep)
             if not proc_verify.get("passed", True):
                 residual_mismatches.append(chunk_rep)
-                failed_chunk_cache_files.extend(
-                    [c_raw_mp3, c_raw_json, c_proc_mp3, c_proc_json]
-                )
+                if proc_verify.get("reason") == "transcription_incomplete":
+                    # Keep the paid raw take: a re-run re-processes and re-verifies it without a TTS call.
+                    failed_chunk_cache_files.extend([c_proc_mp3, c_proc_json])
+                else:
+                    failed_chunk_cache_files.extend([c_raw_mp3, c_raw_json, c_proc_mp3, c_proc_json])
         elif vo_verify and raw_verify.get("skipped"):
             chunk_verify_reports.append(
                 {"chunk_index": chunk_idx, "retries": 0, "asr_retries": asr_retries,
@@ -3374,6 +3734,7 @@ def resolve_or_generate_voiceover(
             if (
                 not final_verify.get("skipped")
                 and not final_verify.get("passed", True)
+                and final_verify.get("reason") != "transcription_incomplete"
                 and not residual_mismatches
             ):
                 # Every chunk already passed its own check, so a failing whole-file transcript is most likely a
@@ -3398,13 +3759,12 @@ def resolve_or_generate_voiceover(
         final_verify = {"status": "disabled", "passed": True, "skipped": True, "missing_runs": [], "extra_runs": []}
 
     verify_skipped = bool(final_verify.get("skipped", False))
+    agg_status, agg_reason = _aggregate_verify_status(residual_mismatches)
     verify_report = {
         "enabled": bool(vo_verify),
-        "status": (
-            "skipped"
-            if verify_skipped
-            else ("passed" if len(residual_mismatches) == 0 else "failed")
-        ),
+        "status": "skipped" if verify_skipped else agg_status,
+        "source": "whisper" if vo_verify else None,
+        "reason": agg_reason,
         "skipped": verify_skipped,
         "note": final_verify.get("note"),
         "passed": len(residual_mismatches) == 0,
@@ -3434,13 +3794,12 @@ def resolve_or_generate_voiceover(
         raise CutError(
             _format_strict_vo_failure(residual_mismatches, voice_model=voice_model, retries=retries_used),
             exit_code=1,
-            report={
-                "status": "vo_verify_failed",
-                "failed_chunks": [m.get("chunk_index") for m in residual_mismatches],
-                "verification": verify_report,
-                "tts_calls": tts_calls,
-                "tts_cost_usd": round(float(total_cost_usd), 6),
-            },
+            report=_vo_failure_report(
+                verify_report,
+                failed_chunks=[m.get("chunk_index") for m in residual_mismatches],
+                tts_calls=tts_calls,
+                tts_cost_usd=round(float(total_cost_usd), 6),
+            ),
         )
 
     if tts_calls == 0:

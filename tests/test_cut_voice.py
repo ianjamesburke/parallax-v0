@@ -749,8 +749,13 @@ def test_verifier_flags_missing_sea_salt_regenerates_only_failing_chunk_and_keep
     assert "--no-strict-vo" in str(exc_info.value) or "--strict-vo" in str(exc_info.value)
 
 
-def test_verifier_trim_induced_mismatch_escalates_padding(tmp_path: Path) -> None:
-    """If pause trim introduces a mismatch not present in the raw audio, re-runs trim with bigger padding."""
+def test_verifier_trim_induced_mismatch_escalates_padding(tmp_path: Path, monkeypatch) -> None:
+    """If pause trim introduces a mismatch not present in the raw audio, re-runs trim with bigger padding.
+
+    The trim check is an ASR check, so it runs on the whisper path: audio without --words, timings from
+    forced alignment. (With --words, words.json is the verification source and whisper is not called.)
+    """
+    import parallax.forced_align as forced_align
     from parallax.cut import resolve_or_generate_voiceover
 
     raw_wav = _make_burst_silence_burst_wav(
@@ -775,6 +780,8 @@ def test_verifier_trim_induced_mismatch_escalates_padding(tmp_path: Path) -> Non
         encoding="utf-8",
     )
 
+    supplied_words = json.loads(words_json.read_text(encoding="utf-8"))["words"]
+    monkeypatch.setattr(forced_align, "align_words", lambda audio, script: supplied_words)
     trimmed_eval_count = 0
 
     def _transcriber(audio_path: str, label: str = "") -> list[dict]:
@@ -812,7 +819,6 @@ def test_verifier_trim_induced_mismatch_escalates_padding(tmp_path: Path) -> Non
         clean_script="97% sea salt",
         project_dir=proj,
         audio_path=raw_wav,
-        words_path=words_json,
         process_audio=True,
         speed=1.0,
         max_sentence_silence=0.20,

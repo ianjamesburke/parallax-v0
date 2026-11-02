@@ -126,8 +126,10 @@ def _print_result_human(res: dict) -> None:
     if res.get("verification"):
         vf = res["verification"]
         note_str = f" ({vf['note']})" if vf.get("note") else ""
+        source_str = f" source={vf['source']}" if vf.get("source") else ""
+        reason_str = f" reason={vf['reason']}" if vf.get("reason") else ""
         print(
-            f"  verify:    status={vf.get('status')} retries={vf.get('retries_used', 0)}"
+            f"  verify:    status={vf.get('status')}{source_str}{reason_str} retries={vf.get('retries_used', 0)}"
             f"{note_str} ({res.get('verify_report_path')})"
         )
     print(f"  manifest:  {res.get('manifest_path')}")
@@ -245,7 +247,7 @@ def cut_cmd(
     strict_vo: bool = typer.Option(
         True,
         "--strict-vo/--no-strict-vo",
-        help="Exit 1 and render nothing if voiceover verification still has mismatches after retries (default: on). `--no-strict-vo` renders anyway with a warning.",
+        help="Exit 1 and render nothing if voiceover verification still fails after retries — a script mismatch (vo_verify_failed) or a transcript that could not cover the audio (vo_transcription_incomplete) (default: on). `--no-strict-vo` renders anyway with a warning. With --words, words.json is verified instead of transcribing.",
     ),
     fps: int = typer.Option(
         24,
