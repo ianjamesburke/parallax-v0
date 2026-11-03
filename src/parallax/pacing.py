@@ -19,8 +19,8 @@ REMEDIES = {
 }
 
 
-def estimate_timeline(scenes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
-    """Project explicit durations or 150 wpm reading estimates, never production timing."""
+def estimate_timeline(scenes: list[dict[str, Any]], estimate_wps: float = 3.0, speed: float = 1.0) -> tuple[list[dict[str, Any]], str]:
+    """Project explicit durations or reading estimates, never production timing."""
     timeline = []
     cursor = 0.0
     estimated = False
@@ -29,11 +29,11 @@ def estimate_timeline(scenes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
         if duration is None:
             estimated = True
             text = re.sub(r"\[[^\]]*\]", "", scene.get("vo_text", ""))
-            duration = len(text.split()) / 2.5
+            duration = len(text.split()) / (estimate_wps * speed) + scene.get("pause_after_s", 0.0)
         duration = max(0.0, float(duration))
         timeline.append({"index": scene.get("index", position), "start_s": cursor, "end_s": cursor + duration})
         cursor += duration
-    basis = "estimated (150 words/minute, with explicit durations where supplied)" if estimated else "declared scene durations"
+    basis = f"estimated ({estimate_wps:g} words/s at {speed:g}x; effective {estimate_wps * speed:g} words/s, with explicit durations where supplied)" if estimated else "declared scene durations"
     return timeline, basis
 
 

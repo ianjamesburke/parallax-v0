@@ -1124,3 +1124,9 @@ During file creation, pyright flagged `from .sessions import …` etc. as unreso
 
 ## 2026-04-17 — [FUTURE] Real FAL client lands in commit 2
 `generate_image` raises `NotImplementedError` when `PARALLAX_TEST_MODE` is unset, so the only currently-usable path is the shim. Phase 2, commit 1: add the real FAL client behind the existing schema. Phase 2 subsequent commits: `reference_images`, `count`, character consistency, and context discipline for input images.
+
+## 2026-11-03 — [FEATURE] Front-half text-only storyboard
+
+Added an offline text-only review path, timing and footage handles, project checks,
+and external scene media import with source filename provenance. Plan is optional
+for the review path; media take ambiguity remains visible for human resolution.

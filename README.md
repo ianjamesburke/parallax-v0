@@ -4,10 +4,12 @@ Agentic creative production CLI. A brief goes in, a finished short-form video co
 
 ## Start here (agents)
 
+Run `parallax guide` first. It explains the front-half workflow and review boundary.
+
 ```sh
 curl -LsSf https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/install.sh | sh   # install
+parallax guide        # first: author a brief and drive the pipeline
 parallax --help       # every command
-parallax guide        # how to author a brief and drive the pipeline
 parallax guide cut    # cut a folder of existing clips to a script + voiceover + XML export
 PARALLAX_TEST_MODE=1 parallax produce --folder ./my-project --brief ./my-project/brief.yaml   # free stub run, try this first
 parallax update       # upgrade later
@@ -299,3 +301,14 @@ just e2e-agent \
 ```
 
 This isolates the fixture data. It does not stop an agent that deliberately reads absolute paths outside the fixture. Use a container or VM when the test also needs a hard host-filesystem boundary.
+
+For a text-only storyboard before external media generation, run `parallax guide front_half`.
+Author `brief.yaml`, create `references/` and `storyboard-package/`, and optionally
+place the narration in `script.txt`. Run `parallax check --folder PROJECT`, then
+`parallax storyboard --folder PROJECT --text-only --pdf --json` and present the PDF
+for approval. Generate media externally as `Scene_NN`, import it with
+`parallax assets import --folder PROJECT --from MEDIA_DIR`, and run `parallax check --folder PROJECT --stage media` before handoff.
+Multiple takes are flagged for a decision; set exactly one matching entry to
+`"preferred": true` in `parallax/assets/import-manifest.json` after review. Plan is optional for this review path.
+Estimated timing defaults to 3 words per second at speed 1.0; minimum usable
+footage is the estimated scene duration plus one second.

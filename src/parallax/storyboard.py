@@ -239,7 +239,7 @@ def _missing_clip_advisory(scene) -> dict:
 
 def _resolve_timeline(brief: Brief, timeline: list[dict] | None) -> tuple[list[dict], str]:
     if timeline is None:
-        return estimate_timeline([scene.model_dump() for scene in brief.script.scenes])
+        return estimate_timeline([scene.model_dump() for scene in brief.script.scenes], brief.timing.estimate_wps, brief.timing.speed)
     if [s.get("index") for s in timeline] != [s.index for s in brief.script.scenes]:
         raise ValueError("storyboard timing scene indices/order must match the brief")
     previous_end = 0.0
@@ -311,7 +311,7 @@ def _gates_html(review: dict) -> str:
 
 
 def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_base: str | Path | None = None,
-                      source_video: dict | None = None) -> str:
+                      source_video: dict | None = None, text_only: bool = False) -> str:
     """Render the print-first editorial storyboard standard (one scene/page)."""
     root = Path(folder).expanduser().resolve()
     base = Path(link_base).expanduser().resolve() if link_base else None
@@ -336,7 +336,7 @@ def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_ba
         notes = [a["message"] for a in review["scene_advisories"].get(scene.index, [])]
         notes += [w["message"] for w in pacing["warnings"] if w.get("scene_index") == scene.index]
         note_html = f'<div class="review-notes"><strong>Review notes</strong><br>{escape(" ".join(notes))}</div>' if notes else ''
-        image = _asset(root, scene.still_path, "Supplied still", link_base=base) if scene.still_path else '<div class="frame-mat"><span class="meta">Frame pending</span></div>'
+        image = _asset(root, scene.still_path, "Supplied still", link_base=base) if scene.still_path else f'<div class="frame-mat"><span class="meta">{"Text-only review" if text_only else "Frame pending"}</span></div>'
         if image.startswith('<figure'):
             # Keep source paths out of visible text; the image itself remains package-relative.
             image = re.sub(r'<figcaption[^>]*>.*?</figcaption>', '', image)
@@ -349,12 +349,17 @@ def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_ba
         width = max(.5, 100 * duration / total) if total else 100
         treatment = escape(scene.storyboard_treatment or scene.prompt)
         motion = f' — {escape(scene.motion_prompt)}' if scene.motion_prompt else ''
+        details = (f'<div class="label">Generation prompt</div><p>{escape(scene.prompt)}</p>'
+                   f'<div class="label">Shot / purpose</div><p>{escape(scene.shot_type)} / {escape(scene.purpose or "—")}</p>'
+                   f'<div class="label">Brand reference</div><p>{escape(scene.brand_ref.status)}: {escape(", ".join(scene.brand_ref.paths))}</p>'
+                   f'<div class="label">Referenced images</div><p>{escape(", ".join(scene.image_refs)) or "—"}</p>'
+                   + ''.join(_asset(root, ref, ref, link_base=base, thumb_px=160) for ref in scene.image_refs if (root / ref).is_file())) if text_only else ''
         pages.append(f'''<article class="scene-page" id="scene-{scene.index}">
 {image}<div class="scene-copy"><div class="kicker">SCENE {escape(scene_id)} · {escape(kicker)}</div><h2>{escape(title)}</h2>
 <div class="label">Narration</div><p class="narration">“{escape(scene.vo_text)}”</p>
 <div class="label">On-screen text</div><p class="copy-value">{escape(scene.on_screen_text or '—')}</p>
-<div class="label">Timing</div><p class="copy-value">{clock(start)} – {clock(end)} · {duration:.1f} s</p>
-<div class="label">Treatment</div><p class="copy-value treatment"><strong>{treatment}.</strong>{motion}</p>{note_html}</div>
+<div class="label">Timing</div><p class="copy-value">{clock(start)} – {clock(end)} · {duration:.1f} s · minimum usable {duration + brief.timing.handle_s:.1f} s</p>
+{details}<div class="label">Treatment</div><p class="copy-value treatment"><strong>{treatment}.</strong>{motion}</p>{note_html}</div>
 <div class="position"><div class="position-track"><span class="position-active" style="left:{left:.3f}%;width:{width:.3f}%"></span></div><div class="position-labels"><span>0:00</span><span>{clock(total)}</span></div></div>
 <div class="footer"><span>{escape(concept_name)} · {escape(brief.concept_id or 'v1')} · Storyboard · {today}</span><span>Scene {escape(scene_id)} · page {position + 1} of {len(brief.script.scenes) + 1}</span></div></article>''')
     rows = [f'<tr><td>{escape(s.storyboard_id or f"{s.index:02d}")}</td><td>{escape(s.storyboard_title or s.prompt)}</td><td>{escape(s.storyboard_treatment or s.prompt)}</td><td>{clock(float(t["start_s"]))} – {clock(float(t["end_s"]))}</td><td>{float(t["end_s"])-float(t["start_s"]):.1f} s</td></tr>' for s, t in zip(brief.script.scenes, timeline)]

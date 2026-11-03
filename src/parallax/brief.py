@@ -123,12 +123,38 @@ class Assets(BaseModel):
     generated: list[GeneratedAsset] = Field(default_factory=list)
 
 
+class BrandRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["supplied", "missing", "not_needed"] = "not_needed"
+    paths: list[str] = Field(default_factory=list)
+    note: str | None = None
+
+class Take(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    take_id: str
+    filename: str
+    source_filename: str | None = None
+    preferred: bool = False
+    required: bool = False
+
+class Timing(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    estimate_wps: float = Field(default=3.0, gt=0, allow_inf_nan=False)
+    speed: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    handle_s: float = Field(default=1.0, ge=0, allow_inf_nan=False)
+
 class BriefScene(BaseModel):
     """One scene as authored in the brief. The planner expands these into
     full plan-scene records (model alias, locked still paths, etc.)."""
     model_config = ConfigDict(extra="forbid")
 
     index: int
+    scene_id: str | None = None
+    purpose: Literal["establish", "action", "reaction", "product_ui", "proof", "transition", "cta"] | None = None
+    generation_method: Literal["still", "image_to_video", "direct_clip", "external", "local_graphic", "provided"] | None = None
+    brand_ref: BrandRef = Field(default_factory=BrandRef)
+    takes: list[Take] = Field(default_factory=list)
+    pause_after_s: float = Field(default=0.0, ge=0, allow_inf_nan=False)
     shot_type: Literal["character", "broll", "screen"] = "broll"
     scene_type: Literal["still", "animation", "motion_graphic"] | None = None
     vo_text: str
@@ -149,6 +175,14 @@ class BriefScene(BaseModel):
     storyboard_title: str | None = None
     storyboard_kicker: str | None = None
     storyboard_treatment: str | None = None
+
+    @model_validator(mode="after")
+    def _identity(self):
+        if self.scene_id is None:
+            self.scene_id = f"Scene_{self.index + 1:02d}"
+        if self.storyboard_id is None:
+            self.storyboard_id = self.scene_id
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -214,7 +248,8 @@ class Brief(BaseModel):
     voice: str = "Charon"
     voice_prompt: str | None = None
     brand: dict[str, Any] | None = None
-    voice_speed: float = 1.15
+    voice_speed: float = 1.0
+    timing: Timing = Field(default_factory=Timing)
     # Video-gen resolution — upscaled to the output resolution during assembly.
     # Lower is cheaper. Seedance 2.0 Fast: 480p=$0.054/s, 720p=$0.121/s, 1080p=$0.272/s.
     # Defaults are aspect-aware (9:16→480x854, 16:9→854x480, 1:1→480x480).
@@ -232,6 +267,12 @@ class Brief(BaseModel):
     script: Script
 
     # ---------------------------------------------------------------- I/O
+
+    @model_validator(mode="after")
+    def _timing_speed(self):
+        if "timing" not in self.model_fields_set:
+            self.timing.speed = self.voice_speed
+        return self
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "Brief":
@@ -298,14 +339,14 @@ class Brief(BaseModel):
                         f"scene {scene.index}: motion_graphic needs a locally rendered clip_path before planning. "
                         "Review the storyboard, render the graphic, then add its clip_path; AI generation is not supported for this scene type."
                     )
-        # Briefs have no measured timing yet.  Estimate at 2.5 words/s, which
+        # Briefs have no measured timing yet.  Estimate using the configured words/s and voice speed, which
         # is deliberately conservative: every beat beginning in this window is
         # animated unless the author explicitly wrote animate: false.
         cursor = 0.0
         scenes_out = []
         for s in self.script.scenes:
             explicit_false = "animate" in s.model_fields_set and not s.animate
-            auto = self.aspect == "9:16" and cursor < self.animate_opening_s and not explicit_false and s.resolved_scene_type == "still"
+            auto = self.aspect == "9:16" and cursor < self.animate_opening_s and not explicit_false and s.resolved_scene_type == "still" and s.generation_method not in ("direct_clip", "external")
             animate = s.animate or auto
             item = {
                 "index": s.index, "shot_type": s.shot_type,
@@ -320,7 +361,7 @@ class Brief(BaseModel):
                 **({"html_path": s.html_path} if s.html_path else {}),
                 **({"regenerate": True} if s.regenerate else {}),
             }
-            scenes_out.append(item); cursor += max(.5, len(s.vo_text.split()) / 2.5)
+            scenes_out.append(item); cursor += max(.5, len(s.vo_text.split()) / (self.timing.estimate_wps * self.timing.speed))
         return {
             "aspect": self.aspect,
             "voice": self.voice,

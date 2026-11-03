@@ -82,6 +82,7 @@ _STAGES = [
     {
         "id": "intake",
         "redirect": "For a script plus existing clips or footage, use `parallax cut` (read `parallax guide cut`).",
+        "front_half": "For text-only storyboard review, follow `parallax guide front_half` and author brief.yaml directly.",
         "goal": "Read the supplied script, notes, and references. Check whether a branded concept already has official customer brand images/guidelines in `references/` or needs Google/web brand discovery.",
         "commands": [],
         "preconditions": ["A project folder holding the script and any reference files."],
@@ -112,7 +113,7 @@ _STAGES = [
         "goal": "Write the portable storyboard package and detect open reference gates. No provider calls.",
         "commands": [{
             "command": "storyboard",
-            "use": "Read `status`, `gates`, `advisories`, `next_steps` from the JSON.",
+            "use": "For review before external generation use --text-only --pdf; read `status`, `gates`, `advisories`, `next_steps` from the JSON.",
             "pass": ["--folder", "--brief", "--json"],
             "json_fields": ["status", "package_dir", "html", "files", "gates", "produce_blocked", "blocked_by", "advisories", "next_steps"],
             "check_only": "Add --check (instead of writing a package) to preview status, gates, and advisories as JSON without writing files.",
@@ -236,7 +237,8 @@ def build_guide(group: Any, topic: str | None = None) -> dict:
         return {**header, "topic": topic, "stage": stage, **({"brief": _BRIEF} if topic == "brief" else {})}
     return {
         **header,
-        "start_here": "For a script plus existing clips or footage, use `parallax cut` (read `parallax guide cut`, then `parallax cut --help`), not intake/brief/produce or `audio voiceover` plus hand assembly.",
+        "start_here": "For text-only storyboard approval before external media, read `parallax guide front_half`. For existing clips and a script, read `parallax guide cut`.",
+        "front_half_workflow": TOPICS["front_half"],
         "invocation": "`parallax` stands for however you run this checkout or install, e.g. `uv run parallax`.",
         "discovery": ["parallax --help", "parallax <command> --help", "parallax schema brief", "parallax schema plan", "parallax schema cli", "parallax guide", "parallax guide <topic>"],
         "topics": {
