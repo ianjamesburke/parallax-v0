@@ -237,7 +237,7 @@ def build_guide(group: Any, topic: str | None = None) -> dict:
         return {**header, "topic": topic, "stage": stage, **({"brief": _BRIEF} if topic == "brief" else {})}
     return {
         **header,
-        "start_here": "For text-only storyboard approval before external media, read `parallax guide front_half`. For existing clips and a script, read `parallax guide cut`.",
+        "start_here": "For text-only storyboard approval before external media, read `parallax guide front_half`. For existing clips and a script, use `parallax cut`, not intake/brief/produce; read `parallax guide cut` and `parallax cut --help`.",
         "front_half_workflow": TOPICS["front_half"],
         "invocation": "`parallax` stands for however you run this checkout or install, e.g. `uv run parallax`.",
         "discovery": ["parallax --help", "parallax <command> --help", "parallax schema brief", "parallax schema plan", "parallax schema cli", "parallax guide", "parallax guide <topic>"],
