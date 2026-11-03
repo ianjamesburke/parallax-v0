@@ -327,7 +327,7 @@ def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_ba
     pages: list[str] = []
     for position, scene in enumerate(brief.script.scenes, start=1):
         kind = scene.resolved_scene_type
-        scene_id = scene.storyboard_id or f"{scene.index:02d}"
+        scene_id = (scene.storyboard_id if text_only or "storyboard_id" in scene.model_fields_set else f"{scene.index:02d}") or f"{scene.index:02d}"
         title = scene.storyboard_title or scene.prompt
         kicker = scene.storyboard_kicker or scene.storyboard_treatment or kind.replace("_", " ").title()
         words = len(re.sub(r"\[[^\]]*\]", "", scene.vo_text).split())

@@ -179,9 +179,9 @@ class BriefScene(BaseModel):
     @model_validator(mode="after")
     def _identity(self):
         if self.scene_id is None:
-            self.scene_id = f"Scene_{self.index + 1:02d}"
+            object.__setattr__(self, "scene_id", f"Scene_{self.index + 1:02d}")
         if self.storyboard_id is None:
-            self.storyboard_id = self.scene_id
+            object.__setattr__(self, "storyboard_id", self.scene_id)
         return self
 
     @model_validator(mode="before")
