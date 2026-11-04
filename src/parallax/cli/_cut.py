@@ -331,7 +331,7 @@ def cut_cmd(
         help="Ignore voiceover caches and re-synthesize.",
     ),
 ) -> int:
-    """Cut a folder of clips to a script: voiceover (cached), word alignment, midpoint-of-gap scene plan, manifest.yaml, captioned MP4, and XML editor export from ONE manifest."""
+    """Quick loose-clips tool: cut clips to a script, with captions and an XML editor export."""
     from ..cut import CutError, default_voice_for, run_cut
 
     try:

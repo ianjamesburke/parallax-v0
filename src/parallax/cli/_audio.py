@@ -295,7 +295,7 @@ def audio_voiceover(
     trim_pauses: bool = typer.Option(False, "--trim-pauses", help="Opt in to timestamp-based pause trimming. By default, preserve the provider's original audio."),
     no_verify: bool = typer.Option(False, "--no-verify", help="Skip local transcript verification of synthesized speech."),
 ) -> int:
-    """Synthesize speech. For a script plus existing footage, use `parallax cut` instead. Spends money; prints the estimated cost first."""
+    """Synthesize speech. For supplied footage, use brief → assets import → check → plan → produce (see `parallax guide footage_job`). Spends money; prints the estimated cost first."""
     import shutil
     import tempfile
     from pathlib import Path as _P

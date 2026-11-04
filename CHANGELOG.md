@@ -2,6 +2,12 @@
 
 Newest releases appear first.
 
+## [0.7.5] — 2026-11-04
+
+### Changes
+- fix: produce supplied footage and voiceover through the brief workflow at zero provider cost, with imported take selection, coverage checks and cached audio processing.
+- docs: reverse 7ee1e46 (PR #212, 2026-10-29): route supplied footage through brief/plan so each scene keeps its narration; hand-written cut maps led Muse to map sentence N to Scene_NN and drop PA21 Scenes 13–25. `cut` remains a loose-clips tool and supports the editing@ agent.
+
 ## [0.7.4] — 2026-11-04
 
 ### Changes

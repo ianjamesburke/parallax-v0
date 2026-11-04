@@ -81,7 +81,7 @@ _BRIEF = {
 _STAGES = [
     {
         "id": "intake",
-        "redirect": "For a script plus existing clips or footage, use `parallax cut` (read `parallax guide cut`).",
+        "redirect": "For supplied footage, follow `parallax guide footage_job`.",
         "front_half": "For text-only storyboard review, follow `parallax guide front_half` and author brief.yaml directly.",
         "goal": "Read the supplied script, notes, and references. Check whether a branded concept already has official customer brand images/guidelines in `references/` or needs Google/web brand discovery.",
         "commands": [],
@@ -173,7 +173,7 @@ _STAGES = [
         ],
         "preconditions": ["human approved the storyboard", "no open reference gates", "human has seen the printed estimate"],
         "human_decision": {"question": "Is the estimate `parallax produce` prints acceptable for this project?", "ask_only_if_unresolved": False},
-        "see": ["produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll", "export", "cut"],
+        "see": ["produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll", "export", "footage_job", "cut"],
         "review_boundary": "Dry run first with PARALLAX_TEST_MODE=1 (stub assets, no network),; it writes nothing into plan.yaml. Lock approved assets before re-running; unlocked scenes regenerate and cost money.",
         "spends_money": True,
         "next": None,
@@ -237,7 +237,7 @@ def build_guide(group: Any, topic: str | None = None) -> dict:
         return {**header, "topic": topic, "stage": stage, **({"brief": _BRIEF} if topic == "brief" else {})}
     return {
         **header,
-        "start_here": "For text-only storyboard approval before external media, read `parallax guide front_half`. For existing clips and a script, use `parallax cut`, not intake/brief/produce; read `parallax guide cut` and `parallax cut --help`.",
+        "start_here": "For text-only storyboard approval before external media, read `parallax guide front_half`. For supplied footage and voiceover, read `parallax guide footage_job`.",
         "front_half_workflow": TOPICS["front_half"],
         "invocation": "`parallax` stands for however you run this checkout or install, e.g. `uv run parallax`.",
         "discovery": ["parallax --help", "parallax <command> --help", "parallax schema brief", "parallax schema plan", "parallax schema cli", "parallax guide", "parallax guide <topic>"],

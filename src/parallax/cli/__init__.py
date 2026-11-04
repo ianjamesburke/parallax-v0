@@ -12,7 +12,7 @@ from . import _audio, _cut, _export, _guide, _image, _log, _meta, _models, _prod
 app = typer.Typer(
     name="parallax",
     help=("Agentic creative production CLI.\n\n"
-          "For a script plus existing clips or footage, use `parallax cut` (read `parallax guide cut`), not intake/brief/produce or `audio voiceover` plus hand assembly.\n\n"
+          "For supplied footage, follow brief → assets import → check → plan → produce (see `parallax guide footage_job`). `parallax cut` is a quick loose-clips tool.\n\n"
           "Agents: start with `parallax guide` (workflow map + topics). "
           "Single shot with start/end frames: `parallax guide single_shot`. "
           "Character design first: `parallax guide character_first`."),

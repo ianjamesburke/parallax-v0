@@ -11,18 +11,17 @@ uv tool install --python 3.11 --force "parallax[align] @ git+https://github.com/
 parallax --version
 ```
 
-Use your Google Drive connection to download the source folder. Export the script doc as `script.txt` and put the numbered clips in `clips/`. Pass the actual supplied voiceover file to `--audio` in both commands.
+For a job with supplied footage (numbered `Scene_NN` clips, a script, and a recorded voiceover):
 
-Write a YAML cut map as in [examples/cut-map.yaml](examples/cut-map.yaml). A segment is one on-screen interval: its `anchor` is a few words copied from where it starts in the script, and its `clip` is a filename in `clips/`. It ends at the next anchor, or at the end of the audio for the last segment. Put segments in script order. Use the script or storyboard scene boundaries to match each `Scene_NN` to its intended unit of narration; a unit can be part of a sentence, a sentence, or more. For duplicate takes such as `Scene_10_ed994ad0.mp4` and `Scene_10.mp4`, choose one and name it exactly. Leave spare clips out of the map. See `parallax guide cut` for more options.
+1. Download the source folder with your Google Drive connection. Export the script doc as `script.txt`, put the clips in `clips/`, and save the supplied voiceover as `vo.mp3`.
+2. Create the project: `mkdir -p P/references P/storyboard-package`, then copy `script.txt` and `vo.mp3` into `P/`.
+3. Write `P/brief.yaml` with one scene per clip number, in `Scene_NN` order. Each scene has `scene_id: Scene_NN`, `generation_method: external`, a short `prompt` describing the clip, and `vo_text`: the narration that plays over that clip (part of a sentence, a sentence, or more). Joined in order, the `vo_text` lines must equal `script.txt` exactly. Every `Scene_NN` gets exactly one scene; never merge or drop one. Add `audio_path: vo.mp3` at the top. Only ask the requester if a clip clearly contradicts the script. See `parallax schema brief`.
+4. `parallax assets import --folder P --from clips/`. For duplicate takes of one scene, set `preferred: true` on exactly one in `P/parallax/assets/import-manifest.json`.
+5. `parallax check --folder P --stage media` and fix every error.
+6. `parallax plan --folder P`, then `parallax produce --folder P --plan P/parallax/scratch/plan.yaml --aspect 9:16`. The cost estimate must show $0.00; stop if it does not. The supplied voiceover is sped to 1.15x once and aligned; captions are burned in.
+7. Watch the MP4 in `P/parallax/output/` to verify scene order, captions, audio, and 9:16 framing. Upload it with your Drive connection to the folder the requester names, or a new subfolder there (in Muse: `/opt/hatch/bin/hatch_gws_cli drive +upload ...`), and reply with the file link.
 
-```sh
-parallax cut --script script.txt --clips clips/ --map cut-map.yaml --audio vo.mp3 --process-audio --aspect 9:16 --out final.mp4 --plan-only
-parallax cut --script script.txt --clips clips/ --map cut-map.yaml --audio vo.mp3 --process-audio --aspect 9:16 --out final.mp4
-```
-
-If a model download fails with a transient network or proxy error, rerun the same command.
-
-The normal flow applies the default 1.15x speed, loudness normalization, alignment, and captions. If no voiceover is supplied, ask the requester or use configured TTS only when its API key is set; do not choose a random free voice. For configured TTS, omit `--audio vo.mp3 --process-audio` from both commands. Resolve plan errors before rendering. Check the voiceover verification and manifest/XML consistency reports, and watch the MP4 to verify scene order, captions, audio, and 9:16 framing. `parallax check --folder PROJECT --stage media` checks a brief-based project when one exists; it does not validate a standalone cut. `parallax verify suite` runs test cases, not the finished MP4. Upload the final MP4 through your Drive connection to the folder the requester names, or a new subfolder there, and reply with the file link.
+If a model download fails with a transient network or proxy error, rerun the same command. If no voiceover is supplied, ask the requester; use configured TTS only when its API key is set.
 
 For a storyboard, run `parallax guide front_half`, write the brief, run `parallax check`, then `parallax storyboard --text-only --pdf`, and send the PDF for approval before generating media.
 
@@ -34,7 +33,7 @@ Run `parallax guide` first. It explains the front-half workflow and review bound
 curl -LsSf https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/install.sh | sh   # install
 parallax guide        # first: author a brief and drive the pipeline
 parallax --help       # every command
-parallax guide cut    # cut a folder of existing clips to a script + voiceover + XML export
+parallax guide footage_job  # produce a project from supplied footage and voiceover
 PARALLAX_TEST_MODE=1 parallax produce --folder ./my-project --brief ./my-project/brief.yaml   # free stub run, try this first
 parallax update       # upgrade later
 ```

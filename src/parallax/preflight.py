@@ -49,6 +49,7 @@ class PreflightResult:
     voiceover_model: str = DEFAULT_VOICE_MODEL
     voiceover_locked: bool = False
     voiceover_cost_usd: float = 0.0
+    supplied_audio_speed: float | None = None
     estimated_total_usd: float = 0.0
     balance_usd: float | None = None
     has_overwrites: bool = False
@@ -108,6 +109,10 @@ def compute_preflight(
                 index=idx, kind="clip", model_alias="local",
                 duration_s=float(s.get("duration_s") or 0), locked=True, cost_usd=0.0,
             ))
+            continue
+
+        if s.get("clip_path"):
+            scenes.append(PreflightScene(index=idx, kind="clip", model_alias="local", duration_s=0.0, locked=True, cost_usd=0.0))
             continue
 
         # --- Still ---
@@ -196,10 +201,8 @@ def compute_preflight(
     # --- Locked-audio warnings ---
     locked_audio_warnings: list[str] = []
     if audio_path_locked:
-        voice_speed = float(plan.get("voice_speed", 1.0))
-        if voice_speed != 1.0:
+        if not plan.get("audio_supplied") and float(plan.get("voice_speed", 1.0)) != 1.0:
             locked_audio_warnings.append("voice_speed ignored — audio is locked")
-
         trim_pauses = plan.get("trim_pauses", True)
         if trim_pauses is not False:
             audio_path_val = plan.get("audio_path", "")
@@ -249,6 +252,7 @@ def compute_preflight(
         voiceover_model=voice_model,
         voiceover_locked=vo_locked,
         voiceover_cost_usd=vo_cost,
+        supplied_audio_speed=float(plan.get("voice_speed", 1.0)) if audio_path_locked and plan.get("audio_supplied") else None,
         estimated_total_usd=estimated_total,
         balance_usd=balance_usd,
         has_overwrites=has_overwrites,
@@ -311,7 +315,11 @@ def format_preflight(result: PreflightResult) -> str:
         lines.append(row)
 
     # Voiceover row
-    vo_status = "[locked — skipping]" if result.voiceover_locked else "[will regenerate]"
+    if result.supplied_audio_speed is not None:
+        rate = result.supplied_audio_speed
+        vo_status = f"[supplied — {rate:g}x, cached]" if rate != 1.0 else "[supplied — reused]"
+    else:
+        vo_status = "[locked — skipping]" if result.voiceover_locked else "[will regenerate]"
     lines.append(
         f"    voiceover ({result.voiceover_model})"
         f"      ~${result.voiceover_cost_usd:.4f}   {vo_status}"

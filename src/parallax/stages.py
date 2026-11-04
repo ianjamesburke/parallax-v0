@@ -473,7 +473,7 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
     from .settings import VALID_ASPECTS
 
     scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
-    still_count = sum(1 for s in scenes_raw if s.get("scene_type") != "motion_graphic")
+    still_count = sum(1 for s in scenes_raw if s.get("scene_type") != "motion_graphic" and not s.get("clip_path"))
     _log(settings, f"generating {still_count} stills — image_model={settings.image_model} aspect={settings.aspect}")
     _warn_unknown_scene_fields(scenes_raw)
     Path(state.stills_dir).mkdir(exist_ok=True)
@@ -506,6 +506,13 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
                 still_paths[idx] = ""
                 continue
             raise ValueError(f"scene {idx}: motion_graphic clip_path is missing or unusable: {clip}. Render the local graphic before producing.")
+        if s.get("clip_path"):
+            clip = Path(s["clip_path"]).expanduser()
+            clip = clip if clip.is_absolute() else settings.folder / clip
+            if not _is_clip_reusable(str(clip), settings.mode):
+                raise ValueError(f"scene {idx}: clip_path is missing or unusable: {clip}")
+            still_paths[idx] = ""
+            continue
         _locked_still: str | None = s.get("still_path")
         if _locked_still is not None and not (
             settings.mode == ProductionMode.REAL and is_mock_asset(_locked_still)
@@ -552,7 +559,7 @@ def stage_stills(plan: dict[str, Any], settings: Settings, state: PipelineState)
             aspect=s.get("aspect", settings.aspect),
             duration_s=s.get("duration_s"),
         )
-        if s.get("animate"):
+        if s.get("animate") and not s.get("clip_path"):
             scene_rt.animate = True
             if s.get("video_model"):
                 scene_rt.video_model = s["video_model"]
@@ -737,6 +744,55 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
     """
     Path(state.audio_dir).mkdir(exist_ok=True)
 
+    original_plan = plan
+    if plan.get("audio_path"):
+        import hashlib
+        from . import audio as _audio
+        source = Path(plan["audio_path"]).expanduser()
+        source = source if source.is_absolute() else settings.folder / source
+        cache_dir = settings.folder / "parallax" / "audio"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        supplied = bool(plan.get("audio_supplied", False))
+        rate = float(plan.get("voice_speed", 1.0)) if supplied else 1.0
+        if rate <= 0:
+            raise ValueError("voice_speed must be positive")
+        if rate != 1.0:
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()[:20]
+            processed = cache_dir / f"supplied_{digest}_{rate:g}_normalized.wav"
+            if not processed.is_file():
+                import tempfile
+                from .cut import normalize_audio_loudness
+                with tempfile.TemporaryDirectory(dir=cache_dir) as temp_dir:
+                    temporary = Path(temp_dir) / "processed.wav"
+                    _audio.speedup(source, temporary, rate)
+                    normalize_audio_loudness(temporary, temporary)
+                    temporary.replace(processed)
+            plan = dict(plan, audio_path=str(processed))
+            if plan.get("words_path"):
+                original_words = Path(plan["words_path"])
+                original_words = original_words if original_words.is_absolute() else settings.folder / original_words
+                word_digest = hashlib.sha256(original_words.read_bytes()).hexdigest()[:20]
+                cached_words = cache_dir / f"words_{digest}_{word_digest}_{rate:g}.json"
+                if not cached_words.is_file():
+                    data = json.loads(original_words.read_text())
+                    entries = data if isinstance(data, list) else data.get("words", [])
+                    for word in entries:
+                        for key in ("start", "end"):
+                            if key in word:
+                                word[key] /= rate
+                    if isinstance(data, dict) and "total_duration_s" in data:
+                        data["total_duration_s"] /= rate
+                    cached_words.write_text(json.dumps(data, indent=2))
+                plan["words_path"] = str(cached_words)
+        elif supplied and plan.get("words_path"):
+            original_words = Path(plan["words_path"])
+            original_words = original_words if original_words.is_absolute() else settings.folder / original_words
+            digest = hashlib.sha256(original_words.read_bytes()).hexdigest()[:20]
+            cached_words = cache_dir / f"words_{digest}_1.json"
+            if not cached_words.is_file():
+                shutil.copyfile(original_words, cached_words)
+            plan = dict(plan, words_path=str(cached_words))
+
     if plan.get("audio_path") and plan.get("words_path"):
         audio_path = str((settings.folder / plan["audio_path"]) if not Path(plan["audio_path"]).is_absolute() else Path(plan["audio_path"]))
         words_path = str((settings.folder / plan["words_path"]) if not Path(plan["words_path"]).is_absolute() else Path(plan["words_path"]))
@@ -761,33 +817,73 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
         _log(settings, f"reusing voiceover: {Path(audio_path).name}")
     elif plan.get("audio_path") and not plan.get("words_path"):
         audio_path = str((settings.folder / plan["audio_path"]) if not Path(plan["audio_path"]).is_absolute() else Path(plan["audio_path"]))
-        words_path = str(Path(audio_path).with_name("vo_words.json"))
-        if Path(words_path).exists():
-            _log(settings, f"reusing cached words: {Path(words_path).name}")
-            words_data = json.loads(Path(words_path).read_text())
-            words = words_data if isinstance(words_data, list) else words_data.get("words", [])
-            total = (
-                float(words_data.get("total_duration_s", words[-1]["end"])) if isinstance(words_data, dict)
-                else float(words[-1]["end"]) if words else 0.0
-            )
-        else:
+        from .cut import _speech_coverage, _transcribe_in_windows, verify_words_against_script
+
+        audio_digest = hashlib.sha256(Path(audio_path).read_bytes()).hexdigest()[:20]
+        words_path = str(cache_dir / f"aligned_{audio_digest}.json")
+        legacy_words = source.with_name("vo_words.json")
+        if rate == 1.0 and not Path(words_path).exists() and legacy_words.is_file():
+            legacy_cache = cache_dir / audio_digest / "vo_words.json"
+            legacy_cache.parent.mkdir(parents=True, exist_ok=True)
+            if not legacy_cache.exists():
+                shutil.copyfile(legacy_words, legacy_cache)
+            words_path = str(legacy_cache)
+
+        probe = run_ffmpeg(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", audio_path], capture_output=True, text=True, check=True)
+        total = float(probe.stdout.strip())
+        script = " ".join(s.get("vo_text", "") for s in plan.get("scenes", [])).strip()
+        cache = Path(words_path)
+        words = None
+        if cache.exists():
+            try:
+                words_data = json.loads(cache.read_text())
+                cached = words_data if isinstance(words_data, list) else words_data.get("words", [])
+                report = verify_words_against_script(cached, script, audio_duration_s=total)
+                if report["passed"] or (is_test_mode() and isinstance(words_data, dict) and words_data.get("synthetic") is True):
+                    words = cached
+                    _log(settings, f"reusing cached words: {cache.name}")
+                else:
+                    _log(settings, f"ignoring invalid cached words: {cache.name}")
+            except (OSError, ValueError, TypeError, AttributeError):
+                _log(settings, f"ignoring invalid cached words: {cache.name}")
+            if words is None:
+                cache.unlink(missing_ok=True)
+
+        if words is None:
             if is_test_mode():
-                # WhisperX cannot align the silent stub audio; use synthetic timings.
+                # Silent test stubs cannot be aligned; keep synthetic timings.
                 _log(settings, f"test mode: synthetic word timings → {Path(audio_path).name}")
-                words = mock_words(" ".join(s.get("vo_text", "") for s in plan.get("scenes", [])))
+                words = mock_words(script)
             else:
                 from . import forced_align
                 _log(settings, f"forced_align → {Path(audio_path).name} (whisperx)")
-                words = forced_align.align_words(audio_path)
-            import wave as _wave
-            with _wave.open(audio_path, "rb") as _w:
-                total = _w.getnframes() / float(_w.getframerate())
-            Path(words_path).write_text(json.dumps(
-                {"words": words, "total_duration_s": round(total, 3)}, indent=2,
-            ))
+                try:
+                    words = forced_align.align_words(audio_path)
+                except RuntimeError as exc:
+                    _log(settings, f"alignment failed: {exc}; retrying")
+                    words = []
+                coverage = _speech_coverage(words, total)
+                for attempt in ("whole file", "windows"):
+                    if coverage["complete"]:
+                        break
+                    _log(settings, f"incomplete alignment: {'; '.join(coverage['problems'])}; retrying {attempt}")
+                    try:
+                        words = (forced_align.align_words(audio_path) if attempt == "whole file"
+                                 else _transcribe_in_windows(audio_path, total, forced_align.align_words, {}))
+                    except Exception as exc:
+                        _log(settings, f"alignment retry failed ({attempt}): {exc}")
+                        words = []
+                    coverage = _speech_coverage(words, total)
+                if not coverage["complete"]:
+                    raise ValueError(f"Incomplete voiceover alignment after whole-file and window retries: {'; '.join(coverage['problems'])}. Rerun produce to retry.")
+                report = verify_words_against_script(words, script, audio_duration_s=total)
+                if not report["passed"]:
+                    details = report.get("timing_problems") or [f"similarity {report['similarity']:.3f}; missing runs: {report['missing_runs']}"]
+                    raise ValueError(f"Voiceover alignment does not match the plan narration or has invalid timings: {'; '.join(str(d) for d in details)}")
+            cache.write_text(json.dumps({"words": words, "total_duration_s": round(total, 3), **({"synthetic": True} if is_test_mode() else {})}, indent=2))
         vo_result = {"words": words, "audio_path": audio_path, "words_path": words_path,
                      "total_duration_s": total}
-        _log(settings, f"  aligned {len(words)} words ({words[0]['start']:.2f}s – {words[-1]['end']:.2f}s)")
+        _log(settings, f"  aligned {len(words)} words")
     else:
         scenes_raw: list[dict[str, Any]] = plan.get("scenes", [])
         full_script = " ".join(expand_digits(s.get("vo_text", "")) for s in scenes_raw).strip()
@@ -845,7 +941,7 @@ def stage_voiceover(plan: dict[str, Any], settings: Settings, state: PipelineSta
     state.audio_path = audio_path
     state.words_path = words_path
     state.vo_result = vo_result
-    return plan
+    return original_plan
 
 
 def stage_voice_postprocess(plan: dict[str, Any], settings: Settings, state: PipelineState) -> dict[str, Any]:

@@ -14,6 +14,10 @@ def _end_frame_models() -> list[str]:
     return sorted(spec.alias for spec in VIDEO_MODELS.values() if spec.end_frame)
 
 TOPICS: dict[str, dict] = {
+    "footage_job": {
+        "summary": "Produce supplied Scene_NN clips, a script and recorded voiceover at zero provider cost.",
+        "steps": ["Create the project with references/, storyboard-package/, script.txt and vo.mp3.", "Write brief.yaml with audio_path: vo.mp3 and one scene per Scene_NN in order, with generation_method: external, prompt and its share of the exact script in vo_text.", "Run parallax assets import --folder P --from clips/; select exactly one preferred take for duplicates in import-manifest.json.", "Run parallax check --folder P --stage media and fix every error.", "Run parallax plan --folder P.", "Run parallax produce --folder P --plan P/parallax/scratch/plan.yaml --aspect 9:16; ensure the estimate is $0.00.", "Watch the output MP4 to verify scene order, captions, audio and framing."],
+    },
     "front_half": {
         "summary": "Create a text-only storyboard for approval before external media generation. No provider calls are needed.",
         "template": {"goal": "Describe the story", "references": [{"id": "wellybox_ui", "kind": "app_ui", "description": "WellyBox app UI", "status": "missing", "paths": []}], "script": {"scenes": [{"index": 0, "scene_id": "Scene_01", "vo_text": "Exact narration.", "prompt": "The WellyBox app receipt screen.", "generation_method": "external", "refs": ["wellybox_ui"]}]}},
@@ -30,7 +34,7 @@ TOPICS: dict[str, dict] = {
         "next": "assemble",
     },
     "mock": {"summary":"Iterate structure, timing, and captions in PARALLAX_TEST_MODE=1, then rerun the same commands for real.", "next":"produce_loop"},
-    "voiceover": {"redirect": "For a script plus existing clips or footage, use `parallax cut` (read `parallax guide cut`).", "summary":"Seed Audio requires a natural-language voice_prompt. Social default: A fast documentary narrator revealing a secret: fast-paced social-media-ad delivery, rapid with minimal pauses between lines, highly expressive animated storyteller building intrigue, deep, low, warm, slightly gravelly male voice, punchy emphasis on key words.", "next":"assemble"},
+    "voiceover": {"redirect": "For supplied footage, follow `parallax guide footage_job`.", "summary":"Seed Audio requires a natural-language voice_prompt. Social default: A fast documentary narrator revealing a secret: fast-paced social-media-ad delivery, rapid with minimal pauses between lines, highly expressive animated storyteller building intrigue, deep, low, warm, slightly gravelly male voice, punchy emphasis on key words.", "next":"assemble"},
     "single_shot": {
         "summary": "One camera move, using separate frozen start and end frames when the view, scale, or subject changes.",
         "separate_stills": {
@@ -81,7 +85,7 @@ TOPICS: dict[str, dict] = {
         "next": "produce_loop",
     },
     "produce_loop": {
-        "redirect": "For a script plus existing clips or footage, use `parallax cut` (read `parallax guide cut`).",
+        "redirect": "For supplied footage, follow `parallax guide footage_job`.",
         "summary": "brief.yaml (human spec) -> `parallax plan` -> plan.yaml (engine spec) -> `parallax produce` -> <folder>/parallax/output/vN/.",
         "paths": {
             "folder": "--folder is the project root. Pass an absolute path; paths inside plan.yaml are relative to it.",
@@ -135,7 +139,7 @@ TOPICS: dict[str, dict] = {
         "regenerate": "Set `regenerate: true` on a scene (in `brief.yaml` or `plan.yaml`): the next `produce` clears its still_path, clip_path, and end_frame_path locks and the flag itself, moves the previous still/clip into `<folder>/parallax/assets/versions/scene_NN_still_vK.png` (so prior takes are cleanly preserved), and generates a fresh take at `<folder>/parallax/assets/scene_NN_still.png`. Top-level audio locks are not cleared.",
         "audio_locks": {
             "where": "Top level of plan.yaml, not inside a scene: `audio_path` and `words_path`. `produce` writes them itself only when `voice_postprocess` runs; otherwise set them by hand after approving narration.",
-            "effect": "While set, narration is reused, not synthesized. `voice_speed`, `trim_pauses`, and `voice_postprocess` are ignored (the pre-flight table warns).",
+            "effect": "Narration is reused, not synthesized. A brief audio_path sets plan `audio_supplied: true`, so voice_speed is applied once to a cached copy and word timings are adjusted. Without that flag, locked audio is used as-is and voice_speed is ignored. trim_pauses and voice_postprocess are ignored for locked audio (preflight warns).",
             "drift": "`vo_text_hashes` records each scene's vo_text when audio is first locked. Editing a scene's vo_text afterwards triggers a pre-flight warning; clear audio_path to regenerate.",
             "preparing": "Copy approved audio and word-timing files to run-local paths first, keep scene narration matched to the recording, and keep the reviewed voice speed and post-processing settings.",
         },
@@ -251,7 +255,7 @@ TOPICS: dict[str, dict] = {
         "next": "voiceover_broll",
     },
     "voiceover_broll": {
-        "redirect": "For a script plus existing clips or footage, use `parallax cut` (read `parallax guide cut`).",
+        "redirect": "For supplied footage, follow `parallax guide footage_job`.",
         "summary": "Voiceover-led social video: the narrator tells the story, visuals demonstrate it. Characters take part in scenes; they do not present to the viewer.",
         "mode": "A first-person voiceover does not imply a talking avatar. Choose on-screen presenter delivery only when requested.",
         "scene_rules": [

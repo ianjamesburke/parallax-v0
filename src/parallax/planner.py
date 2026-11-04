@@ -39,6 +39,9 @@ _TOP_LEVEL_ORDER = (
     "animate_resolution",
     "voice",
     "voice_speed",
+    "audio_path",
+    "audio_supplied",
+    "words_path",
     "trim_pauses",
     "voice_model",
     "voice_prompt",
@@ -232,6 +235,26 @@ def plan_from_brief(
 
     # All assets present — build the plan.
     plan = brief.to_plan_skeleton(stills_only=stills_only)
+    import json
+    import re
+    assets_dir = folder / "parallax" / "assets"
+    manifest = assets_dir / "import-manifest.json"
+    records = json.loads(manifest.read_text()) if manifest.is_file() else []
+    for scene, entry in zip(brief.script.scenes, plan["scenes"]):
+        if scene.clip_path:
+            continue
+        match = re.fullmatch(r"Scene_(\d+)", scene.scene_id, re.IGNORECASE)
+        if not match:
+            continue
+        number = int(match.group(1))
+        candidates = [r for r in records if re.fullmatch(r"Scene_0*" + str(number), r.get("scene_id", ""), re.IGNORECASE) and (assets_dir / r.get("filename", "")).is_file() and Path(r["filename"]).suffix.lower() in {".mp4", ".mov", ".webm"}]
+        preferred = {r["filename"] for r in candidates if r.get("preferred") is True}
+        preferred.update(t.filename for t in scene.takes if t.preferred and any(r["filename"] == t.filename for r in candidates))
+        if len(candidates) > 1 and len(preferred) != 1:
+            raise ValueError(f"{scene.scene_id} has ambiguous takes; set preferred: true on exactly one take in import-manifest.json or brief.yaml.")
+        if candidates:
+            name = next(iter(preferred)) if len(candidates) > 1 else candidates[0]["filename"]
+            entry["clip_path"] = str((assets_dir / name).relative_to(folder))
     plan["image_model"] = image_model
     plan["video_model"] = video_model
     from .voice_defaults import resolve_voice_defaults

@@ -38,7 +38,10 @@ def script_coverage(c):
     if not brief or not p.is_file(): return
     a = " ".join(p.read_text(encoding="utf-8").split())
     b = " ".join(" ".join(s.vo_text for s in brief.script.scenes).split())
-    if a != b:
+    # Permit whitespace introduced only at a scene boundary.
+    pieces = [" ".join(s.vo_text.split()) for s in brief.script.scenes]
+    pattern = r"\s*".join(re.escape(piece).replace(r"\ ", r"\s+") for piece in pieces)
+    if not re.fullmatch(pattern, a):
         pos = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
         yield finding("script_mismatch", "error", f"Narration differs at normalized character {pos}: script {a[pos:pos+30]!r}; scenes {b[pos:pos+30]!r}.", "Edit brief.yaml scene vo_text to match script.txt in order.")
 
@@ -56,6 +59,13 @@ def media_names(c):
                 yield finding("invalid_media_name", "error", f"{p.relative_to(root)} has an invalid scene name.", f"Rename it to Scene_NN{p.suffix} or Scene_NN_take02{p.suffix}.")
             elif p.suffix.lower() in {".mp4", ".mov", ".webm"}:
                 groups.setdefault(int(m.group(1)), []).append(p)
+    brief = c.get("brief")
+    if brief and (c["stage"] == "media" or groups):
+        covered = {int(m.group(1)) for scene in brief.script.scenes if (m := re.fullmatch(r"Scene_(\d+)", scene.scene_id, re.IGNORECASE))}
+        uncovered = sorted(set(groups) - covered)
+        if uncovered:
+            names = ", ".join(f"Scene_{n:02d}" for n in uncovered)
+            yield finding("uncovered_clips", "error", f"Imported clips have no brief scene: {names}.", "Add one brief scene per Scene_NN with its share of the narration.")
     for number, paths in groups.items():
         names = [p.name for p in paths]
         selected = [r for r in records if r.get("filename") in names and r.get("preferred") is True]

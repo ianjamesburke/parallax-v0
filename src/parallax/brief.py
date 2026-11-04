@@ -266,6 +266,8 @@ class Brief(BaseModel):
     brand: dict[str, Any] | None = None
     references: list[Reference] = Field(default_factory=list, description="Only the advertised product’s own logo, packaging, app UI or product photo counts. The character’s own phone, inbox, laptop and other apps are generic; VO mentioning the brand does not put it on screen. Jim scrolling his own email inbox is generic; the WellyBox app receipt screen cites wellybox_ui (app_ui). Keep one entry per real asset and reuse its id in scene refs.")
     voice_speed: float = 1.0
+    audio_path: str | None = None
+    words_path: str | None = None
     timing: Timing = Field(default_factory=Timing)
     # Video-gen resolution — upscaled to the output resolution during assembly.
     # Lower is cheaper. Seedance 2.0 Fast: 480p=$0.054/s, 720p=$0.121/s, 1080p=$0.272/s.
@@ -343,6 +345,11 @@ class Brief(BaseModel):
         """
         root = Path(folder).expanduser().resolve()
         missing: list[str] = []
+        for asset_path in (self.audio_path, self.words_path):
+            if asset_path:
+                ap = Path(asset_path).expanduser()
+                full = ap if ap.is_absolute() else root / ap
+                if not full.is_file(): missing.append(str(full))
         for asset in self.assets.provided:
             ap = Path(asset.path)
             full = ap if ap.is_absolute() else root / ap
@@ -407,7 +414,9 @@ class Brief(BaseModel):
             "voice": self.voice,
             **({"voice_prompt": self.voice_prompt} if self.voice_prompt else {}),
             **({"brand": self.brand} if self.brand else {}),
-            "voice_speed": self.voice_speed,
+            "voice_speed": self.voice_speed if "voice_speed" in self.model_fields_set or not self.audio_path else 1.15,
+            **({"audio_path": self.audio_path, "audio_supplied": True} if self.audio_path else {}),
+            **({"words_path": self.words_path} if self.words_path else {}),
             **({"stills_only": True} if stills_only else {}),
             **({"headline": self.headline} if self.headline else {}),
             **({"pronunciations": self.pronunciations} if self.pronunciations else {}),

@@ -187,6 +187,7 @@ def test_cut_plan_only_renders_nothing_and_calls_no_tts(
     assert data["status"] == "plan_only"
     assert data["timing_estimated"] is True
     assert data["segments_count"] == 4
+    assert {"mapping_source", "voiceover_source", "voiceover_duration_s", "estimated_tts_cost_usd"} <= data.keys()
     assert not out_mp4.exists()
     assert (proj_dir / "plan.json").is_file()
     assert (proj_dir / "manifest.yaml").is_file()
@@ -220,6 +221,23 @@ def test_cut_mapping_needed_exits_2_and_writes_template(
     assert res.exit_code == 2
     assert "MAPPING NEEDED" in res.output
     assert (proj_dir / "cut-map.template.yaml").is_file()
+
+
+
+def test_cut_json_mapping_needed_preserves_agent_contract(synthetic_cut_fixture: dict[str, Path]) -> None:
+    fx = synthetic_cut_fixture
+    script = fx["tmp"] / "ambiguous.txt"
+    script.write_text("First sentence only. Second sentence only.", encoding="utf-8")
+    project = fx["tmp"] / "mapping-json.cut"
+    result = typer.testing.CliRunner().invoke(cli.app, [
+        "cut", "--script", str(script), "--clips", str(fx["clips"]),
+        "--project", str(project), "--out", str(fx["tmp"] / "unmapped-json.mp4"), "--json",
+    ])
+    assert result.exit_code == 2
+    report = json.loads(result.stdout)
+    assert report["status"] == "mapping_needed"
+    assert len(report["rules_tried"]) == 3
+    assert (project / "cut-map.template.yaml").is_file()
 
 
 def test_cut_overrun_exits_2_without_allow_hold(

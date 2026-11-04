@@ -242,24 +242,45 @@ def test_existing_clips_entry_point_is_on_first_screen_of_guide_and_help(capsys)
     raw = capsys.readouterr().out
     guide = json.loads(raw)
     assert list(guide)[:3] == ["guide_version", "cli_version", "start_here"]
-    assert "parallax cut" in guide["start_here"] and "parallax guide cut" in guide["start_here"]
-    assert "parallax cut --help" in guide["start_here"]
-    assert "not intake/brief/produce" in guide["start_here"]
+    assert "parallax guide footage_job" in guide["start_here"]
     assert raw.index("start_here") < raw.index('"stages"')
     assert cli.main(["--help"]) == 0
     out = " ".join(capsys.readouterr().out.split())
-    assert "For a script plus existing clips or footage, use `parallax cut`" in out
-    assert out.index("parallax guide cut") < out.index("Agents: start with")
+    assert "parallax guide footage_job" in out
+    assert out.index("parallax guide footage_job") < out.index("Agents: start with")
 
 
-def test_existing_footage_wrong_path_topics_redirect_to_cut(capsys):
-    """The workflow views an agent reaches first must not hide the cut path."""
+def test_existing_footage_topics_redirect_to_brief_workflow(capsys):
     for topic in ("intake", "voiceover_broll", "produce_loop", "voiceover"):
         payload = _topic(capsys, topic)
         view = payload.get("stage", payload)
-        assert "parallax cut" in view["redirect"]
-        assert "parallax guide cut" in view["redirect"]
+        assert "parallax guide footage_job" in view["redirect"]
 
+
+
+def test_footage_job_guide_pins_ordered_brief_workflow(capsys):
+    assert cli.main(["guide"]) == 0
+    workflow = json.loads(capsys.readouterr().out)
+    start = workflow["start_here"]
+    assert "parallax guide footage_job" in start
+    assert "parallax cut" not in start
+
+    topic = _topic(capsys, "footage_job")
+    steps = " ".join(topic["steps"])
+    commands = ["brief.yaml", "parallax assets import", "parallax check", "parallax plan", "parallax produce"]
+    positions = [steps.index(command) for command in commands]
+    assert positions == sorted(positions)
+    assert "parallax cut" not in steps
+
+
+def test_footage_help_routes_to_brief_workflow(capsys):
+    for command in (["--help"], ["produce", "--help"], ["audio", "voiceover", "--help"]):
+        assert cli.main(command) == 0
+        help_text = " ".join(capsys.readouterr().out.split())
+        assert "parallax guide footage_job" in help_text
+        assert "brief → assets import → check → plan → produce" in help_text
+        assert "use `parallax cut`" not in help_text
+        assert "use parallax cut" not in help_text
 
 def test_cut_guide_documents_cut_map_format_so_agents_need_not_read_source(capsys):
     assert cli.main(["guide", "cut"]) == 0

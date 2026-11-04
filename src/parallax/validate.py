@@ -39,6 +39,14 @@ def validate_brief(brief_path: str | Path, folder: str | Path) -> dict:
     if not brief.brand and any(x in (brief.goal + " " + " ".join(s.prompt for s in brief.script.scenes)).lower() for x in ("app", "product", "brand", "cta")):
         warnings.append({"code": "brand_assets_missing", "message": "Product/app briefs need a brand block with real assets; run `parallax guide brand`."})
 
+    for field in ("audio_path", "words_path"):
+        value = getattr(brief, field)
+        if value:
+            path = Path(value).expanduser()
+            full = path if path.is_absolute() else folder / path
+            if not full.is_file():
+                errors.append({"field": field, "message": f"file not found: {full}"})
+
     # Provided asset existence
     for i, asset in enumerate(brief.assets.provided):
         ap = Path(asset.path)

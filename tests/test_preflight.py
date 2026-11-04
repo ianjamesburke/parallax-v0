@@ -252,8 +252,8 @@ def test_voice_speed_warning_when_audio_locked():
         voice_speed=1.5,
     )
     result = compute_preflight(plan)
-    assert any("voice_speed" in w for w in result.warnings)
-    assert any("locked" in w for w in result.warnings)
+    assert any("voice_speed ignored" in w for w in result.warnings)
+    assert result.voiceover_locked
 
 
 def test_no_voice_speed_warning_when_speed_is_default():
@@ -353,7 +353,7 @@ def test_warnings_appear_in_format_preflight():
     )
     result = compute_preflight(plan)
     text = format_preflight(result)
-    assert "voice_speed" in text
+    assert "trim_pauses" in text
     assert "WARNING" in text
 
 
@@ -364,7 +364,8 @@ def test_locked_audio_warnings_in_table():
         voice_speed=1.5,
     )
     result = compute_preflight(plan)
-    assert "voice_speed" in format_preflight(result)
+    assert "trim_pauses" in format_preflight(result)
+    assert "voice_speed ignored" in format_preflight(result)
 
 
 # ---------------------------------------------------------------------------

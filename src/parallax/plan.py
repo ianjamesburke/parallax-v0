@@ -270,6 +270,7 @@ class Plan(BaseModel):
 
     # Voiceover audio locks
     audio_path: str | None = None
+    audio_supplied: bool = False  # Raw supplied audio; apply voice_speed once to a cached copy.
     words_path: str | None = None
     # Hashes of each scene's vo_text at the time audio_path was first locked.
     # Written by produce on first lock; compared on subsequent runs to detect drift.
