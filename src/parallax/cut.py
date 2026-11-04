@@ -2786,6 +2786,9 @@ def verify_audio_against_script(
     try:
         heard = fn(str(audio_path), **kwargs)
     except Exception as exc:
+        from .whisper_backend import AlignmentUnavailable
+        if isinstance(exc, AlignmentUnavailable):
+            raise
         return {
             "status": "skipped",
             "passed": True,

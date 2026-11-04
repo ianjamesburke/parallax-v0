@@ -18,18 +18,27 @@ _DEFAULT_MODEL = "base.en"
 _DEFAULT_DEVICE = "cpu"
 _DEFAULT_COMPUTE = "int8"
 
-try:
-    import whisperx as _whisperx  # type: ignore[import-untyped]
-except ImportError:
-    _whisperx = None  # type: ignore[assignment]
+_whisperx = None
+
+ALIGN_INSTALL_MESSAGE = (
+    "Word alignment needs the optional 'align' extra. Install it with: "
+    "uv tool install --force 'parallax[align] @ git+https://github.com/ianjamesburke/parallax-v0@<ref>'"
+)
 
 
-def _require_whisperx() -> None:
+class AlignmentUnavailable(ImportError):
+    """WhisperX is not installed in this environment."""
+
+
+def _require_whisperx():
+    global _whisperx
     if _whisperx is None:
-        raise ImportError(
-            "whisperx is required but not installed. "
-            "Install with: uv tool install 'parallax[whisperx]'"
-        )
+        try:
+            import whisperx
+        except ImportError as exc:
+            raise AlignmentUnavailable(ALIGN_INSTALL_MESSAGE) from exc
+        _whisperx = whisperx
+    return _whisperx
 
 
 def get_config() -> tuple[str, str, str]:

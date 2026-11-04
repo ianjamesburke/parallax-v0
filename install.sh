@@ -56,8 +56,8 @@ REPO_URL="https://github.com/ianjamesburke/parallax-v0"
 src=$(mktemp -d)
 trap 'rm -rf "$src"' EXIT
 git clone --quiet --depth 1 "$REPO_URL" "$src"
-(cd "$src" && uv export --frozen --no-hashes --no-emit-project --no-dev -o "$src/constraints.txt")
-uv tool install --python 3.11 --constraints "$src/constraints.txt" "git+$REPO_URL"
+(cd "$src" && uv export --frozen --no-hashes --no-emit-project --no-default-groups --extra align -o "$src/constraints.txt")
+uv tool install --python 3.11 --constraints "$src/constraints.txt" "parallax[align] @ git+$REPO_URL"
 
 # ─── API key ─────────────────────────────────────────────────────────────────
 if [ -z "${OPENROUTER_API_KEY:-}" ]; then

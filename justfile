@@ -13,8 +13,8 @@ install:
     set -euo pipefail
     constraints="$(mktemp)"
     trap 'rm -f "$constraints"' EXIT
-    uv export --frozen --no-hashes --no-emit-project --no-dev -o "$constraints"
-    uv tool install --python python3.11 --reinstall --constraints "$constraints" .
+    uv export --frozen --no-hashes --no-emit-project --no-default-groups --extra align -o "$constraints"
+    uv tool install --python python3.11 --reinstall --constraints "$constraints" ".[align]"
 
 # Install PR as isolated CLI: parallax-pr<N> (run from feature worktree)
 pr-install pr:
