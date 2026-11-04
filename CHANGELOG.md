@@ -2,6 +2,12 @@
 
 Newest releases appear first.
 
+## [0.7.6] — 2026-11-04
+
+### Changes
+- fix: unused imported clips are warnings, so media checks pass when unused clips are the only issue. Francisco asks Muse for about 30 scenes to provide options; the brief picks clips that fit the narration in Scene_NN order, and extra takes and options stay in the folder unused.
+- docs: remove the requirement to use every clip while preserving preferred-take selection for scenes the brief uses.
+
 ## [0.7.5] — 2026-11-04
 
 ### Changes

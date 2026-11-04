@@ -267,8 +267,8 @@ def test_footage_job_guide_pins_ordered_brief_workflow(capsys):
 
     topic = _topic(capsys, "footage_job")
     steps = " ".join(topic["steps"])
-    commands = ["brief.yaml", "parallax assets import", "parallax check", "parallax plan", "parallax produce"]
-    positions = [steps.index(command) for command in commands]
+    positions = [next(i for i, step in enumerate(topic["steps"]) if command in step)
+                 for command in ("brief.yaml", "Run parallax assets import", "Run parallax check", "Run parallax plan", "Run parallax produce")]
     assert positions == sorted(positions)
     assert "parallax cut" not in steps
 
@@ -298,3 +298,23 @@ def test_cut_guide_documents_cut_map_format_so_agents_need_not_read_source(capsy
     assert "--vo-retries 0" in topic["voiceover_hygiene"]["verification"]
     assert "--no-vo-verify" in topic["voiceover_hygiene"]["verification"]
     assert "--no-strict-vo" in topic["voiceover_hygiene"]["verification"]
+
+
+def test_footage_guide_and_readme_allow_unused_clips(capsys):
+    from pathlib import Path
+
+    topic = _topic(capsys, "footage_job")
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    agents = readme.split("## For agents", 1)[1].split("## Start here", 1)[0]
+    brief_step = next(line for line in agents.splitlines() if line.startswith("3. "))
+    for text in (brief_step, topic["steps"][1]):
+        normalized = text.replace("`", "")
+        assert "picking the clips that fit the narration, in Scene_NN order" in normalized
+        assert "Extra takes and options stay in the folder unused" in text
+        assert "parallax check lists them" in normalized
+        for old_rule in ("exactly one", "one scene per", "never drop", "never merge"):
+            assert old_rule not in text.lower()
+    assert "For duplicate takes of a scene the brief uses" in agents
+    assert "preferred: true" in agents
+    assert "exactly one preferred take" in topic["steps"][2]
+    assert "a scene the brief uses" in topic["steps"][2]

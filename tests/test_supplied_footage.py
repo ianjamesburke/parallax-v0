@@ -50,14 +50,14 @@ def test_import_plan_selection_and_audio_roundtrip(tmp_path):
     assert yaml.safe_load(result.plan_path.read_text())['scenes'][1]['clip_path'] == 'custom.mp4'
 
 
-def test_coverage_and_uncovered(tmp_path):
+def test_coverage_and_unused(tmp_path):
     project(tmp_path)
     assert not any(f['id'] == 'script_mismatch' for f in check_folder(tmp_path)['findings'])
     (tmp_path / 'script.txt').write_text('organized—and her wife')
     assert any(f['id'] == 'script_mismatch' for f in check_folder(tmp_path)['findings'])
     media = tmp_path / 'parallax/assets'; media.mkdir(parents=True)
     (media / 'Scene_03.mp4').write_bytes(b'x')
-    assert any(f['id'] == 'uncovered_clips' and 'Scene_03' in f['message'] for f in check_folder(tmp_path)['findings'])
+    assert any(f['id'] == 'unused_clips' and 'Scene_03' in f['message'] for f in check_folder(tmp_path)['findings'])
 
 
 def test_supplied_clip_skips_stages(tmp_path, monkeypatch):
@@ -178,3 +178,95 @@ def test_supplied_words_are_scaled_once_and_cached(tmp_path, monkeypatch):
         assert state.vo_result['words'][0]['end'] == pytest.approx(2.0)
     assert paths[0] == paths[1] and calls == [1.15]
     assert json.loads(source_words.read_text())['words'][0]['start'] == 1.15
+
+
+@pytest.mark.parametrize('extra_take', [False, True])
+def test_unused_clips_warn_and_media_check_passes(tmp_path, monkeypatch, capsys, extra_take):
+    from parallax import cli
+
+    data = project(tmp_path)
+    reference = tmp_path / 'references/style.png'
+    reference.write_bytes(b'reference')
+    data['assets'] = {'provided': [{'path': 'references/style.png', 'kind': 'style_ref'}]}
+    for scene in data['script']['scenes']:
+        scene['image_refs'] = ['references/style.png']
+    (tmp_path / 'brief.yaml').write_text(yaml.safe_dump(data))
+    source = tmp_path / 'incoming'
+    source.mkdir()
+    for number in (1, 2, 3, 27):
+        (source / f'Scene_{number:02d}.mp4').write_bytes(b'clip')
+    if extra_take:
+        (source / 'Scene_03_option.mp4').write_bytes(b'clip')
+    imported = import_media(str(tmp_path), str(source))
+    assert not any(take.get('preferred') for take in imported['takes'])
+    monkeypatch.setattr('parallax.front_half.shutil.which', lambda _: '/test/ffprobe')
+    monkeypatch.setattr('subprocess.run', lambda *a, **kw: SimpleNamespace(stdout='60', returncode=0))
+
+    result = check_folder(tmp_path, stage='media')
+    warnings = [f for f in result['findings'] if f['severity'] == 'warning']
+    assert len(warnings) == 1
+    assert warnings[0]['id'] == 'unused_clips'
+    assert warnings[0]['message'] == 'Unused clips (no brief scene): Scene_03, Scene_27. They stay in the folder.'
+    assert warnings[0]['blocked'] is False
+    assert 'add' not in warnings[0]['fix'].lower()
+    assert not any(f['severity'] == 'error' for f in result['findings'])
+    assert result['valid'] is True
+    assert result['status'] == 'ok'
+    assert result['exit_code'] == 0
+    assert cli.main(['check', '--folder', str(tmp_path), '--stage', 'media']) == 0
+    output = capsys.readouterr().out
+    assert 'WARNING [unused_clips]' in output
+    assert warnings[0]['message'] in output
+    assert 'Project check: ok.' in output
+    planned = plan_from_brief(tmp_path / 'brief.yaml', tmp_path)
+    plan = yaml.safe_load(planned.plan_path.read_text())
+    assert [scene['clip_path'].split('/')[-1] for scene in plan['scenes']] == [
+        'Scene_01.mp4', 'Scene_02.mp4',
+    ]
+    if extra_take:
+        assert (tmp_path / 'parallax/assets/Scene_03_take02.mp4').is_file()
+
+
+def test_plan_uses_only_brief_scene_subset(tmp_path):
+    data = project(tmp_path)
+    data['script']['scenes'].append({
+        'index': 2, 'scene_id': 'Scene_04', 'vo_text': 'arrived',
+        'prompt': 'four', 'generation_method': 'external',
+    })
+    (tmp_path / 'script.txt').write_text('organized—and his wife arrived')
+    (tmp_path / 'brief.yaml').write_text(yaml.safe_dump(data))
+    source = tmp_path / 'incoming'
+    source.mkdir()
+    for number in (1, 2, 3, 4):
+        (source / f'Scene_{number:02d}.mp4').write_bytes(b'clip')
+    import_media(str(tmp_path), str(source))
+
+    result = plan_from_brief(tmp_path / 'brief.yaml', tmp_path)
+    plan = yaml.safe_load(result.plan_path.read_text())
+    assert [scene['vo_text'] for scene in plan['scenes']] == ['organized—', 'and his wife', 'arrived']
+    assert [scene['clip_path'].split('/')[-1] for scene in plan['scenes']] == [
+        'Scene_01.mp4', 'Scene_02.mp4', 'Scene_04.mp4',
+    ]
+    assert (tmp_path / 'parallax/assets/Scene_03.mp4').is_file()
+
+
+
+@pytest.mark.parametrize('with_brief', [False, True])
+def test_ambiguous_used_takes_still_error(tmp_path, with_brief):
+    from parallax.front_half import media_names
+
+    data = project(tmp_path)
+    source = tmp_path / 'incoming'
+    source.mkdir()
+    for name in ('Scene_01_a.mp4', 'Scene_01_b.mp4'):
+        (source / name).write_bytes(b'clip')
+    import_media(str(tmp_path), str(source))
+    context = {'root': tmp_path, 'stage': 'media'}
+    if with_brief:
+        context['brief'] = Brief.model_validate(data)
+
+    findings = list(media_names(context))
+    assert len(findings) == 1
+    assert findings[0]['id'] == 'ambiguous_take'
+    assert findings[0]['severity'] == 'error'
+    assert findings[0]['blocked'] is True

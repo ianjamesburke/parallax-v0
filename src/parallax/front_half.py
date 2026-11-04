@@ -62,14 +62,15 @@ def media_names(c):
     brief = c.get("brief")
     if brief and (c["stage"] == "media" or groups):
         covered = {int(m.group(1)) for scene in brief.script.scenes if (m := re.fullmatch(r"Scene_(\d+)", scene.scene_id, re.IGNORECASE))}
-        uncovered = sorted(set(groups) - covered)
-        if uncovered:
-            names = ", ".join(f"Scene_{n:02d}" for n in uncovered)
-            yield finding("uncovered_clips", "error", f"Imported clips have no brief scene: {names}.", "Add one brief scene per Scene_NN with its share of the narration.")
+        unused = sorted(set(groups) - covered)
+        if unused:
+            names = ", ".join(f"Scene_{n:02d}" for n in unused)
+            yield finding("unused_clips", "warning", f"Unused clips (no brief scene): {names}. They stay in the folder.", "No action needed; keep extra takes and options in the folder unused.")
     for number, paths in groups.items():
+        if brief and number not in covered:
+            continue
         names = [p.name for p in paths]
         selected = [r for r in records if r.get("filename") in names and r.get("preferred") is True]
-        brief = c.get("brief")
         if brief:
             selected += [t.filename for s in brief.script.scenes if s.scene_id == f"Scene_{number:02d}" for t in s.takes if t.preferred and t.filename in names]
         selected = {r if isinstance(r, str) else r["filename"] for r in selected}
