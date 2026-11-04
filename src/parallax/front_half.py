@@ -68,15 +68,18 @@ def media_names(c):
 
 
 def references(c):
-    from .reference_gates import open_gates
+    from .reference_gates import EXTERNAL_METHODS, _referenced, open_gates
     brief = c.get("brief")
     if not brief: return
     for gate in open_gates(brief, c["root"], c["root"] / "brief.yaml"):
-        yield finding("reference_gate", "error", gate["question"], "Resolve the decision using the choices from parallax storyboard --folder PROJECT --brief PROJECT/brief.yaml --check --json.", True)
+        kind = "product_ref" if gate["id"] == "product-reference" else "style_ref"
+        yield finding("reference_gate", "error", gate["question"], f"Add an image under {c['root'] / 'references'} and list its path as {kind} in assets.provided and in the affected scenes’ image_refs in {c['root'] / 'brief.yaml'}.", True)
+    if any(s.generation_method in EXTERNAL_METHODS and not _referenced(brief, s) for s in brief.script.scenes):
+        yield finding("external_style_reference", "warning", "No style reference: the external generator will choose the look; add images under references/style/ to anchor it.", f"Add images under {c['root'] / 'references/style'} and list them in assets.provided and the affected scenes’ image_refs in {c['root'] / 'brief.yaml'}.")
     for s in brief.script.scenes:
         ref = s.brand_ref
         if ref.status == "missing":
-            yield finding("brand_ref_missing", "error", f"{s.scene_id} has a missing brand reference.", "Supply the reference and update brand_ref in brief.yaml, or record an appropriate decision.", True)
+            yield finding("brand_ref_missing", "error", f"{s.scene_id} has a missing brand reference.", "Add the official image under references/official/ and set brand_ref.status and brand_ref.paths in brief.yaml.", True)
         if ref.status == "supplied" and not ref.paths:
             yield finding("brand_ref_paths", "error", f"{s.scene_id} has no supplied brand reference paths.", "Add existing paths to brand_ref.paths in brief.yaml.")
         for path in ref.paths:
@@ -91,7 +94,7 @@ def timing(c):
     if not brief: return
     timeline, _ = estimate_timeline([s.model_dump() for s in brief.script.scenes], brief.timing.estimate_wps, brief.timing.speed)
     c["timing"] = {"basis": "estimated", "estimate_wps": brief.timing.estimate_wps, "speed": brief.timing.speed, "handle_s": brief.timing.handle_s}
-    yield finding("timing_basis", "info", f"Timing is estimated at {brief.timing.estimate_wps:g} words/s × {brief.timing.speed:g}; footage needs a {brief.timing.handle_s:g}s handle.", "Use measured audio timing when available.")
+    yield finding("timing_basis", "info", f"Timing is estimated at {brief.timing.estimate_wps:g} words/s × {brief.timing.speed:g}; footage needs a {brief.timing.handle_s:g}s handle.", "Set timing.estimate_wps and timing.speed in brief.yaml to match measured audio when available.")
     if c["stage"] != "media": return
     probe = shutil.which("ffprobe")
     if not probe:
@@ -108,9 +111,9 @@ def timing(c):
                 try: duration = float(proc.stdout.strip()) if proc.returncode == 0 else 0
                 except ValueError: duration = 0
                 if duration <= 0:
-                    yield finding("clip_unreadable", "error", f"Cannot read duration of {path.name}.", "Replace it with a decodable clip.")
+                    yield finding("clip_unreadable", "error", f"Cannot read duration of {path.name}.", f"Replace {path} with a decodable clip.")
                 elif duration + .001 < minimum:
-                    yield finding("clip_short", "error", f"{path.name} is {duration:.2f}s; {scene.scene_id} needs {minimum:.2f}s.", "Replace it with longer usable footage.")
+                    yield finding("clip_short", "error", f"{path.name} is {duration:.2f}s; {scene.scene_id} needs {minimum:.2f}s.", f"Replace {path} with footage at least {minimum:.2f}s long.")
 
 
 CHECKS = (structure, schema, script_coverage, media_names, references, timing)

@@ -326,7 +326,7 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
 
     # Files on disk carry placeholders instead of this machine's paths; the returned manifest has exact commands.
     portable = {**review, "gates": ([] if finished_cut else open_gates(brief, FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER))}
-    (package / "storyboard.html").write_text(render_storyboard(brief, assets, portable, link_base=package, source_video=video_metadata, text_only=text_only), encoding="utf-8")
+    (package / "storyboard.html").write_text(render_storyboard(brief, assets, portable, link_base=package, source_video=video_metadata, text_only=text_only, project_name=brief_path.parent.name), encoding="utf-8")
     pdf_created = False
     if pdf:
         (package / "storyboard.pdf").unlink(missing_ok=True)

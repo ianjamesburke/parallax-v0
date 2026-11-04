@@ -16,6 +16,7 @@ from ruamel.yaml import YAML
 
 from .brief import Brief
 
+EXTERNAL_METHODS = {"external", "direct_clip", "provided"}
 EDITORIAL = "editorial-reference"
 PRODUCT = "product-reference"
 
@@ -126,9 +127,9 @@ _FLAGS = {
 DETECTION = {
     EDITORIAL: {
         "reads": ["script.scenes[].scene_type", "script.scenes[].image_refs",
-                  "script.scenes[].shot_type + assets.provided[].kind",
+                  "script.scenes[].shot_type + assets.provided[].kind", "script.scenes[].generation_method",
                   "reference_decisions[]"],
-        "rule": "A scene is listed when its resolved scene type is still or animation (not motion_graphic), it has no image_refs, "
+        "rule": "A scene is listed when its resolved scene type is still or animation (not motion_graphic), its method is not external, direct_clip or provided, it has no image_refs, "
                 "it is not covered by global wiring, and no no_reference decision covers it. Global wiring that counts: a provided character_ref covers shot_type: character scenes; "
                 "a provided product_ref covers shot_type: broll scenes. A style_ref never covers a scene on its own; attach it per scene with image_refs.",
         "order_note": "Any image_refs on a scene, including a product_ref attached by the product gate, removes that scene from this gate. "
@@ -203,7 +204,7 @@ def open_gates(brief: Brief, folder: str | Path, brief_path: str | Path) -> list
     gates = []
     waived = _waived(brief, EDITORIAL)
     editorial = [s.index for s in scenes
-                 if s.resolved_scene_type != "motion_graphic" and not _referenced(brief, s) and s.index not in waived]
+                 if s.resolved_scene_type != "motion_graphic" and s.generation_method not in EXTERNAL_METHODS and not _referenced(brief, s) and s.index not in waived]
     if editorial:
         kinds = sorted(_kinds(brief) & {"style_ref", "character_ref", "product_ref"})
         note = (f"Global reference(s) exist ({', '.join(kinds)}) but do not cover these scenes: a style_ref never covers a scene by itself "

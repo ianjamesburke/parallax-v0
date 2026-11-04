@@ -242,6 +242,8 @@ class Brief(BaseModel):
 
     goal: str
     concept_name: str | None = None
+    name: str | None = None
+    title: str | None = None
     concept_id: str | None = None
     headline: str | None = None  # opening overlay, never included in voiceover
     aspect: Literal["9:16", "16:9", "1:1", "4:3", "3:4"] = "9:16"

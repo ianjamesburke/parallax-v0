@@ -57,7 +57,8 @@ def test_check_exit_codes(tmp_path):
     make_project(tmp_path)
     runner = CliRunner()
     result = runner.invoke(app, ['check', '--folder', str(tmp_path), '--json'])
-    assert result.exit_code == 4  # unresolved reference decision
+    assert result.exit_code == 0
+    assert any(f["id"] == "external_style_reference" and f["severity"] == "warning" for f in json.loads(result.stdout)["findings"])
     (tmp_path / 'script.txt').write_text('wrong')
     result = runner.invoke(app, ['check', '--folder', str(tmp_path), '--json'])
     assert result.exit_code == 2
@@ -75,3 +76,39 @@ def test_media_duration_check(tmp_path, monkeypatch):
     result = check_folder(str(tmp_path), 'media')
     assert any(f['id'] == 'clip_short' for f in result['findings'])
     assert result['exit_code'] == 2
+
+
+def test_external_methods_and_brand_gates(tmp_path):
+    make_project(tmp_path)
+    path = tmp_path / 'brief.yaml'
+    data = yaml.safe_load(path.read_text())
+    for method in ('external', 'direct_clip', 'provided'):
+        data['script']['scenes'][0]['generation_method'] = method
+        path.write_text(yaml.safe_dump(data))
+        result = check_folder(tmp_path)
+        assert result['exit_code'] == 0
+        assert any(f['id'] == 'external_style_reference' for f in result['findings'])
+    data['script']['scenes'][0]['prompt'] = 'Show the product logo'
+    path.write_text(yaml.safe_dump(data))
+    result = check_folder(tmp_path)
+    assert result['exit_code'] == 4
+    assert all('resolve the decision' not in f['fix'].lower() for f in result['findings'])
+
+
+def test_text_only_presentation(tmp_path):
+    make_project(tmp_path)
+    path = tmp_path / 'brief.yaml'
+    data = yaml.safe_load(path.read_text())
+    data['title'] = 'My project'
+    data['script']['scenes'][0]['prompt'] = 'Invoices.'
+    path.write_text(yaml.safe_dump(data))
+    write_package(path, tmp_path, tmp_path / 'storyboard-package', text_only=True)
+    html = (tmp_path / 'storyboard-package/storyboard.html').read_text()
+    assert 'My project · v1 · Storyboard' in html
+    assert 'Scene_01 · external clip' in html
+    assert 'SCENE Scene_' not in html and 'invoices..' not in html.lower()
+    assert '<th>VO line</th><th>Prompt</th>' in html and '<th>Min usable</th>' in html
+    assert 'Not needed</p>' in html and 'not_needed:' not in html
+    assert 'resolve the reference gate before generation' not in html
+    assert 'No style reference: the external generator' in html
+    assert '<div class="label">Treatment</div>' not in html
