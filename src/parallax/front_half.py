@@ -82,7 +82,7 @@ def references(c):
         fix = f"Add the file under references/official/, set status: supplied and list it in brand_ref.paths for {scene.scene_id} in brief.yaml."
         message = (f"{display} needs a brand reference ({detail}) but none is attached." if scene.brand_ref.status == "missing"
                    else f"{display} has a missing brand reference file: {detail}.")
-        yield finding("brand_ref_missing", "error", message, fix, True)
+        yield finding("brand_ref_missing" if scene.brand_ref.status == "missing" else "brand_ref_file", "warning" if scene.brand_ref.status == "missing" else "error", message, fix)
     for scene in brief.script.scenes:
         if scene.brand_ref.status == "not_needed" and looks_branded(brief, scene):
             yield finding("brand_ref_advisory", "warning", f"{scene.scene_id.replace('_', ' ')} may need a brand reference.", f"Set brand_ref deliberately for {scene.scene_id}: supplied with paths, missing with a note, or not_needed.")
