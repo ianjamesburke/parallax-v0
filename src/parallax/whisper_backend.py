@@ -22,7 +22,7 @@ _whisperx = None
 
 ALIGN_INSTALL_MESSAGE = (
     "Word alignment needs the optional 'align' extra. Install it with: "
-    "uv tool install --force 'parallax[align] @ git+https://github.com/ianjamesburke/parallax-v0@<ref>'"
+    'uv tool install --python 3.11 --force "parallax[align] @ git+https://github.com/ianjamesburke/parallax-v0"'
 )
 
 

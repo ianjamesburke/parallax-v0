@@ -832,6 +832,25 @@ def test_pdf_without_renderer_uses_builtin(tmp_path, capsys, monkeypatch):
     assert Path(data["pdf"]).read_bytes().startswith(b"%PDF-")
 
 
+def test_pdf_failure_shows_install_command(tmp_path, monkeypatch):
+    import parallax.storyboard_package as sbp
+    import parallax.storyboard_pdf as pdf_module
+
+    folder, brief = _project(tmp_path)
+    monkeypatch.setattr(sbp, "find_pdf_renderer", lambda: None)
+
+    def fail_render(*args, **kwargs):
+        raise RuntimeError("renderer failed")
+
+    monkeypatch.setattr(pdf_module, "render_builtin_pdf", fail_render)
+    with pytest.raises(ValueError) as exc:
+        sbp.write_package(brief, folder, tmp_path / "pdf-pkg", pdf=True)
+    assert str(exc.value) == (
+        'PDF export failed. Run `uv tool install --python 3.11 --force "git+https://github.com/ianjamesburke/parallax-v0"` '
+        'to restore the bundled PDF renderer; for HTML rendering, install Chrome or Chromium.'
+    )
+
+
 def test_write_package_registers_pdf_when_created(tmp_path, monkeypatch):
     import parallax.storyboard_package as sbp
     folder, brief = _project(tmp_path)
