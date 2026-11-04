@@ -1,6 +1,10 @@
 # Changelog
 
 Newest releases appear first.
+## [0.7.2] — 2026-11-03
+
+### Changes
+- fix: text-only storyboard keeps the normal scene layout with a placeholder image frame, "Scene 01" headings, narration as the next-largest line and normal text size. `brand_ref: missing` is a warning, not a block; the keyword "looks branded" heuristic is gone; nonexistent supplied paths stay an error; stray "· None" removed. Light install: whisperx moved to the optional `align` extra and lazy-imported, so guide, schema, check, validate, storyboard and assets import install in seconds without torch; the repo checkout keeps whisperx through a default dependency group (#221)
 ## [0.7.1] — 2026-11-03
 
 ### Changes
