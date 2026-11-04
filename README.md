@@ -6,16 +6,21 @@ Agentic creative production CLI. A brief goes in, a finished short-form video co
 
 ```sh
 command -v uv || curl -LsSf https://astral.sh/uv/install.sh | sh
-uv tool install --python 3.11 --force "parallax[align] @ git+https://github.com/ianjamesburke/parallax-v0"
+export PATH="$HOME/.local/bin:$PATH"
+uv tool install --force "parallax[align] @ git+https://github.com/ianjamesburke/parallax-v0"
 parallax --version
 ```
 
-Use your Google Drive connection to download the source folder. Export the script doc as `script.txt`, put the numbered clips in `clips/`, and save the supplied voiceover as `vo.mp3` (use its actual filename). Match each script line to its `Scene_NN` clip in numeric order, not by visual guess. Write `cut-map.yaml` using the format in `parallax guide cut`.
+Use your Google Drive connection to download the source folder. Export the script doc as `script.txt` and put the numbered clips in `clips/`. Pass the actual supplied voiceover file to `--audio` in both commands.
+
+Write a YAML cut map as in [examples/cut-map.yaml](examples/cut-map.yaml). A segment is one on-screen interval: its `anchor` is a few words copied from where it starts in the script, and its `clip` is a filename in `clips/`. It ends at the next anchor, or at the end of the audio for the last segment. Put segments in script order. Use the script or storyboard scene boundaries to match each `Scene_NN` to its intended unit of narration; a unit can be part of a sentence, a sentence, or more. For duplicate takes such as `Scene_10_ed994ad0.mp4` and `Scene_10.mp4`, choose one and name it exactly. Leave spare clips out of the map. See `parallax guide cut` for more options.
 
 ```sh
 parallax cut --script script.txt --clips clips/ --map cut-map.yaml --audio vo.mp3 --process-audio --aspect 9:16 --out final.mp4 --plan-only
 parallax cut --script script.txt --clips clips/ --map cut-map.yaml --audio vo.mp3 --process-audio --aspect 9:16 --out final.mp4
 ```
+
+If a model download fails with a transient network or proxy error, rerun the same command.
 
 The normal flow applies the default 1.15x speed, loudness normalization, alignment, and captions. If no voiceover is supplied, ask the requester or use configured TTS only when its API key is set; do not choose a random free voice. For configured TTS, omit `--audio vo.mp3 --process-audio` from both commands. Resolve plan errors before rendering. Check the voiceover verification and manifest/XML consistency reports, and watch the MP4 to verify scene order, captions, audio, and 9:16 framing. `parallax check --folder PROJECT --stage media` checks a brief-based project when one exists; it does not validate a standalone cut. `parallax verify suite` runs test cases, not the finished MP4. Upload the final MP4 through your Drive connection to the folder the requester names, or a new subfolder there, and reply with the file link.
 

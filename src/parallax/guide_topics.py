@@ -315,11 +315,11 @@ TOPICS: dict[str, dict] = {
     },
     "cut": {
         "summary": "Assemble a folder of existing clips to a script (`parallax cut`): voiceover (with idempotent cache), script-token alignment, midpoint-of-gap scene plan, manifest.yaml, captioned MP4, and XML editor export from ONE manifest.",
-        "design_principle": "Match each script line to its Scene_NN clip in numeric order, not by visual guess. Write a cut map in script order and check the plan before rendering.",
+        "design_principle": "Use the script or storyboard scene boundaries to match each Scene_NN clip to its intended unit of narration. Write a cut map in script order and check the plan before rendering.",
         "agent_workflow": [
-            {"step": 1, "do": "Install with uv tool install --python 3.11 --force 'parallax[align] @ git+https://github.com/ianjamesburke/parallax-v0'. Use your Google Drive connection to download the source folder, export the script doc as script.txt, and put the numbered clips in clips/."},
-            {"step": 2, "do": "Match script lines to Scene_NN clips in numeric order, not by visual guess. Write cut-map.yaml using the format below. If there is no voiceover, ask the requester or use configured TTS only if its API key is set; do not substitute a random free voice."},
-            {"step": 3, "do": "Run `parallax cut --script script.txt --clips clips/ --map cut-map.yaml --audio vo.mp3 --process-audio --aspect 9:16 --out final.mp4 --plan-only`. Use the actual voiceover filename and resolve plan errors."},
+            {"step": 1, "do": "Install uv with `command -v uv || curl -LsSf https://astral.sh/uv/install.sh | sh`, then run `export PATH=\"$HOME/.local/bin:$PATH\"` and `uv tool install --force 'parallax[align] @ git+https://github.com/ianjamesburke/parallax-v0'`. Use your Google Drive connection to download the source folder, export the script doc as script.txt, and put the numbered clips in clips/."},
+            {"step": 2, "do": "Write cut-map.yaml using the format below and examples/cut-map.yaml. Pass the actual supplied voiceover file to --audio in both commands. If there is no voiceover, ask the requester or use configured TTS only if its API key is set; do not substitute a random free voice."},
+            {"step": 3, "do": "Run `parallax cut --script script.txt --clips clips/ --map cut-map.yaml --audio vo.mp3 --process-audio --aspect 9:16 --out final.mp4 --plan-only`. Resolve plan errors. If a model download fails with a transient network or proxy error, rerun the same command."},
             {"step": 4, "do": "Run `parallax cut --script script.txt --clips clips/ --map cut-map.yaml --audio vo.mp3 --process-audio --aspect 9:16 --out final.mp4`. This applies the default 1.15x speed, loudness normalization, alignment, and captions. For configured TTS omit `--audio vo.mp3 --process-audio` from both commands."},
             {"step": 5, "do": "Check the voiceover verification and manifest/XML consistency reports. Watch the MP4 to verify scene order, captions, audio, and 9:16 framing. `parallax check --folder PROJECT --stage media` checks a brief-based project when one exists, not a standalone cut; `parallax verify suite` runs test cases, not the finished MP4."},
             {"step": 6, "do": "Upload the finished MP4 using your Google Drive connection to the requester's named folder or a new subfolder there, then reply with the file link."},
@@ -332,7 +332,7 @@ TOPICS: dict[str, dict] = {
             ],
         },
         "cut_map_format": {
-            "file": "`cut-map.yaml` (or `.json`), passed with `--map`. Top level: `version: 1` and a non-empty `segments` list, in SCRIPT ORDER. Any other key is an error.",
+            "file": "`cut-map.yaml` (or `.json`), passed with `--map`. Use `version: 1` and a non-empty `segments` list, in SCRIPT ORDER.",
             "segment_fields": {
                 "anchor": "required. The first words of the script line where this clip starts (2-5 words, copied from the script; punctuation and case ignored; numerals match as spelled in the script). Must appear after the previous segment's anchor.",
                 "clip": "required. Clip filename or stem from `--clips` (`Scene_07.mp4` or `Scene_07`).",
@@ -340,7 +340,8 @@ TOPICS: dict[str, dict] = {
                 "note": "optional free text for humans; ignored.",
             },
             "rules": [
-                "A segment runs from its anchor to the next segment's anchor (the last one to the end of the audio), so one anchor per cut you want on screen.",
+                "A segment is one on-screen interval, from its anchor to the next anchor (the last one to the end of the audio). Its narration unit can be part of a sentence, a sentence, or more. Use script or storyboard scene boundaries to match Scene_NN clips to units.",
+                "Duplicate takes such as Scene_10_ed994ad0.mp4 and Scene_10.mp4 represent the same scene: choose one and name it exactly. Leave spare clips out of the map. See examples/cut-map.yaml for a minimal example.",
                 "The same clip may appear several times; later uses continue from where the previous one ended, and restart at 0 with a warning when the remainder is too short. Use `in` to pick a specific moment.",
                 "A clip shorter than its slot is an overrun: `--plan-only` exits 2 and names the segment. Add a segment (another anchor inside that line) or map a longer clip. `--allow-hold` freezes the last frame instead.",
                 "Bad maps exit 2 with every error at once (unknown clip, anchor not found plus closest script sentences, anchors out of order); fix them all, then re-run `--plan-only` (free).",

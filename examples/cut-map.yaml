@@ -1,0 +1,7 @@
+# For a script starting "It's late. Jim sorts receipts."
+version: 1
+segments:
+  - anchor: "It's late"
+    clip: Scene_01.mp4
+  - anchor: "Jim sorts receipts"
+    clip: Scene_02.mp4
