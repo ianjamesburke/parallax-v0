@@ -124,21 +124,6 @@ def missing_brand_references(brief: Brief, folder: str | Path) -> list[tuple[obj
     return results
 
 
-def looks_branded(brief: Brief, scene) -> bool:
-    """Advisory only: identify likely visual brand dependencies, excluding negations."""
-    text = " ".join(filter(None, (scene.prompt, scene.storyboard_treatment, scene.vo_text, scene.on_screen_text)))
-    text = re.sub(r"\b(?:no|without|avoid)\s+(?:an?\s+|the\s+|institutional\s+|team\s+)?(?:logo|logos|wordmark|branding|brand|text)(?:\s+on\s+screen)?\b", " ", text, flags=re.I)
-    text = re.sub(r"\b(?:logo|wordmark|branding|text)\s+(?:is\s+)?not visible\b|\bunbranded\b", " ", text, flags=re.I)
-    if re.search(r"\b(?:logo|wordmark|app(?:lication)?(?:\s+(?:ui|screen))?|dashboard|packaging|product\s+(?:shot|photo)|ui)\b", text, re.I):
-        return True
-    names = [str(brief.brand[k]) for k in ("name", "product") if brief.brand and isinstance(brief.brand.get(k), str)]
-    match = re.search(r"\b(?:vertical\s+)?([A-Z][A-Za-z0-9]+)\s+ad\b", brief.goal)
-    if match:
-        names.append(match.group(1))
-    visual = " ".join(filter(None, (scene.prompt, scene.storyboard_treatment, scene.on_screen_text)))
-    return any(re.search(r"\b" + re.escape(name) + r"\b", visual, re.I) for name in names)
-
-
 def _arg(value: str) -> str:
     """Shell-quote a path; leave <placeholders> readable."""
     return value if value.startswith("<") and value.endswith(">") else shlex.quote(value)

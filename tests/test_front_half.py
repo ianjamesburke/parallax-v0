@@ -92,7 +92,7 @@ def test_external_methods_and_brand_gates(tmp_path):
     path.write_text(yaml.safe_dump(data))
     result = check_folder(tmp_path)
     assert result['exit_code'] == 0
-    assert any(f['id'] == 'brand_ref_advisory' for f in result['findings'])
+    assert not any(f['id'].startswith('brand_ref_') for f in result['findings'])
     assert all('resolve the decision' not in f['fix'].lower() for f in result['findings'])
 
 
@@ -132,7 +132,7 @@ def test_explicit_brand_reference_statuses(tmp_path):
     path.write_text(yaml.safe_dump(data))
     result = check_folder(tmp_path)
     assert result['exit_code'] == 2
-    assert any('Scene 01' in f['message'] and 'references/official/app.png' in f['message'] for f in result['findings'])
+    assert any(f['id'] == 'brand_ref_file' and f['severity'] == 'error' and 'Scene 01' in f['message'] and 'references/official/app.png' in f['message'] for f in result['findings'])
     assert CliRunner().invoke(app, ['check', '--folder', str(tmp_path), '--json']).exit_code == 2
     (tmp_path / 'references/official').mkdir()
     (tmp_path / 'references/official/app.png').write_bytes(b'image')
@@ -144,11 +144,7 @@ def test_explicit_brand_reference_statuses(tmp_path):
         path.write_text(yaml.safe_dump(data))
         result = check_folder(tmp_path)
         assert result['exit_code'] == 0
-        assert any(f['id'] == 'brand_ref_advisory' for f in result['findings'])
-    for prompt in ('no logo', 'unbranded', 'without branding', 'no text on screen', 'logo not visible'):
-        scene['prompt'] = prompt
-        path.write_text(yaml.safe_dump(data))
-        assert not any(f['id'] == 'brand_ref_advisory' for f in check_folder(tmp_path)['findings'])
+        assert not any(f['id'].startswith('brand_ref_') for f in result['findings'])
 
 
 def test_shared_style_and_guide(tmp_path):

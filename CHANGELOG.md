@@ -4,7 +4,7 @@ Newest releases appear first.
 ## [0.7.1] — 2026-11-03
 
 ### Changes
-- fix: text-only storyboard reads on a phone (heading "Scene 01", narration as the next-largest line, larger body text, portrait pages, no per-scene titles); shared style shows once on the cover. Brand gate driven by per-scene `brand_ref`: `missing` or `supplied` with absent files blocks `parallax check` (exit 4) naming the scene; `not_needed` with a branded-looking prompt warns; PDF flags "Needs brand reference". Guide tells agents to set `brand_ref` on every scene and collect official assets before media generation (#220)
+- fix: text-only storyboard reads on a phone (heading "Scene 01", narration as the next-largest line, larger body text, portrait pages, no per-scene titles); shared style shows once on the cover. Brand gate driven by per-scene `brand_ref`: `missing` warns and `supplied` with absent files errors in `parallax check`; the storyboard notes missing references on the cover. Guide tells agents to set `brand_ref` on every scene and collect official assets before media generation (#220)
 ## [0.7.0] — 2026-11-03
 
 ### Changes

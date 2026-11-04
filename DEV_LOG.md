@@ -1133,8 +1133,8 @@ for the review path; media take ambiguity remains visible for human resolution.
 
 ## 2026-11-03 — [FIX] Readable text-only storyboards and explicit brand references
 
-Text-only review uses portrait pages, prominent narration, and one shared visual style on the cover. Scene brand_ref status controls blocking and visible review flags; heuristic detection is advisory for external scenes. Legacy paid reference gates remain in place. Verified against copied PA21 and PA25 projects without provider calls.
+Text-only review uses portrait pages, prominent narration, and one shared visual style on the cover. Scene brand_ref status controls checks and visible review flags. Legacy paid reference gates remain in place. Verified against copied PA21 and PA25 projects without provider calls.
 
 ## 2026-11-03 — [FIX] Storyboard scene frames and advisory brand references
 
-Restored landscape text-only scene pages with aspect-correct image placeholders, readable copy, and fitting above the footer. Missing brand references and branded-scene detection now warn; supplied paths that do not exist remain invalid. Removed scene-level missing-reference flags and empty reference noise, and simplified front-half guidance. Verified offline with focused and full tests and rendered PA21 and PA25 review copies.
+Restored landscape text-only scene pages with aspect-correct image placeholders, readable copy, and fitting above the footer. Missing brand references warn; supplied paths that do not exist remain invalid. Prompt keywords do not trigger brand warnings. Removed scene-level missing-reference flags and empty reference noise, and simplified front-half guidance. Re-rendered PA21 and PA25 offline; both checks exit 0. Focused tests passed. The full suite had 1 known Gemini TTS timeout (1277 passed, 9 skipped); its file passed on rerun with Hugging Face offline mode.
