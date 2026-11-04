@@ -1,6 +1,10 @@
 # Changelog
 
 Newest releases appear first.
+## [0.7.3] — 2026-11-03
+
+### Changes
+- feat: project-level `references:` list (id, kind, description, status, paths) cited by scenes with `refs: [id]`; old per-scene `brand_ref` still loads and maps over. Guide rule: only the product's own logo, packaging, app UI or product photo counts, the character's own phone, inbox and apps do not. `check` prints one "References needed" warning; unknown ids and nonexistent supplied paths are errors. Text-only storyboard PDFs render with a bundled pure-Python renderer (fpdf2 + DejaVu Sans), so a clean `uv tool install` needs no browser or system libraries (#222)
 ## [0.7.2] — 2026-11-03
 
 ### Changes
