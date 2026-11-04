@@ -18,13 +18,13 @@ def render_builtin_pdf(brief, assets: Path, review: dict, output: Path, project_
         pdf.set_xy(x, y)
         pdf.set_text_color(*color)
         pdf.set_font("DejaVu", "B" if bold else "", size)
-        pdf.multi_cell(width, size * .42, str(value), new_x="LMARGIN", new_y="NEXT", wrapmode="CHAR")
+        pdf.multi_cell(width, size * .42, str(value), new_x="LMARGIN", new_y="NEXT", wrapmode="WORD")
         return pdf.get_y()
 
     # Measure first, then scale content to fit the fixed page, including long briefs.
     def height(width, value, size, bold=False):
         pdf.set_font("DejaVu", "B" if bold else "", size)
-        lines = pdf.multi_cell(width, size * .42, str(value), dry_run=True, output="LINES", wrapmode="CHAR")
+        lines = pdf.multi_cell(width, size * .42, str(value), dry_run=True, output="LINES", wrapmode="WORD")
         return max(1, len(lines)) * size * .42
 
     def cover(scale, draw=False):
