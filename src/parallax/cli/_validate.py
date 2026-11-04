@@ -18,6 +18,7 @@ def _validate_cmd(
     folder: str = typer.Option(..., "--folder", help="Path to the project folder."),
     brief: Optional[str] = typer.Option(None, "--brief", help="Path to a brief.yaml to validate."),
     plan: Optional[str] = typer.Option(None, "--plan", help="Path to a plan.yaml to validate."),
+    as_json: bool = typer.Option(False, "--json", help="Print JSON (the default)."),
 ) -> int:
     """Validate a brief or plan without spending; prints JSON."""
     if brief is None and plan is None:
@@ -37,4 +38,6 @@ def _validate_cmd(
         result = validate_plan(plan, folder)  # type: ignore[arg-type]  # validated: brief/plan mutex means plan is str here
 
     print(json.dumps(result, indent=2))
-    return 0 if result["valid"] else 1
+    if not result["valid"]:
+        raise typer.Exit(code=1)
+    return 0

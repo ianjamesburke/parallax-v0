@@ -15,7 +15,7 @@ import re
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .brief import Brief, ProvidedAsset
-from .reference_gates import EDITORIAL, open_gates
+from .reference_gates import EDITORIAL, EXTERNAL_METHODS, _referenced, open_gates
 from .pacing import estimate_timeline, review_opening_pacing
 
 
@@ -239,7 +239,7 @@ def _missing_clip_advisory(scene) -> dict:
 
 def _resolve_timeline(brief: Brief, timeline: list[dict] | None) -> tuple[list[dict], str]:
     if timeline is None:
-        return estimate_timeline([scene.model_dump() for scene in brief.script.scenes])
+        return estimate_timeline([scene.model_dump() for scene in brief.script.scenes], brief.timing.estimate_wps, brief.timing.speed)
     if [s.get("index") for s in timeline] != [s.index for s in brief.script.scenes]:
         raise ValueError("storyboard timing scene indices/order must match the brief")
     previous_end = 0.0
@@ -275,6 +275,9 @@ def review_storyboard(brief: Brief, folder: str | Path, brief_path: str | Path, 
     for scene in brief.script.scenes:
         if scene.resolved_scene_type == "motion_graphic" and not (scene.clip_path and (Path(folder) / scene.clip_path).is_file()):
             scene_advisories[scene.index].append(_missing_clip_advisory(scene))
+    for scene in brief.script.scenes:
+        if scene.generation_method in EXTERNAL_METHODS and not _referenced(brief, scene):
+            scene_advisories[scene.index].insert(0, {"kind": "external_style_reference", "message": "No style reference: the external generator will choose the look; add images under references/style/ to anchor it."})
     for gate in gates:
         message = ("No scene image reference — resolve the reference gate before generation."
                    if gate["id"] == EDITORIAL else "Brand/product reference missing.")
@@ -311,11 +314,11 @@ def _gates_html(review: dict) -> str:
 
 
 def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_base: str | Path | None = None,
-                      source_video: dict | None = None) -> str:
+                      source_video: dict | None = None, text_only: bool = False, project_name: str | None = None) -> str:
     """Render the print-first editorial storyboard standard (one scene/page)."""
     root = Path(folder).expanduser().resolve()
     base = Path(link_base).expanduser().resolve() if link_base else None
-    concept_name = brief.concept_name or root.name or "Storyboard"
+    concept_name = brief.name or brief.title or brief.concept_name or project_name or root.name or "Storyboard"
     concept_title = f"{concept_name} · {brief.concept_id}" if brief.concept_id else concept_name
     timeline, timing_basis, supplied_timing = review["timeline"], review["timing_basis"], review["supplied_timing"]
     pacing = review["pacing"]
@@ -327,16 +330,18 @@ def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_ba
     pages: list[str] = []
     for position, scene in enumerate(brief.script.scenes, start=1):
         kind = scene.resolved_scene_type
-        scene_id = scene.storyboard_id or f"{scene.index:02d}"
-        title = scene.storyboard_title or scene.prompt
-        kicker = scene.storyboard_kicker or scene.storyboard_treatment or kind.replace("_", " ").title()
+        scene_id = (scene.storyboard_id if text_only or "storyboard_id" in scene.model_fields_set else f"{scene.index:02d}") or f"{scene.index:02d}"
+        title = scene.storyboard_title or (scene.vo_text if text_only else scene.prompt)
+        if text_only and len(title) > 90:
+            title = title[:87].rsplit(" ", 1)[0] + "…"
+        kicker = ((scene.generation_method or kind).replace("_", " ") + (" clip" if scene.generation_method in EXTERNAL_METHODS else "")) if text_only else scene.storyboard_kicker or scene.storyboard_treatment or kind.replace("_", " ").title()
         words = len(re.sub(r"\[[^\]]*\]", "", scene.vo_text).split())
         timing = timeline[position - 1]
         duration = float(timing["end_s"]) - float(timing["start_s"])
         notes = [a["message"] for a in review["scene_advisories"].get(scene.index, [])]
         notes += [w["message"] for w in pacing["warnings"] if w.get("scene_index") == scene.index]
         note_html = f'<div class="review-notes"><strong>Review notes</strong><br>{escape(" ".join(notes))}</div>' if notes else ''
-        image = _asset(root, scene.still_path, "Supplied still", link_base=base) if scene.still_path else '<div class="frame-mat"><span class="meta">Frame pending</span></div>'
+        image = _asset(root, scene.still_path, "Supplied still", link_base=base) if scene.still_path else f'<div class="frame-mat"><span class="meta">{"Text-only review" if text_only else "Frame pending"}</span></div>'
         if image.startswith('<figure'):
             # Keep source paths out of visible text; the image itself remains package-relative.
             image = re.sub(r'<figcaption[^>]*>.*?</figcaption>', '', image)
@@ -349,19 +354,33 @@ def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_ba
         width = max(.5, 100 * duration / total) if total else 100
         treatment = escape(scene.storyboard_treatment or scene.prompt)
         motion = f' — {escape(scene.motion_prompt)}' if scene.motion_prompt else ''
-        pages.append(f'''<article class="scene-page" id="scene-{scene.index}">
-{image}<div class="scene-copy"><div class="kicker">SCENE {escape(scene_id)} · {escape(kicker)}</div><h2>{escape(title)}</h2>
+        brand = {"not_needed": "Not needed", "missing": "MISSING (needs official reference)", "supplied": "Supplied: " + ", ".join(scene.brand_ref.paths)}[scene.brand_ref.status]
+        punctuation = "" if (scene.storyboard_treatment or scene.prompt).rstrip().endswith((".", "!", "?", "…")) else "."
+        treatment_html = (f'<div class="label">Treatment</div><p class="copy-value treatment"><strong>{treatment}{punctuation}</strong>{motion}</p>' if not text_only or (scene.storyboard_treatment and scene.storyboard_treatment != scene.prompt) else "")
+        details = (f'<div class="label">Generation prompt</div><p>{escape(scene.prompt)}</p>'
+                   f'<div class="label">Shot / purpose</div><p>{escape(scene.shot_type)} / {escape(scene.purpose or "—")}</p>'
+                   f'<div class="label">Brand reference</div><p>{escape(brand)}</p>'
+                   f'<div class="label">Referenced images</div><p>{escape(", ".join(scene.image_refs)) or "—"}</p>'
+                   + ''.join(_asset(root, ref, ref, link_base=base, thumb_px=160) for ref in scene.image_refs if (root / ref).is_file())) if text_only else ''
+        pages.append(f'''<article class="scene-page{" text-only" if text_only else ""}" id="scene-{scene.index}">
+{image}<div class="scene-copy"><div class="kicker">{escape(scene_id) if text_only else "SCENE " + escape(scene_id)} · {escape(kicker)}</div><h2>{escape(title)}</h2>
 <div class="label">Narration</div><p class="narration">“{escape(scene.vo_text)}”</p>
 <div class="label">On-screen text</div><p class="copy-value">{escape(scene.on_screen_text or '—')}</p>
-<div class="label">Timing</div><p class="copy-value">{clock(start)} – {clock(end)} · {duration:.1f} s</p>
-<div class="label">Treatment</div><p class="copy-value treatment"><strong>{treatment}.</strong>{motion}</p>{note_html}</div>
+<div class="label">Timing</div><p class="copy-value">{clock(start)} – {clock(end)} · {duration:.1f} s · minimum usable {duration + brief.timing.handle_s:.1f} s</p>
+{details}{treatment_html}{note_html}</div>
 <div class="position"><div class="position-track"><span class="position-active" style="left:{left:.3f}%;width:{width:.3f}%"></span></div><div class="position-labels"><span>0:00</span><span>{clock(total)}</span></div></div>
-<div class="footer"><span>{escape(concept_name)} · {escape(brief.concept_id or 'v1')} · Storyboard · {today}</span><span>Scene {escape(scene_id)} · page {position + 1} of {len(brief.script.scenes) + 1}</span></div></article>''')
+<div class="footer"><span>{escape(concept_name)} · {escape(brief.concept_id or 'v1')} · Storyboard · {today}</span><span>{escape(scene_id) if text_only else "Scene " + escape(scene_id)} · page {position + 1} of {len(brief.script.scenes) + 1}</span></div></article>''')
     rows = [f'<tr><td>{escape(s.storyboard_id or f"{s.index:02d}")}</td><td>{escape(s.storyboard_title or s.prompt)}</td><td>{escape(s.storyboard_treatment or s.prompt)}</td><td>{clock(float(t["start_s"]))} – {clock(float(t["end_s"]))}</td><td>{float(t["end_s"])-float(t["start_s"]):.1f} s</td></tr>' for s, t in zip(brief.script.scenes, timeline)]
     table_head = '<thead><tr><th>#</th><th>Scene</th><th>Treatment</th><th>Interval</th><th>Duration</th></tr></thead>'
+    if text_only:
+        def shorten(value: str, limit: int = 75) -> str:
+            value = " ".join(value.split())
+            return value if len(value) <= limit else value[:limit-1].rstrip() + "…"
+        rows = [f'<tr><td>{escape(s.storyboard_id or f"{s.index:02d}")}</td><td>{escape(shorten(s.vo_text))}</td><td>{escape(shorten(s.prompt))}</td><td>{clock(float(t["start_s"]))} – {clock(float(t["end_s"]))}</td><td>{float(t["end_s"])-float(t["start_s"]):.1f} s</td><td>{float(t["end_s"])-float(t["start_s"])+brief.timing.handle_s:.1f} s</td></tr>' for s, t in zip(brief.script.scenes, timeline)]
+        table_head = '<thead><tr><th>#</th><th>VO line</th><th>Prompt</th><th>Interval</th><th>Duration</th><th>Min usable</th></tr></thead>'
     def scene_table(items: list[str]) -> str:
         return f'<table>{table_head}<tbody>{"".join(items)}</tbody></table>'
-    compact_cover = len(rows) > 14
+    compact_cover = len(rows) > (8 if text_only else 14)
     if compact_cover:
         midpoint = (len(rows) + 1) // 2
         cover_table = f'<div class="cover-tables">{scene_table(rows[:midpoint])}{scene_table(rows[midpoint:])}</div>'
@@ -383,7 +402,7 @@ def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_ba
         compatibility = f'<div style="display:none"><h1>{escape(concept_name)}</h1>{escape(brief.goal)}<h2>Reference and visual-variety review</h2>{_gates_html(review)}{groups}{missing_refs}<h2>Opening headline</h2>{escape(brief.headline or "")} {estimate_note} Opening pacing review. review this hold longer than 3s. No timing advisories. Visual review requires looking at the shots. {" ".join(escape(n) for n in notes)} Supplied timeline: {total:.2f}s. {legacy_timing} 1 animation · 1 motion graphic No scene asset supplied (not a generated still). Concept ID: {escape(brief.concept_id or "")}</div>'
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{escape(concept_title)} · Storyboard</title><style>{_STYLE}</style></head><body><main>
-<section class="cover{' compact' if compact_cover else ''}"><div><div class="kicker">Parallax editorial storyboard</div><h1>{escape(concept_name)} — Storyboard</h1><h1 style="display:none">{escape(concept_name)}</h1>{'<h2 style="display:none">Opening headline</h2>' if brief.headline else ''}<p class="cover-meta">{escape(brief.concept_id or 'v1')} · {len(brief.script.scenes)} scenes · {clock(total)} runtime · {today}{' · Supplied timeline: ' + format(total, '.2f') + 's' if supplied_timing and not source_video else ''}{' · Source video: ' + format(float(source_video['duration_s']), '.2f') + 's' if source_video else ''}</p></div>{cover_table}<div class="footer"><span>{escape(concept_name)} · {escape(brief.concept_id or 'v1')} · Storyboard · {today}</span><span>Cover · page 1 of {len(brief.script.scenes) + 1}</span></div></section>
+<title>{escape(concept_title)} · Storyboard</title><style>{_STYLE}</style><style>.scene-page.text-only{{grid-template-columns:1.35in 1fr!important;column-gap:18px}}.text-only .frame-mat{{height:2.4in!important;aspect-ratio:auto}}.text-only .position{{left:calc(.5in + 1.35in + 18px)!important}}.text-only .scene-copy{{font-size:9pt;line-height:1.18}}.text-only .scene-copy h2{{font-size:17pt;line-height:1.1;margin:3pt 0 5pt}}.text-only .narration{{font-size:11pt;line-height:1.2}}.text-only .label{{margin:5pt 0 0;font-size:7.5pt}}.text-only p{{margin:1pt 0}}.text-only .review-notes{{margin-top:5pt;padding:3pt 5pt;font-size:8pt}}.cover.text-only-cover th:nth-child(1),.cover.text-only-cover td:nth-child(1){{width:14%;white-space:nowrap}}.cover.text-only-cover th:nth-child(2),.cover.text-only-cover td:nth-child(2){{width:25%}}.cover.text-only-cover th:nth-child(3),.cover.text-only-cover td:nth-child(3){{width:28%}}.cover.text-only-cover th:nth-child(4),.cover.text-only-cover td:nth-child(4){{width:15%}}.cover.text-only-cover th:nth-child(5),.cover.text-only-cover td:nth-child(5),.cover.text-only-cover th:nth-child(6),.cover.text-only-cover td:nth-child(6){{width:9%;white-space:nowrap}}</style></head><body><main>
+<section class="cover{' compact' if compact_cover else ''}{' text-only-cover' if text_only else ''}"><div><div class="kicker">Parallax editorial storyboard</div><h1>{escape(concept_name)} — Storyboard</h1><h1 style="display:none">{escape(concept_name)}</h1>{'<h2 style="display:none">Opening headline</h2>' if brief.headline else ''}<p class="cover-meta">{escape(brief.concept_id or 'v1')} · {len(brief.script.scenes)} scenes · {clock(total)} runtime · {today}{' · Supplied timeline: ' + format(total, '.2f') + 's' if supplied_timing and not source_video else ''}{' · Source video: ' + format(float(source_video['duration_s']), '.2f') + 's' if source_video else ''}</p></div>{cover_table}<div class="footer"><span>{escape(concept_name)} · {escape(brief.concept_id or 'v1')} · Storyboard · {today}</span><span>Cover · page 1 of {len(brief.script.scenes) + 1}</span></div></section>
 {''.join(pages)}{appendix}{compatibility}
 </main></body></html>'''

@@ -14,6 +14,13 @@ def _end_frame_models() -> list[str]:
     return sorted(spec.alias for spec in VIDEO_MODELS.values() if spec.end_frame)
 
 TOPICS: dict[str, dict] = {
+    "front_half": {
+        "summary": "Create a text-only storyboard for approval before external media generation. No provider calls are needed.",
+        "template": {"goal": "Describe the story", "script": {"scenes": [{"index": 0, "scene_id": "Scene_01", "vo_text": "Exact narration.", "prompt": "Describe the shot and generation prompt.", "generation_method": "external"}]}},
+        "steps": ["Create references/ and storyboard-package/ and author brief.yaml; copy the narration to script.txt if available.", "Run parallax check --folder PROJECT --json after authoring and resolve open gates.", "Run parallax storyboard --folder PROJECT --text-only --pdf --json and show the PDF to the human for approval BEFORE any media generation.", "Generate media externally named Scene_NN, then run parallax assets import --folder PROJECT --from MEDIA_DIR.", "Run parallax check --folder PROJECT --stage media --json before handoff; duplicate takes require a decision."],
+        "timing": "Estimated at 3 words/s times timing.speed (default 1.0); minimum usable footage is duration plus 1 second. Estimates are not measured audio.",
+        "plan": "Plan is optional for text-only review.",
+    },
     "brand": {
         "summary": "For any product or app ad, collect real brand assets before making shots.",
         "rules": ["First collect the official site, App Store lookup (`https://itunes.apple.com/lookup?id=<id>`) screenshotUrls/artworkUrl512, and an inline SVG logo where available; save each with its source URL.", "Use real app screens composited in local app-screen motion graphics—never AI-generate UI.", "Pass logo/screens as image refs only in shots that show the product, and finish on a brand CTA end card."],
