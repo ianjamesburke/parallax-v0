@@ -91,7 +91,8 @@ def test_external_methods_and_brand_gates(tmp_path):
     data['script']['scenes'][0]['prompt'] = 'Show the product logo'
     path.write_text(yaml.safe_dump(data))
     result = check_folder(tmp_path)
-    assert result['exit_code'] == 4
+    assert result['exit_code'] == 0
+    assert any(f['id'] == 'brand_ref_advisory' for f in result['findings'])
     assert all('resolve the decision' not in f['fix'].lower() for f in result['findings'])
 
 
@@ -104,11 +105,55 @@ def test_text_only_presentation(tmp_path):
     path.write_text(yaml.safe_dump(data))
     write_package(path, tmp_path, tmp_path / 'storyboard-package', text_only=True)
     html = (tmp_path / 'storyboard-package/storyboard.html').read_text()
-    assert 'My project · v1 · Storyboard' in html
-    assert 'Scene_01 · external clip' in html
-    assert 'SCENE Scene_' not in html and 'invoices..' not in html.lower()
-    assert '<th>VO line</th><th>Prompt</th>' in html and '<th>Min usable</th>' in html
-    assert 'Not needed</p>' in html and 'not_needed:' not in html
-    assert 'resolve the reference gate before generation' not in html
-    assert 'No style reference: the external generator' in html
-    assert '<div class="label">Treatment</div>' not in html
+    assert 'Scene 01</h2>' in html
+    assert '“One two three.”' in html
+    assert 'Invoices.' in html
+    assert 'Scene_01 · external clip' not in html
+
+
+def test_explicit_brand_reference_statuses(tmp_path):
+    make_project(tmp_path)
+    path = tmp_path / 'brief.yaml'
+    data = yaml.safe_load(path.read_text())
+    scene = data['script']['scenes'][0]
+    scene['prompt'] = 'A WellyBox app screen with logo'
+    scene['brand_ref'] = {'status': 'missing', 'note': 'WellyBox app screen'}
+    path.write_text(yaml.safe_dump(data))
+    result = check_folder(tmp_path)
+    assert result['exit_code'] == 4
+    assert any('Scene 01' in f['message'] and 'WellyBox app screen' in f['message'] for f in result['findings'])
+    write_package(path, tmp_path, tmp_path / 'storyboard-package', text_only=True)
+    assert (tmp_path / 'storyboard-package/storyboard.html').read_text().count('Needs brand reference') == 2
+    scene['brand_ref'] = {'status': 'supplied', 'paths': ['references/official/app.png']}
+    path.write_text(yaml.safe_dump(data))
+    assert check_folder(tmp_path)['exit_code'] == 4
+    (tmp_path / 'references/official').mkdir()
+    (tmp_path / 'references/official/app.png').write_bytes(b'image')
+    assert check_folder(tmp_path)['exit_code'] == 0
+    scene['brand_ref'] = {'status': 'not_needed'}
+    data['goal'] = 'A vertical WellyBox ad'
+    for prompt in ('logo', 'packaging', 'app screen', 'product shot', 'WellyBox on screen'):
+        scene['prompt'] = prompt
+        path.write_text(yaml.safe_dump(data))
+        result = check_folder(tmp_path)
+        assert result['exit_code'] == 0
+        assert any(f['id'] == 'brand_ref_advisory' for f in result['findings'])
+    for prompt in ('no logo', 'unbranded', 'without branding', 'no text on screen', 'logo not visible'):
+        scene['prompt'] = prompt
+        path.write_text(yaml.safe_dump(data))
+        assert not any(f['id'] == 'brand_ref_advisory' for f in check_folder(tmp_path)['findings'])
+
+
+def test_shared_style_and_guide(tmp_path):
+    make_project(tmp_path)
+    path = tmp_path / 'brief.yaml'
+    data = yaml.safe_load(path.read_text())
+    data['visual_style'] = 'Distinctive shared style'
+    data['script']['scenes'][0]['storyboard_title'] = 'Hidden title'
+    path.write_text(yaml.safe_dump(data))
+    write_package(path, tmp_path, tmp_path / 'storyboard-package', text_only=True)
+    html = (tmp_path / 'storyboard-package/storyboard.html').read_text()
+    assert html.count('Distinctive shared style') == 1
+    assert 'Hidden title' not in html
+    guide = CliRunner().invoke(app, ['guide']).stdout
+    assert 'EVERY scene' in guide and 'references/official/' in guide and 'missing with a note' in guide

@@ -15,7 +15,7 @@ import re
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .brief import Brief, ProvidedAsset
-from .reference_gates import EDITORIAL, EXTERNAL_METHODS, _referenced, open_gates
+from .reference_gates import EDITORIAL, EXTERNAL_METHODS, _referenced, open_gates, missing_brand_references
 from .pacing import estimate_timeline, review_opening_pacing
 
 
@@ -313,10 +313,43 @@ def _gates_html(review: dict) -> str:
     )
 
 
+def _render_text_storyboard(brief: Brief, root: Path, review: dict, project_name: str | None) -> str:
+    name = brief.name or brief.title or brief.concept_name or project_name or root.name
+    missing = {scene.index: kind for scene, kind in missing_brand_references(brief, root)}
+    flags = ", ".join(scene.scene_id.replace("_", " ") for scene in brief.script.scenes if scene.index in missing)
+    cover = f'<h1>{escape(name)} — Storyboard</h1>'
+    if brief.visual_style:
+        cover += f'<h2>Shared visual style</h2><p>{escape(brief.visual_style)}</p>'
+    if flags:
+        cover += f'<p class="flag">Needs brand reference: {escape(flags)}</p>'
+    sections = []
+    for scene, timing in zip(brief.script.scenes, review["timeline"]):
+        duration = float(timing["end_s"]) - float(timing["start_s"])
+        flag = '<p class="flag">Needs brand reference</p>' if scene.index in missing else ''
+        desc = f'<h3>Description</h3><p>{escape(scene.storyboard_treatment)}</p>' if scene.storyboard_treatment and scene.storyboard_treatment != scene.prompt else ''
+        refs = ", ".join(scene.brand_ref.paths + scene.image_refs) or "None"
+        ref_status = scene.brand_ref.status.replace("_", " ").capitalize()
+        if scene.brand_ref.note:
+            ref_status += ": " + scene.brand_ref.note
+        sections.append(f'''<article><h2>{escape(scene.scene_id.replace("_", " "))}</h2>
+<p class="narration">“{escape(scene.vo_text)}”</p>{flag}{desc}
+<h3>Generation prompt</h3><p>{escape(scene.prompt)}</p>
+<h3>On-screen text</h3><p>{escape(scene.on_screen_text or "—")}</p>
+<h3>Timing</h3><p>{float(timing["start_s"]):.1f} – {float(timing["end_s"]):.1f} s · {duration:.1f} s · minimum usable {duration + brief.timing.handle_s:.1f} s</p>
+<h3>Shot / purpose</h3><p>{escape(scene.shot_type)} / {escape(scene.purpose or "—")}</p>
+<h3>Brand reference / referenced images</h3><p>{escape(ref_status)} · {escape(refs)}</p></article>''')
+    return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{escape(name)} · Storyboard</title><style>
+@page {{ size: letter portrait; margin: .65in; @bottom-center {{ content: "Storyboard · " counter(page); font-size: 10pt; color: #555; }} }}
+* {{ box-sizing: border-box }} body {{ margin: 0; color: #1c1d21; font: 16pt/1.35 Arial, sans-serif }} main {{ max-width: 7.2in; margin: auto }} section, article {{ break-before: page }} section {{ break-before: auto }} h1 {{ font-size: 36pt }} h2 {{ font-size: 32pt; margin: 0 0 12pt }} h3 {{ font-size: 16pt; color: #087d79; margin: 16pt 0 3pt; break-after: avoid }} p {{ margin: 0 0 8pt; white-space: pre-wrap; overflow-wrap: anywhere }} .narration {{ font-size: 23pt; line-height: 1.25 }} .flag {{ color: #9b240c; font-weight: bold; border-left: 4px solid #9b240c; padding-left: 10px }} @media screen {{ body {{ padding: 24px }} article, section {{ padding: 24px 0; border-bottom: 1px solid #bbb }} }}
+</style></head><body><main><section>{cover}</section>{"".join(sections)}</main></body></html>'''
+
+
 def render_storyboard(brief: Brief, folder: str | Path, review: dict, *, link_base: str | Path | None = None,
                       source_video: dict | None = None, text_only: bool = False, project_name: str | None = None) -> str:
     """Render the print-first editorial storyboard standard (one scene/page)."""
     root = Path(folder).expanduser().resolve()
+    if text_only:
+        return _render_text_storyboard(brief, root, review, project_name)
     base = Path(link_base).expanduser().resolve() if link_base else None
     concept_name = brief.name or brief.title or brief.concept_name or project_name or root.name or "Storyboard"
     concept_title = f"{concept_name} · {brief.concept_id}" if brief.concept_id else concept_name

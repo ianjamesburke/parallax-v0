@@ -68,23 +68,26 @@ def media_names(c):
 
 
 def references(c):
-    from .reference_gates import EXTERNAL_METHODS, _referenced, open_gates
+    from .reference_gates import EXTERNAL_METHODS, _referenced, open_gates, missing_brand_references, looks_branded
     brief = c.get("brief")
     if not brief: return
+    paid = {s.index for s in brief.script.scenes if s.generation_method not in EXTERNAL_METHODS}
     for gate in open_gates(brief, c["root"], c["root"] / "brief.yaml"):
+        if not paid.intersection(gate["scenes"]):
+            continue
         kind = "product_ref" if gate["id"] == "product-reference" else "style_ref"
-        yield finding("reference_gate", "error", gate["question"], f"Add an image under {c['root'] / 'references'} and list its path as {kind} in assets.provided and in the affected scenes’ image_refs in {c['root'] / 'brief.yaml'}.", True)
+        yield finding("reference_gate", "error", gate["question"], f"Add an image under references/ and list it as {kind} in assets.provided and the affected scenes' image_refs.", True)
+    for scene, detail in missing_brand_references(brief, c["root"]):
+        display = scene.scene_id.replace("_", " ")
+        fix = f"Add the file under references/official/, set status: supplied and list it in brand_ref.paths for {scene.scene_id} in brief.yaml."
+        message = (f"{display} needs a brand reference ({detail}) but none is attached." if scene.brand_ref.status == "missing"
+                   else f"{display} has a missing brand reference file: {detail}.")
+        yield finding("brand_ref_missing", "error", message, fix, True)
+    for scene in brief.script.scenes:
+        if scene.brand_ref.status == "not_needed" and looks_branded(brief, scene):
+            yield finding("brand_ref_advisory", "warning", f"{scene.scene_id.replace('_', ' ')} may need a brand reference.", f"Set brand_ref deliberately for {scene.scene_id}: supplied with paths, missing with a note, or not_needed.")
     if any(s.generation_method in EXTERNAL_METHODS and not _referenced(brief, s) for s in brief.script.scenes):
         yield finding("external_style_reference", "warning", "No style reference: the external generator will choose the look; add images under references/style/ to anchor it.", f"Add images under {c['root'] / 'references/style'} and list them in assets.provided and the affected scenes’ image_refs in {c['root'] / 'brief.yaml'}.")
-    for s in brief.script.scenes:
-        ref = s.brand_ref
-        if ref.status == "missing":
-            yield finding("brand_ref_missing", "error", f"{s.scene_id} has a missing brand reference.", "Add the official image under references/official/ and set brand_ref.status and brand_ref.paths in brief.yaml.", True)
-        if ref.status == "supplied" and not ref.paths:
-            yield finding("brand_ref_paths", "error", f"{s.scene_id} has no supplied brand reference paths.", "Add existing paths to brand_ref.paths in brief.yaml.")
-        for path in ref.paths:
-            if not (c["root"] / path).is_file():
-                yield finding("brand_ref_file", "error", f"{s.scene_id} brand reference {path} is missing.", "Add the file or correct brand_ref.paths in brief.yaml.")
 
 
 def timing(c):
