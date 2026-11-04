@@ -6,6 +6,8 @@ import sys
 def test_core_cli_without_alignment():
     code = '''
 import sys
+import tempfile
+from pathlib import Path
 sys.modules['whisperx'] = None
 sys.modules['torch'] = None
 import parallax.cli
@@ -15,7 +17,9 @@ from typer.testing import CliRunner
 result = CliRunner().invoke(parallax.cli.app, ['guide', 'front_half'])
 assert result.exit_code == 0, (result.output, result.exception)
 try:
-    parallax.whisper_backend.transcribe_wav('unused.wav')
+    from parallax.forced_align import align_words
+    with tempfile.NamedTemporaryFile(suffix='.wav') as audio:
+        align_words(audio.name, 'script text')
 except parallax.whisper_backend.AlignmentUnavailable as exc:
     assert "optional 'align' extra" in str(exc)
 else:
