@@ -315,13 +315,14 @@ TOPICS: dict[str, dict] = {
     },
     "cut": {
         "summary": "Assemble a folder of existing clips to a script (`parallax cut`): voiceover (with idempotent cache), script-token alignment, midpoint-of-gap scene plan, manifest.yaml, captioned MP4, and XML editor export from ONE manifest.",
-        "design_principle": "Parallax never guesses clip-to-script visual matching with a model. The calling agent inspects clips (with its own vision or `parallax ingest`), writes `cut-map.yaml` (or relies on deterministic name/marker inference), runs `parallax cut --plan-only`, then runs `parallax cut`.",
+        "design_principle": "Match each script line to its Scene_NN clip in numeric order, not by visual guess. Write a cut map in script order and check the plan before rendering.",
         "agent_workflow": [
-            {"step": 1, "do": "Inspect clips in `--clips DIR` (e.g. `parallax ingest <dir> --estimate` or sample frames with your own vision)."},
-            {"step": 2, "do": "Author `cut-map.yaml` mapping script opening phrases (`anchor`) to clip filenames/stems in script order, or run `parallax cut --script script.txt --clips clips/ --out out.mp4 --plan-only` first to generate `<project>/cut-map.template.yaml`."},
-            {"step": 3, "do": "Dry-run the plan with `parallax cut --script script.txt --clips clips/ --map cut-map.yaml --out out.mp4 --plan-only` (zero paid calls, zero renders; exits 0 if renderable, 2 on mapping/overrun issues)."},
-            {"step": 4, "do": "Run `parallax cut --script script.txt --clips clips/ --map cut-map.yaml --out out.mp4` to synthesize/reuse cached voiceover, write `<project>/manifest.yaml`, render the captioned video, and export `<project>/assets/timeline.xml`."},
-            {"step": 5, "do": "If you hand-edit `<project>/manifest.yaml` timings or trims, re-run `parallax cut --from-manifest <project>/manifest.yaml --out out.mp4` so the MP4 and `timeline.xml` stay 100% identical."},
+            {"step": 1, "do": "Install with uv tool install --python 3.11 --force 'parallax[align] @ git+https://github.com/ianjamesburke/parallax-v0'. Use your Google Drive connection to download the source folder, export the script doc as script.txt, and put the numbered clips in clips/."},
+            {"step": 2, "do": "Match script lines to Scene_NN clips in numeric order, not by visual guess. Write cut-map.yaml using the format below. If there is no voiceover, ask the requester or use configured TTS only if its API key is set; do not substitute a random free voice."},
+            {"step": 3, "do": "Run `parallax cut --script script.txt --clips clips/ --map cut-map.yaml --audio vo.mp3 --process-audio --aspect 9:16 --out final.mp4 --plan-only`. Use the actual voiceover filename and resolve plan errors."},
+            {"step": 4, "do": "Run `parallax cut --script script.txt --clips clips/ --map cut-map.yaml --audio vo.mp3 --process-audio --aspect 9:16 --out final.mp4`. This applies the default 1.15x speed, loudness normalization, alignment, and captions. For configured TTS omit `--audio vo.mp3 --process-audio` from both commands."},
+            {"step": 5, "do": "Check the voiceover verification and manifest/XML consistency reports. Watch the MP4 to verify scene order, captions, audio, and 9:16 framing. `parallax check --folder PROJECT --stage media` checks a brief-based project when one exists, not a standalone cut; `parallax verify suite` runs test cases, not the finished MP4."},
+            {"step": 6, "do": "Upload the finished MP4 using your Google Drive connection to the requester's named folder or a new subfolder there, then reply with the file link."},
         ],
         "mapping_format": {
             "version": 1,

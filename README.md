@@ -6,11 +6,20 @@ Agentic creative production CLI. A brief goes in, a finished short-form video co
 
 ```sh
 command -v uv || curl -LsSf https://astral.sh/uv/install.sh | sh
-uv tool install --python 3.11 --force "git+https://github.com/ianjamesburke/parallax-v0"
+uv tool install --python 3.11 --force "parallax[align] @ git+https://github.com/ianjamesburke/parallax-v0"
 parallax --version
 ```
 
-Start with `parallax guide`. For a storyboard, run `parallax guide front_half`, write the brief, run `parallax check`, then `parallax storyboard --text-only --pdf`, and send the PDF for approval before generating media.
+Use your Google Drive connection to download the source folder. Export the script doc as `script.txt`, put the numbered clips in `clips/`, and save the supplied voiceover as `vo.mp3` (use its actual filename). Match each script line to its `Scene_NN` clip in numeric order, not by visual guess. Write `cut-map.yaml` using the format in `parallax guide cut`.
+
+```sh
+parallax cut --script script.txt --clips clips/ --map cut-map.yaml --audio vo.mp3 --process-audio --aspect 9:16 --out final.mp4 --plan-only
+parallax cut --script script.txt --clips clips/ --map cut-map.yaml --audio vo.mp3 --process-audio --aspect 9:16 --out final.mp4
+```
+
+The normal flow applies the default 1.15x speed, loudness normalization, alignment, and captions. If no voiceover is supplied, ask the requester or use configured TTS only when its API key is set; do not choose a random free voice. For configured TTS, omit `--audio vo.mp3 --process-audio` from both commands. Resolve plan errors before rendering. Check the voiceover verification and manifest/XML consistency reports, and watch the MP4 to verify scene order, captions, audio, and 9:16 framing. `parallax check --folder PROJECT --stage media` checks a brief-based project when one exists; it does not validate a standalone cut. `parallax verify suite` runs test cases, not the finished MP4. Upload the final MP4 through your Drive connection to the folder the requester names, or a new subfolder there, and reply with the file link.
+
+For a storyboard, run `parallax guide front_half`, write the brief, run `parallax check`, then `parallax storyboard --text-only --pdf`, and send the PDF for approval before generating media.
 
 ## Start here (agents)
 
@@ -197,7 +206,7 @@ parallax cut --from-manifest ./final.cut/manifest.yaml --out ./final.mp4
 ```
 
 **Agent workflow (`parallax guide cut`):**
-1. Inspect the clips in `--clips` using your own vision (or `parallax ingest ./clips/ --estimate`). Parallax never calls a model to guess visual clip-to-script matching.
+1. Match numbered `Scene_NN` clips to script lines in numeric order. Do not choose matches by visual guess.
 2. Provide `--map cut-map.yaml` (or omit `--map` when the script has inline `[Scene_01]` / `Scene 1:` markers or numbered clips matching the paragraph or sentence count; otherwise `parallax cut` exits `2`, prints a `MAPPING NEEDED` report, and writes `<project>/cut-map.template.yaml`).
 3. Run `parallax cut ... --plan-only` to verify anchors, slot durations, clip reuse trims, and any overruns before spending or rendering.
 4. Run `parallax cut ...` to produce `<out>`, `<project>/manifest.yaml`, and `<project>/assets/timeline.xml` (verified with `consistency: manifest==xml ok`).

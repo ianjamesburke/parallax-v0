@@ -8,9 +8,12 @@ Output shape: [{"word": str, "start": float, "end": float}, ...]
 """
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 from pathlib import Path
+from threading import RLock
+from unittest.mock import patch
 
 log = logging.getLogger("parallax.whisper_backend")
 
@@ -19,6 +22,7 @@ _DEFAULT_DEVICE = "cpu"
 _DEFAULT_COMPUTE = "int8"
 
 _whisperx = None
+_alignment_lock = RLock()
 
 ALIGN_INSTALL_MESSAGE = (
     "Word alignment needs the optional 'align' extra. Install it with: "
@@ -39,6 +43,28 @@ def _require_whisperx():
             raise AlignmentUnavailable(ALIGN_INSTALL_MESSAGE) from exc
         _whisperx = whisperx
     return _whisperx
+
+
+class _WholeTextSplitter:
+    def span_tokenize(self, text: str) -> list[tuple[int, int]]:
+        return [(0, len(text))] if text else []
+
+
+def _no_nltk_download(*args, **kwargs):
+    raise RuntimeError("WhisperX attempted to download NLTK data during alignment")
+
+
+def _align_without_punkt(whisperx, *args, **kwargs):
+    # Recent WhisperX versions import alignment lazily; older versions expose it
+    # directly. Patching its loader only affects sentence grouping, not alignment.
+    alignment = getattr(whisperx, "alignment", None)
+    if alignment is None:
+        alignment = importlib.import_module("whisperx.alignment")
+    if not hasattr(alignment, "nltk_load"):
+        raise RuntimeError("WhisperX alignment no longer exposes nltk_load; update the alignment integration")
+    with _alignment_lock, patch.object(alignment, "nltk_load", return_value=_WholeTextSplitter()), \
+            patch.object(alignment.nltk, "download", side_effect=_no_nltk_download):
+        return whisperx.align(*args, **kwargs)
 
 
 def get_config() -> tuple[str, str, str]:
@@ -68,7 +94,8 @@ def transcribe_wav(wav_path: str, label: str = "") -> list[dict]:
     log.info("whisper_backend: detected language=%s, %d segments", language, len(result.get("segments", [])))
 
     align_model, metadata = _whisperx.load_align_model(language_code=language, device=device)  # type: ignore[union-attr]
-    aligned = _whisperx.align(  # type: ignore[union-attr]
+    aligned = _align_without_punkt(
+        _whisperx,
         result["segments"], align_model, metadata, audio, device=device, return_char_alignments=False,
     )
 

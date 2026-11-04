@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -43,6 +44,56 @@ def _mock_whisperx(word_segments: list[dict]) -> MagicMock:
     mock_wx.load_align_model.return_value = (MagicMock(), MagicMock())
     mock_wx.align.return_value = {"word_segments": word_segments}
     return mock_wx
+
+
+def test_alignment_injects_splitter_and_restores_functions():
+    loader = MagicMock()
+    download = MagicMock()
+    alignment = SimpleNamespace(nltk_load=loader, nltk=SimpleNamespace(download=download))
+    wx = SimpleNamespace(alignment=alignment)
+    expected = {"word_segments": [{"word": "Hello.", "start": 0.12, "end": 0.34}]}
+
+    def align(*args, **kwargs):
+        splitter = alignment.nltk_load("any language")
+        assert splitter.span_tokenize("Hello. World!") == [(0, 13)]
+        assert splitter.span_tokenize("") == []
+        with pytest.raises(RuntimeError, match="download NLTK"):
+            alignment.nltk.download("punkt_tab")
+        return expected
+
+    wx.align = align
+    assert wb_mod._align_without_punkt(wx) == expected
+    assert alignment.nltk_load is loader
+    assert alignment.nltk.download is download
+    loader.assert_not_called()
+    download.assert_not_called()
+
+
+
+def test_alignment_lazy_module_and_restoration_on_failure(monkeypatch):
+    loader = MagicMock()
+    download = MagicMock()
+    alignment = SimpleNamespace(nltk_load=loader, nltk=SimpleNamespace(download=download))
+    monkeypatch.setitem(sys.modules, "whisperx.alignment", alignment)
+    wx = SimpleNamespace(align=MagicMock(side_effect=ValueError("alignment failed")))
+    with pytest.raises(ValueError, match="alignment failed"):
+        wb_mod._align_without_punkt(wx)
+    assert alignment.nltk_load is loader
+    assert alignment.nltk.download is download
+
+
+def test_alignment_missing_loader_fails_loudly():
+    wx = SimpleNamespace(alignment=SimpleNamespace(), align=MagicMock())
+    with pytest.raises(RuntimeError, match="nltk_load"):
+        wb_mod._align_without_punkt(wx)
+    wx.align.assert_not_called()
+
+
+def test_real_whisperx_alignment_exposes_loader():
+    pytest.importorskip("whisperx")
+    import whisperx.alignment as alignment
+
+    assert hasattr(alignment, "nltk_load")
 
 
 class TestWhisperBackendWhisperX:

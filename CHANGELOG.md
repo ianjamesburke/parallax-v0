@@ -1,6 +1,11 @@
 # Changelog
 
 Newest releases appear first.
+
+## [0.7.4] — 2026-11-04
+
+### Changes
+- fix: WhisperX alignment no longer requires or downloads NLTK punkt_tab data.
 ## [0.7.3] — 2026-11-03
 
 ### Changes
