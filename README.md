@@ -318,3 +318,10 @@ Multiple takes are flagged for a decision; set exactly one matching entry to
 `"preferred": true` in `parallax/assets/import-manifest.json` after review. Plan is optional for this review path.
 Estimated timing defaults to 3 words per second at speed 1.0; minimum usable
 footage is the estimated scene duration plus one second.
+
+For text-only storyboards, list each product asset once in the brief's top-level
+`references` (id, kind, description, status, paths), and cite its id in each
+scene's `refs`. Use references only for the advertised product's own logo,
+packaging, app UI or product photo; a character's own inbox or phone is generic.
+Missing references appear as a non-blocking summary in `parallax check` and on
+the storyboard cover. Run `parallax guide front_half` for an example.

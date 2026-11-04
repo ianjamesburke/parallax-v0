@@ -315,12 +315,13 @@ def _gates_html(review: dict) -> str:
 
 def _render_text_storyboard(brief: Brief, root: Path, review: dict, project_name: str | None, base: Path | None) -> str:
     name = brief.name or brief.title or brief.concept_name or project_name or root.name
-    flags = ", ".join(scene.scene_id.replace("_", " ") for scene in brief.script.scenes if scene.brand_ref.status == "missing")
+    from .references import summary
+    flags = summary(brief)
     cover = f'<h1>{escape(name)} — Storyboard</h1>'
     if brief.visual_style:
         cover += f'<h2>Shared visual style</h2><p>{escape(brief.visual_style)}</p>'
     if flags:
-        cover += f'<p class="cover-note">Brand references missing: {escape(flags)}</p>'
+        cover += f'<p class="cover-note">{escape(flags)}</p>'
     sections = []
     for scene, timing in zip(brief.script.scenes, review["timeline"]):
         duration = float(timing["end_s"]) - float(timing["start_s"])
@@ -328,8 +329,9 @@ def _render_text_storyboard(brief: Brief, root: Path, review: dict, project_name
         image = _asset(root, scene.still_path, "Supplied still", link_base=base) if scene.still_path and (root / scene.still_path).is_file() else ''
         image = re.sub(r'<figcaption[^>]*>.*?</figcaption>', '', image) if image else f'<span>{escape(scene_name)} · no image yet</span>'
         desc = f'<h3>Description</h3><p>{escape(scene.storyboard_treatment)}</p>' if scene.storyboard_treatment and scene.storyboard_treatment != scene.prompt else ''
-        refs = ", ".join(scene.brand_ref.paths + scene.image_refs)
-        references = f'<h3>Referenced images</h3><p>{escape(refs)}</p>' if refs else ''
+        labels = {r.id: r.description for r in brief.references}
+        refs = ", ".join(labels[r] for r in scene.refs if r in labels)
+        references = f'<p class="reference-line">Refs: {escape(refs)}</p>' if refs else ''
         on_screen = f'<h3>On-screen text</h3><p>{escape(scene.on_screen_text)}</p>' if scene.on_screen_text else ''
         shot = ' / '.join(filter(None, (scene.shot_type, scene.purpose)))
         aspect = (scene.aspect or brief.aspect).replace(":", " / ")
@@ -344,7 +346,7 @@ def _render_text_storyboard(brief: Brief, root: Path, review: dict, project_name
 {_STYLE}
 .cover h1 {{ margin: 0 0 20px }} .cover h2 {{ font-size: 18px; margin: 20px 0 5px }} .cover p {{ white-space: pre-wrap }} .cover-note {{ color: #6b6f78; font-size: 12px }}
 .scene-page {{ grid-template-columns: 2.9in 1fr !important; gap: 34px }} .frame-mat {{ width: 2.9in; height: auto !important; aspect-ratio: 9 / 16; color: #6b6f78; text-align: center; padding: 12px }} .frame-mat figure {{ margin: 0; width: 100%; height: 100% }} .frame-mat img {{ object-fit: contain }}
-.scene-copy {{ height: 7.25in; overflow-wrap: anywhere; font: 15px/1.28 Arial, sans-serif }} .scene-copy h2 {{ font-size: 29px; margin: 0 0 10px }} .scene-copy h3 {{ color: #0f8f8a; font-size: 12px; margin: 10px 0 2px }} .scene-copy p {{ white-space: pre-wrap; margin: 0 }} .scene-copy .narration {{ font-size: 19px; line-height: 1.25 }}
+.scene-copy {{ height: 7.25in; overflow-wrap: anywhere; font: 15px/1.28 Arial, sans-serif }} .scene-copy h2 {{ font-size: 29px; margin: 0 0 10px }} .scene-copy h3 {{ color: #0f8f8a; font-size: 12px; margin: 10px 0 2px }} .scene-copy p {{ white-space: pre-wrap; margin: 0 }} .scene-copy .narration {{ font-size: 19px; line-height: 1.25 }} .scene-copy .reference-line {{ font-size: 12px; margin-top: 10px; color: #6b6f78 }}
 </style></head><body><main><section class="cover">{cover}</section>{"".join(sections)}</main><script>
 for (const copy of document.querySelectorAll('.scene-copy')) {{
   if (copy.scrollHeight > copy.clientHeight) {{

@@ -123,7 +123,7 @@ def test_explicit_brand_reference_statuses(tmp_path):
     path.write_text(yaml.safe_dump(data))
     result = check_folder(tmp_path)
     assert result['exit_code'] == 0
-    assert any(f['id'] == 'brand_ref_missing' and f['severity'] == 'warning' for f in result['findings'])
+    assert any(f['id'] == 'reference_missing' and f['severity'] == 'warning' for f in result['findings'])
     assert CliRunner().invoke(app, ['check', '--folder', str(tmp_path), '--json']).exit_code == 0
     assert any('Scene 01' in f['message'] and 'WellyBox app screen' in f['message'] for f in result['findings'])
     write_package(path, tmp_path, tmp_path / 'storyboard-package', text_only=True)
@@ -132,7 +132,7 @@ def test_explicit_brand_reference_statuses(tmp_path):
     path.write_text(yaml.safe_dump(data))
     result = check_folder(tmp_path)
     assert result['exit_code'] == 2
-    assert any(f['id'] == 'brand_ref_file' and f['severity'] == 'error' and 'Scene 01' in f['message'] and 'references/official/app.png' in f['message'] for f in result['findings'])
+    assert any(f['id'] == 'reference_file' and f['severity'] == 'error' and 'references/official/app.png' in f['message'] for f in result['findings'])
     assert CliRunner().invoke(app, ['check', '--folder', str(tmp_path), '--json']).exit_code == 2
     (tmp_path / 'references/official').mkdir()
     (tmp_path / 'references/official/app.png').write_bytes(b'image')
@@ -159,7 +159,7 @@ def test_shared_style_and_guide(tmp_path):
     assert html.count('Distinctive shared style') == 1
     assert 'Hidden title' not in html
     guide = CliRunner().invoke(app, ['guide']).stdout
-    assert 'EVERY scene' not in guide and 'references/official/' in guide and 'check warns' in guide
+    assert 'EVERY scene' not in guide and 'references/official/' in guide and 'email inbox' in guide
 
 
 def test_text_only_frame_uses_still_and_scene_aspect(tmp_path):
