@@ -1142,3 +1142,15 @@ Restored landscape text-only scene pages with aspect-correct image placeholders,
 ## 2026-11-03 — [CHANGED] Light tool install and optional alignment
 
 Moved WhisperX to the align extra, with a default checkout dependency group for existing `uv run` workflows. Alignment loads on demand and reports how to install the extra. The human installers and `just install` retain full alignment support.
+
+### References list (0.7.3 release candidate)
+
+Adopted Method B: a short project references list and per-scene citations, with
+one missing-reference summary in check and text-only storyboard covers. Legacy
+per-scene brand_ref values are mapped on load and check suggests migration.
+Supplied reference paths are checked; missing assets stay non-blocking. The
+0.7.2 placeholder-frame layout and optional alignment dependencies are retained.
+
+### Built-in storyboard PDF renderer
+
+Bundled fpdf2 and DejaVu Sans fonts for offline, Unicode text-only PDF export without browser or system graphics libraries. Other storyboard exports fall back to the built-in renderer when an HTML renderer is unavailable; the manifest reports the renderer and PDF path.

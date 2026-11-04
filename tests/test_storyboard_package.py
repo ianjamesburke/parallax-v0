@@ -821,13 +821,15 @@ def test_write_package_with_no_pdf_skips_pdf_generation(tmp_path, capsys):
     assert "pdf" not in data
 
 
-def test_pdf_without_renderer_keeps_html_and_prints_install_hint(tmp_path, capsys, monkeypatch):
+def test_pdf_without_renderer_uses_builtin(tmp_path, capsys, monkeypatch):
     import parallax.storyboard_package as sbp
     folder, brief = _project(tmp_path)
-    monkeypatch.setattr(sbp, "find_pdf_renderer", lambda: None)
-    assert cli.main(["storyboard", "--folder", str(folder), "--brief", str(brief), "--pdf"]) == 2
-    assert (folder / "storyboard-package/storyboard.html").is_file()
-    assert "playwright install chromium" in capsys.readouterr().err
+    monkeypatch.setattr(sbp.shutil, "which", lambda _: None)
+    monkeypatch.setenv("PATH", "")
+    assert cli.main(["storyboard", "--folder", str(folder), "--brief", str(brief), "--pdf", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["pdf_renderer"] == "builtin"
+    assert Path(data["pdf"]).read_bytes().startswith(b"%PDF-")
 
 
 def test_write_package_registers_pdf_when_created(tmp_path, monkeypatch):

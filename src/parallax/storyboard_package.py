@@ -328,11 +328,21 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
     portable = {**review, "gates": ([] if finished_cut else open_gates(brief, FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER))}
     (package / "storyboard.html").write_text(render_storyboard(brief, assets, portable, link_base=package, source_video=video_metadata, text_only=text_only, project_name=brief_path.parent.name), encoding="utf-8")
     pdf_created = False
+    pdf_renderer = None
     if pdf:
         (package / "storyboard.pdf").unlink(missing_ok=True)
-        pdf_created = render_pdf(package / "storyboard.html", package / "storyboard.pdf")
-        if not pdf_created:
-            raise ValueError("PDF export needs Playwright Chromium or Chrome/Chromium. Install with `uv pip install playwright && playwright install chromium`, or install Chrome.")
+        renderer = None if text_only else find_pdf_renderer()
+        if renderer and render_pdf(package / "storyboard.html", package / "storyboard.pdf", renderer=renderer):
+            pdf_created = True
+            pdf_renderer = Path(renderer[0]).name
+        else:
+            try:
+                from .storyboard_pdf import render_builtin_pdf
+                render_builtin_pdf(brief, assets, review, package / "storyboard.pdf", brief_path.parent.name)
+                pdf_created = True
+                pdf_renderer = "builtin"
+            except Exception as exc:
+                raise ValueError("PDF export failed. Run `uv tool install --force --reinstall parallax` to restore the bundled PDF renderer; for HTML rendering, install Chrome or Chromium.") from exc
         if pdf_created and package == (root / "storyboard-package").resolve():
             shutil.copy2(package / "storyboard.pdf", root / "storyboard.pdf")
 
@@ -343,12 +353,16 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
     }
     portable_rerun = rerun_command.replace(str(root), FOLDER_PLACEHOLDER) if rerun_command else None
     on_disk = _manifest(brief, portable, files, contact, missing, FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER, portable_rerun)
+    on_disk["pdf_renderer"] = pdf_renderer
     if video_metadata:
         on_disk["source_video"] = video_metadata
     if not finished_cut or on_disk["gates"] or on_disk["advisories"] or missing:
         (package / "qa-notes.md").write_text(_qa_notes(on_disk), encoding="utf-8")
     (package / "handoff.json").write_text(json.dumps(on_disk, indent=2) + "\n", encoding="utf-8")
     result = _manifest(brief, review, files, contact, missing, str(root), str(brief_path), rerun_command)
+    result["pdf_renderer"] = pdf_renderer
+    if pdf_created:
+        result["pdf"] = str(package / "storyboard.pdf")
     if video_metadata:
         result["source_video"] = video_metadata
     return result

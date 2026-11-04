@@ -65,7 +65,11 @@ def _schema_cmd(
 
     if target is not None:
         model = Brief if target == SchemaTarget.brief else Plan
-        text = json.dumps(model.model_json_schema(), indent=2)
+        schema = model.model_json_schema()
+        if target == SchemaTarget.brief:
+            schema["$defs"]["BriefScene"]["properties"].pop("brand_ref", None)
+            schema["$defs"].pop("BrandRef", None)
+        text = json.dumps(schema, indent=2)
         if output is not None:
             Path(output).write_text(text)
             print(f"Wrote {target.value} schema to {output}", file=sys.stderr)
