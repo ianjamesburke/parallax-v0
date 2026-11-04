@@ -16,7 +16,7 @@ from . import whisper_backend
 log = logging.getLogger("parallax.forced_align")
 
 
-def align_words(wav_path: str | Path) -> list[dict]:
+def align_words(wav_path: str | Path, script_text: str = "") -> list[dict]:
     """Transcribe + align a wav, return `[{word, start, end}, ...]` using WhisperX.
 
     Override the model with PARALLAX_WHISPER_MODEL (e.g. base.en, small.en),

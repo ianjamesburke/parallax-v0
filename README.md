@@ -19,16 +19,22 @@ parallax update       # upgrade later
 
 ## Install
 
+Light install (storyboards, check):
+
 ```sh
-curl -LsSf https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/install.sh | sh
+uv tool install --python 3.11 "git+https://github.com/ianjamesburke/parallax-v0@<ref>"
 ```
 
-Installs uv (Python toolchain manager) and ffmpeg if either is missing, then installs parallax with every dependency pinned to the repo's `uv.lock` (`just install` does the same from a checkout). If you already have both, it just runs the last step.
-
-From a local checkout:
+Full install (cut, VO alignment):
 
 ```sh
-uv tool install --python 3.11 --from /path/to/parallax-v0 parallax
+uv tool install --python 3.11 "parallax[align] @ git+https://github.com/ianjamesburke/parallax-v0@<ref>"
+```
+
+Replace `<ref>` with a commit SHA or branch. The full install includes WhisperX and its large PyTorch dependencies. The human-facing `curl` installer installs the full version, along with uv and ffmpeg if missing; `just install` does the same from a checkout with lockfile constraints. In a checkout, `uv sync` and `uv run` install the dev and align dependency groups by default.
+
+```sh
+curl -LsSf https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/install.sh | sh
 ```
 
 Installs are snapshot-frozen — the CLI never auto-updates from the repo. Check what you're running and pull the latest manually:

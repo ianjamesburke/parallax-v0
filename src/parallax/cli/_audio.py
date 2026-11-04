@@ -30,7 +30,7 @@ def audio_transcribe(
         preloaded = data if isinstance(data, list) else data.get("words", [])
     try:
         result = transcribe_words(input, out, words=preloaded)
-    except RuntimeError as e:
+    except (RuntimeError, ImportError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
     print(f"{len(result)} words → {out}")

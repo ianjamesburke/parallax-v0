@@ -68,7 +68,7 @@ def media_names(c):
 
 
 def references(c):
-    from .reference_gates import EXTERNAL_METHODS, _referenced, open_gates, missing_brand_references, looks_branded
+    from .reference_gates import EXTERNAL_METHODS, _referenced, open_gates, missing_brand_references
     brief = c.get("brief")
     if not brief: return
     paid = {s.index for s in brief.script.scenes if s.generation_method not in EXTERNAL_METHODS}
@@ -82,10 +82,7 @@ def references(c):
         fix = f"Add the file under references/official/, set status: supplied and list it in brand_ref.paths for {scene.scene_id} in brief.yaml."
         message = (f"{display} needs a brand reference ({detail}) but none is attached." if scene.brand_ref.status == "missing"
                    else f"{display} has a missing brand reference file: {detail}.")
-        yield finding("brand_ref_missing", "error", message, fix, True)
-    for scene in brief.script.scenes:
-        if scene.brand_ref.status == "not_needed" and looks_branded(brief, scene):
-            yield finding("brand_ref_advisory", "warning", f"{scene.scene_id.replace('_', ' ')} may need a brand reference.", f"Set brand_ref deliberately for {scene.scene_id}: supplied with paths, missing with a note, or not_needed.")
+        yield finding("brand_ref_missing" if scene.brand_ref.status == "missing" else "brand_ref_file", "warning" if scene.brand_ref.status == "missing" else "error", message, fix)
     if any(s.generation_method in EXTERNAL_METHODS and not _referenced(brief, s) for s in brief.script.scenes):
         yield finding("external_style_reference", "warning", "No style reference: the external generator will choose the look; add images under references/style/ to anchor it.", f"Add images under {c['root'] / 'references/style'} and list them in assets.provided and the affected scenes’ image_refs in {c['root'] / 'brief.yaml'}.")
 

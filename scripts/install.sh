@@ -32,7 +32,7 @@ fi
 
 # 2. parallax
 info "Installing parallax from $REPO_URL..."
-uv tool install --python 3.11 --force "git+$REPO_URL"
+uv tool install --python 3.11 --force "parallax[align] @ git+$REPO_URL"
 
 # Prompt helper — reads from controlling TTY so curl | sh works, returns "" on skip.
 prompt_tty() {
