@@ -108,6 +108,37 @@ def _referenced(brief: Brief, scene) -> bool:
                 or (scene.shot_type == "broll" and "product_ref" in kinds))
 
 
+def missing_brand_references(brief: Brief, folder: str | Path) -> list[tuple[object, str]]:
+    """Return explicitly unresolved brand references for checks and storyboards."""
+    root = Path(folder).resolve()
+    results = []
+    for scene in brief.script.scenes:
+        ref = scene.brand_ref
+        if ref.status == "missing":
+            results.append((scene, ref.note or "brand reference"))
+        elif ref.status == "supplied":
+            missing = [path for path in ref.paths if not (root / path).resolve().is_relative_to(root) or not (root / path).is_file()]
+            if not ref.paths:
+                missing = ["no paths listed"]
+            results.extend((scene, path) for path in missing)
+    return results
+
+
+def looks_branded(brief: Brief, scene) -> bool:
+    """Advisory only: identify likely visual brand dependencies, excluding negations."""
+    text = " ".join(filter(None, (scene.prompt, scene.storyboard_treatment, scene.vo_text, scene.on_screen_text)))
+    text = re.sub(r"\b(?:no|without|avoid)\s+(?:an?\s+|the\s+|institutional\s+|team\s+)?(?:logo|logos|wordmark|branding|brand|text)(?:\s+on\s+screen)?\b", " ", text, flags=re.I)
+    text = re.sub(r"\b(?:logo|wordmark|branding|text)\s+(?:is\s+)?not visible\b|\bunbranded\b", " ", text, flags=re.I)
+    if re.search(r"\b(?:logo|wordmark|app(?:lication)?(?:\s+(?:ui|screen))?|dashboard|packaging|product\s+(?:shot|photo)|ui)\b", text, re.I):
+        return True
+    names = [str(brief.brand[k]) for k in ("name", "product") if brief.brand and isinstance(brief.brand.get(k), str)]
+    match = re.search(r"\b(?:vertical\s+)?([A-Z][A-Za-z0-9]+)\s+ad\b", brief.goal)
+    if match:
+        names.append(match.group(1))
+    visual = " ".join(filter(None, (scene.prompt, scene.storyboard_treatment, scene.on_screen_text)))
+    return any(re.search(r"\b" + re.escape(name) + r"\b", visual, re.I) for name in names)
+
+
 def _arg(value: str) -> str:
     """Shell-quote a path; leave <placeholders> readable."""
     return value if value.startswith("<") and value.endswith(">") else shlex.quote(value)

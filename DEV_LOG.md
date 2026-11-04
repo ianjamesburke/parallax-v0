@@ -1130,3 +1130,7 @@ During file creation, pyright flagged `from .sessions import …` etc. as unreso
 Added an offline text-only review path, timing and footage handles, project checks,
 and external scene media import with source filename provenance. Plan is optional
 for the review path; media take ambiguity remains visible for human resolution.
+
+## 2026-11-03 — [FIX] Readable text-only storyboards and explicit brand references
+
+Text-only review uses portrait pages, prominent narration, and one shared visual style on the cover. Scene brand_ref status controls blocking and visible review flags; heuristic detection is advisory for external scenes. Legacy paid reference gates remain in place. Verified against copied PA21 and PA25 projects without provider calls.

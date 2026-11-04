@@ -241,6 +241,7 @@ class Brief(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     goal: str
+    visual_style: str | None = None
     concept_name: str | None = None
     name: str | None = None
     title: str | None = None
