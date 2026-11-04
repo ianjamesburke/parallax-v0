@@ -6,10 +6,10 @@ align_scenes → write_manifest → ken_burns_assemble → (optionally)
 burn_captions → burn_headline.
 
 Plan YAML schema:
-  voice: nova                # TTS voice (default: nova). See
-                             # `parallax models show tts-mini`
+  voice: Charon              # TTS voice (default: Charon). See
+                             # `parallax models show tts-gemini`
                              # for the full list of prebuilt voices.
-  voice_model: tts-mini      # TTS model alias (default: tts-mini).
+  voice_model: tts-gemini    # TTS model alias (default: tts-gemini).
   style: rapid_fire          # TTS pacing preset. Default for ads.
                              # Options: rapid_fire | fast | calm | natural.
   style_hint: "..."          # Freeform TTS directive (overrides `style`).

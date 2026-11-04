@@ -38,7 +38,7 @@ def _produce_cmd(
     resolution: Optional[str] = typer.Option(None, "--resolution", help="Override output resolution, e.g. 480x854 or 1080x1920."),
     stills_only: bool = typer.Option(False, "--stills-only", help="Generate stills only (writes stills_only: true into plan); skips voiceover, animation, and assembly."),
 ) -> int:
-    """Generate stills, narration, and video from a plan or brief. Spends money; prints the estimated cost first; refuses while reference gates are open."""
+    """Generate stills, narration, and video from a plan or brief. For a script plus existing footage, use `parallax cut` instead. Spends money; prints the estimated cost first; refuses while reference gates are open."""
     if plan is None and brief is None:
         typer.echo("Error: one of --plan or --brief is required", err=True)
         return 2
@@ -87,6 +87,7 @@ def _storyboard_cmd(
     cut_threshold: float = typer.Option(.25, "--cut-threshold", help="ffmpeg scene-cut threshold for --from-video."),
     package_dir: Optional[str] = typer.Option(None, "--package-dir", help="Package output directory (default: <folder>/storyboard-package)."),
     pdf: bool = typer.Option(False, "--pdf/--no-pdf", help="Render a printable PDF of the storyboard (requires Chrome/Chromium or Playwright Chromium)."),
+    text_only: bool = typer.Option(False, "--text-only", help="Prepare a text-only review before external media generation."),
     check: bool = typer.Option(False, "--check", help="Print the status, open gates, and advisories as JSON without writing a package."),
     as_json: bool = typer.Option(False, "--json", help="Print the handoff manifest as JSON: status, open reference gates with choices and resolving commands, advisories."),
 ) -> int:
@@ -128,10 +129,10 @@ def _storyboard_cmd(
                 Path(generated_scenes).unlink(missing_ok=True)
         else:
             manifest = (write_package_from_video(from_video, scenes, folder, destination, cut_threshold=cut_threshold, pdf=pdf)
-                        if from_video else write_package(brief_resolved, folder, destination, timing_path=timing, pdf=pdf))
+                        if from_video else write_package(brief_resolved, folder, destination, timing_path=timing, pdf=pdf, text_only=text_only))
     except (ValueError, OSError) as exc:
         typer.echo(f"Error: {exc}", err=True)
-        return 2
+        raise typer.Exit(code=2)
     package = destination.expanduser().resolve()
     manifest = {"package_dir": str(package), "html": str(package / "storyboard.html"), **manifest}
     if (package / "storyboard.pdf").is_file():
@@ -145,7 +146,7 @@ def _storyboard_cmd(
         typer.echo(f"PDF:  {manifest['pdf']}")
     if manifest["gates"]:
         typer.echo(f"{len(manifest['gates'])} reference gate(s) open; run with --json for choices and commands.")
-    typer.echo("Review scene types and direction before generating assets. No provider calls made.")
+    typer.echo("Review the storyboard for approval. No provider calls made.")
     return 0
 
 

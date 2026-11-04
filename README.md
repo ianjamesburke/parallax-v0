@@ -4,10 +4,13 @@ Agentic creative production CLI. A brief goes in, a finished short-form video co
 
 ## Start here (agents)
 
+Run `parallax guide` first. It explains the front-half workflow and review boundary.
+
 ```sh
 curl -LsSf https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/install.sh | sh   # install
+parallax guide        # first: author a brief and drive the pipeline
 parallax --help       # every command
-parallax guide        # how to author a brief and drive the pipeline
+parallax guide cut    # cut a folder of existing clips to a script + voiceover + XML export
 PARALLAX_TEST_MODE=1 parallax produce --folder ./my-project --brief ./my-project/brief.yaml   # free stub run, try this first
 parallax update       # upgrade later
 ```
@@ -16,16 +19,22 @@ parallax update       # upgrade later
 
 ## Install
 
+Light install (storyboards, check):
+
 ```sh
-curl -LsSf https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/install.sh | sh
+uv tool install --python 3.11 "git+https://github.com/ianjamesburke/parallax-v0@<ref>"
 ```
 
-Installs uv (Python toolchain manager) and ffmpeg if either is missing, then installs parallax with every dependency pinned to the repo's `uv.lock` (`just install` does the same from a checkout). If you already have both, it just runs the last step.
-
-From a local checkout:
+Full install (cut, VO alignment):
 
 ```sh
-uv tool install --python 3.11 --from /path/to/parallax-v0 parallax
+uv tool install --python 3.11 "parallax[align] @ git+https://github.com/ianjamesburke/parallax-v0@<ref>"
+```
+
+Replace `<ref>` with a commit SHA or branch. The full install includes WhisperX and its large PyTorch dependencies. The human-facing `curl` installer installs the full version, along with uv and ffmpeg if missing; `just install` does the same from a checkout with lockfile constraints. In a checkout, `uv sync` and `uv run` install the dev and align dependency groups by default.
+
+```sh
+curl -LsSf https://raw.githubusercontent.com/ianjamesburke/parallax-v0/main/install.sh | sh
 ```
 
 Installs are snapshot-frozen — the CLI never auto-updates from the repo. Check what you're running and pull the latest manually:
@@ -63,11 +72,12 @@ These work with no key and no provider calls:
 
 - `parallax storyboard`: storyboard packages, HTML previews, optional PDF.
 - `parallax ingest`: local WhisperX transcription with word timestamps (the first run may download model weights).
+- `parallax cut`: script-anchored clip assembly, caption burn, and XML editor export when `--audio`/`--words`, `--plan-only`, `--from-manifest`, or a cached voiceover is used (only uncached TTS synthesis uses `OPENROUTER_API_KEY`).
 - `parallax video ...` local tools: `assemble` clips with voiceover and captions, `ken-burns`, `text-overlay`, `app-screen`, `end-card`, `diagram`, and `motion --from-spec` / `--from-html` re-renders.
 - `parallax export editor`: an xmeml v4 and FCPXML 1.10 timeline, assets, and SRT captions for Premiere, Resolve, and Final Cut.
 - `parallax validate`, `plan`, `guide`, and `schema`.
 
-Anything that generates with a provider (`produce`, `image generate`, `video animate`, `audio voiceover`) needs the key, and so does `credits`.
+Anything that generates with a provider (`produce`, `image generate`, `video animate`, `audio voiceover`, or `cut` when synthesizing a new TTS voiceover) needs the key, and so does `credits`.
 
 For dry runs of the paid pipeline without spending: `export PARALLAX_TEST_MODE=1` — the pipeline produces stub PNGs / mp4s / mp3s end-to-end with no network calls.
 
@@ -158,6 +168,51 @@ Writes `<folder>/editor-handoff/` (override with `--out`):
 - `reference/` — optional copy of the finished MP4 from the produce run
 - `README.txt` & `handoff.json` — import instructions and machine-readable frame/second manifest
 
+### Cut existing clips to a script (`parallax cut`)
+
+When you already have a folder of clips and a script, `parallax cut` produces the voiceover (or reuses cached/supplied audio), aligns script tokens to word timestamps, computes midpoint-of-gap scene boundaries with per-clip capacity redistribution and reuse-trim continuation, writes `<project>/manifest.yaml`, renders a captioned MP4 from that manifest, and exports an editor handoff package (`<project>/assets/timeline.xml` + `timeline.fcpxml` + `captions.srt`) from the **same** manifest so the video and XML timeline always match:
+
+```sh
+# 1. Dry-run plan (zero paid calls, zero renders; exits 2 with a MAPPING NEEDED report + template if unmapped)
+parallax cut --script ./script.txt --clips ./clips/ --map ./cut-map.yaml --out ./final.mp4 --plan-only
+
+# 2. Full run (synthesizes or reuses cached TTS at 1.15x with <=0.25s sentence silence, renders MP4 + XML export)
+parallax cut --script ./script.txt --clips ./clips/ --map ./cut-map.yaml --out ./final.mp4
+
+# 3. Key-free run with supplied voiceover audio and word timings
+parallax cut --script ./script.txt --clips ./clips/ --map ./cut-map.yaml --audio ./vo.mp3 --words ./words.json --out ./final.mp4
+
+# 4. Re-render and re-export after hand-editing manifest.yaml
+parallax cut --from-manifest ./final.cut/manifest.yaml --out ./final.mp4
+```
+
+**Agent workflow (`parallax guide cut`):**
+1. Inspect the clips in `--clips` using your own vision (or `parallax ingest ./clips/ --estimate`). Parallax never calls a model to guess visual clip-to-script matching.
+2. Provide `--map cut-map.yaml` (or omit `--map` when the script has inline `[Scene_01]` / `Scene 1:` markers or numbered clips matching the paragraph or sentence count; otherwise `parallax cut` exits `2`, prints a `MAPPING NEEDED` report, and writes `<project>/cut-map.template.yaml`).
+3. Run `parallax cut ... --plan-only` to verify anchors, slot durations, clip reuse trims, and any overruns before spending or rendering.
+4. Run `parallax cut ...` to produce `<out>`, `<project>/manifest.yaml`, and `<project>/assets/timeline.xml` (verified with `consistency: manifest==xml ok`).
+
+**Mapping format (`cut-map.yaml`):**
+
+```yaml
+version: 1
+segments:               # in script order
+  - anchor: "45 AD."    # >=1 opening word where this segment starts (matched forward-only from previous anchor)
+    clip: Scene_01.mp4  # filename, stem, or relative path inside --clips
+    in: 0.0             # optional in-point seconds (default: continue where previous use of this clip ended)
+    note: "Opening hook"
+  - anchor: "Desperate,"
+    clip: Scene_02
+```
+
+**Idempotent voiceover cache, chunked hygiene & Drive-safe encode:**
+- **Chunked TTS & per-chunk cache (`--vo-chunk-seconds 60`, `--vo-gap 0.25`)**: Long scripts are split at paragraph/sentence boundaries (pass `--vo-chunk-seconds 0` for a single TTS call). Each chunk is cached raw (`<project>/cache/vo/chunks/<sha256>.raw.{mp3,json}`) and processed (`<proc_key>.proc.{mp3,json}`). Editing a single sentence re-synthesizes only that chunk; changing `--speed` (default `1.15`), `--max-sentence-silence` (default `0.25`), or `--vo-lufs` (default `-16`) re-processes cached raw chunks locally with **zero** new TTS calls. Pass `--force` to bypass caches.
+- **Energy-based pause trim**: Sentence pauses are trimmed only at the **midpoint** of real acoustic silence intervals (`silencedetect` `-35dB`, `>=0.12s`) inside word-alignment gaps, keeping `>=0.15s` lead-in/lead-out (`2x` margin around tokens aligned `>0.6s`) and expanding numerals (e.g. `97%` -> `ninety seven percent`) for alignment matching while keeping script text (`97%`) in captions and the manifest.
+- **Loudness normalization & consistency check (`--vo-lufs -16`, `--vo-lufs-tolerance 1.5`, `--vo-normalize/--no-vo-normalize`)**: Each chunk is two-pass normalized with EBU R128 `loudnorm` (`I=-16:TP=-1.5:LRA=11`) before concatenation. Integrated LUFS is measured per chunk (post-normalisation) and on the final concatenated voiceover, written to `<project>/voiceover.loudness.json`, and a non-fatal warning is emitted if any chunk deviates from the mean chunk loudness by more than `--vo-lufs-tolerance` (default `1.5` LU).
+- **Script verification & retry (`--vo-verify/--no-vo-verify`, `--vo-retries 2`, `--strict-vo`)**: Post-TTS and post-trim audio are verified against the script. Provider omissions trigger up to `--vo-retries` per-chunk regenerations (saving failed takes as `.rejected`), while trim-induced word losses automatically escalate pause-trim safety margins (`0.15s -> 0.30s -> 0.50s -> untrimmed`). If chunks still fail after retries, `cut` exits `1`, names them and renders nothing (`--strict-vo` is the default; `--no-strict-vo` renders anyway with a warning). Default voice is `tts-gemini` / `Charon`.
+- **Verification source**: with `--audio` + `--words`, the supplied words.json is the source of truth — its word sequence is diffed against the script and its timings are sanity-checked (start <= end, non-decreasing starts, nothing past the audio, speech starts/ends within `max(1.5s, 5%)` of the audio edges, no word gap over `max(5s, 10%)`); whisper is not run. A words.json marked `"estimated": true` is not trusted and falls back to whisper. On the whisper path (TTS, or `--audio` without `--words`), a failing transcript that leaves part of the audio uncovered is re-transcribed (whole file, then 25 s windows) and, if still short, reported as `vo_transcription_incomplete` (not `vo_verify_failed`) and never triggers a paid TTS regeneration. Strict mode blocks on both statuses; the message says which one. `voiceover.verify.json` and the JSON error carry `status`, `reason` (`script_mismatch` | `words_timing_invalid` | `transcription_incomplete`) and `source` (`words_json` | `whisper`).
+- **Drive-safe MP4 encode (`--encode-preset drive-safe|source`)**: Both `parallax cut` and `parallax video assemble` default to `--encode-preset drive-safe` (H.264 `high@4.0`, `yuv420p`, CFR, `-bf 2 -g 48`, even dimensions, stereo 48kHz AAC-LC, `+faststart`, stripped encoder metadata) for reliable Google Drive, QuickTime, and iOS preview playback.
+
 ## Storyboard package
 
 `parallax guide` prints the whole workflow as JSON (stages, commands, flags, preconditions, review boundaries, what needs a human decision). `parallax guide storyboard` is the concise storyboard-package topic. An agent needs only `--help`, `parallax schema`, and the guide; there is no separate operator skill.
@@ -178,7 +233,7 @@ Writes `./my-project/storyboard-package/` (override with `--package-dir`), plain
 
 No provider calls, no `.parallax` directory, no job or approval state. Assets must live under `--folder`. The package records proposals, never approval.
 
-Style A is the standard editorial package: a letter-landscape cover, then one scene per page with its uncropped 9:16 frame, narration, copy, timing, treatment, position bar, and footer. HTML is always written. PDF is opt-in (`--pdf`); it needs Chrome/Chromium or Playwright Chromium. If no renderer is found, HTML remains written and the command exits with: `uv pip install playwright && playwright install chromium` (or install Chrome).
+Style A is the standard editorial package: a letter-landscape cover, then one scene per page with its uncropped 9:16 frame, narration, copy, timing, treatment, position bar, and footer. HTML is always written. PDF is opt-in (`--pdf`). Text-only PDFs use the bundled renderer without a browser or system graphics libraries. Other PDFs use Chrome/Chromium, wkhtmltopdf or WeasyPrint when available, and otherwise fall back to the bundled storyboard renderer. JSON output identifies `pdf_renderer` and the PDF path.
 
 To re-storyboard a finished cut without any provider calls, use `--from-video` and ffmpeg:
 
@@ -252,3 +307,21 @@ just e2e-agent \
 ```
 
 This isolates the fixture data. It does not stop an agent that deliberately reads absolute paths outside the fixture. Use a container or VM when the test also needs a hard host-filesystem boundary.
+
+For a text-only storyboard before external media generation, run `parallax guide front_half`.
+Author `brief.yaml`, create `references/` and `storyboard-package/`, and optionally
+place the narration in `script.txt`. Run `parallax check --folder PROJECT`, then
+`parallax storyboard --folder PROJECT --text-only --pdf --json` and present the PDF
+for approval. Generate media externally as `Scene_NN`, import it with
+`parallax assets import --folder PROJECT --from MEDIA_DIR`, and run `parallax check --folder PROJECT --stage media` before handoff.
+Multiple takes are flagged for a decision; set exactly one matching entry to
+`"preferred": true` in `parallax/assets/import-manifest.json` after review. Plan is optional for this review path.
+Estimated timing defaults to 3 words per second at speed 1.0; minimum usable
+footage is the estimated scene duration plus one second.
+
+For text-only storyboards, list each product asset once in the brief's top-level
+`references` (id, kind, description, status, paths), and cite its id in each
+scene's `refs`. Use references only for the advertised product's own logo,
+packaging, app UI or product photo; a character's own inbox or phone is generic.
+Missing references appear as a non-blocking summary in `parallax check` and on
+the storyboard cover. Run `parallax guide front_half` for an example.

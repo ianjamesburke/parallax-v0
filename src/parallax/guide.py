@@ -56,10 +56,10 @@ _BRIEF = {
         "character_reference": "Top-level bool, default false. Read only by `brief.to_plan_skeleton`: when true, every shot_type: character scene gets `reference: true` in plan.yaml so still generation uses character_image. The planner already does this whenever a character_ref asset exists, so the flag changes nothing in that case. The reference gate does not read it; the gate reads assets.provided kinds and per-scene image_refs.",
     },
     "scene_craft": {
-        "one_beat": "A scene is one readable visual beat: one location and action. Offer a split when a scene holds several actions or locations or would hold a single shot beyond about 5s (1-4s is typical for fast social creative). Split narration at word boundaries and never rewrite an approved script silently.",
+        "one_beat": "A scene is one readable visual beat: one location and action. Offer a split when a scene holds several actions or locations or would hold a single shot beyond about 5s (1-4s is typical for fast-paced creative). Split narration at word boundaries and never rewrite an approved script silently.",
         "compound_direction": "A diptych, split screen, before/after, collage, or 'does X, then does Y' direction must become separate scene beats or an approved motion_graphic. It raises advisory `compound_direction`. A motion_prompt may describe change over time only once the still has one clear composition.",
         "on_screen_text_layout": "Copy is layout, not prompt prose. Keep every element inside title, caption, and platform-safe margins for 9:16; wrap or shorten long copy (advisory `unsafe_vertical_text`).",
-        "style": "Plan `style` and `style_hint` steer voice synthesis only. Put the shared art direction into every executable still prompt.",
+        "style": "Put shared visual art direction once in brief `visual_style`; keep scene prompts specific to each scene. Plan `style` and `style_hint` steer voice synthesis only.",
         "headline": "The production headline overlay lasts through the first scene and is fully visible from frame 0 by default. Do not ask for a headline or opening title fade-in unless it is explicitly requested.",
         "identity": "Keep an existing project title. Otherwise propose a short `concept_name` as a proposal; accept a user-supplied `concept_id` and never invent one. The storyboard heading and browser tab use them; keep the longer objective in `goal`.",
         "script_from_scratch": "For a concept with no script, propose a concise platform-appropriate version first: a specific visual or action hook in the first 1-2s, the tension or benefit on screen early, a varied beat before attention drops, a clean final CTA beat. Prefer a 15-45s first cut; for longer scripts offer concrete short versions before generating.",
@@ -81,6 +81,8 @@ _BRIEF = {
 _STAGES = [
     {
         "id": "intake",
+        "redirect": "For a script plus existing clips or footage, use `parallax cut` (read `parallax guide cut`).",
+        "front_half": "For text-only storyboard review, follow `parallax guide front_half` and author brief.yaml directly.",
         "goal": "Read the supplied script, notes, and references. Check whether a branded concept already has official customer brand images/guidelines in `references/` or needs Google/web brand discovery.",
         "commands": [],
         "preconditions": ["A project folder holding the script and any reference files."],
@@ -111,7 +113,7 @@ _STAGES = [
         "goal": "Write the portable storyboard package and detect open reference gates. No provider calls.",
         "commands": [{
             "command": "storyboard",
-            "use": "Read `status`, `gates`, `advisories`, `next_steps` from the JSON.",
+            "use": "For review before external generation use --text-only --pdf; read `status`, `gates`, `advisories`, `next_steps` from the JSON.",
             "pass": ["--folder", "--brief", "--json"],
             "json_fields": ["status", "package_dir", "html", "files", "gates", "produce_blocked", "blocked_by", "advisories", "next_steps"],
             "check_only": "Add --check (instead of writing a package) to preview status, gates, and advisories as JSON without writing files.",
@@ -171,7 +173,7 @@ _STAGES = [
         ],
         "preconditions": ["human approved the storyboard", "no open reference gates", "human has seen the printed estimate"],
         "human_decision": {"question": "Is the estimate `parallax produce` prints acceptable for this project?", "ask_only_if_unresolved": False},
-        "see": ["produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll", "export"],
+        "see": ["produce_loop", "asset_locking", "models", "cost", "motion_graphic", "voiceover_broll", "export", "cut"],
         "review_boundary": "Dry run first with PARALLAX_TEST_MODE=1 (stub assets, no network),; it writes nothing into plan.yaml. Lock approved assets before re-running; unlocked scenes regenerate and cost money.",
         "spends_money": True,
         "next": None,
@@ -235,6 +237,8 @@ def build_guide(group: Any, topic: str | None = None) -> dict:
         return {**header, "topic": topic, "stage": stage, **({"brief": _BRIEF} if topic == "brief" else {})}
     return {
         **header,
+        "start_here": "For text-only storyboard approval before external media, read `parallax guide front_half`. For existing clips and a script, use `parallax cut`, not intake/brief/produce; read `parallax guide cut` and `parallax cut --help`.",
+        "front_half_workflow": TOPICS["front_half"],
         "invocation": "`parallax` stands for however you run this checkout or install, e.g. `uv run parallax`.",
         "discovery": ["parallax --help", "parallax <command> --help", "parallax schema brief", "parallax schema plan", "parallax schema cli", "parallax guide", "parallax guide <topic>"],
         "topics": {

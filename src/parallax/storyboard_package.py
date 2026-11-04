@@ -68,7 +68,7 @@ def find_pdf_renderer() -> list[str] | None:
     ]
     for c in candidates:
         if c and Path(c).is_file() and os.access(c, os.X_OK):
-            return [str(c), "--headless", "--disable-gpu", "--no-pdf-header-footer", "--print-to-pdf={output}", "{input}"]
+            return [str(c), "--headless", "--no-sandbox", "--disable-gpu", "--no-pdf-header-footer", "--print-to-pdf={output}", "{input}"]
 
     if wk := shutil.which("wkhtmltopdf"):
         return [wk, "--enable-local-file-access", "--quiet", "{input}", "{output}"]
@@ -264,7 +264,7 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
                   timing_path: str | Path | None = None, *, pdf: bool = True,
                   brief_override: Brief | None = None, frame_sources: list[tuple[str, Path]] | None = None,
                   video_metadata: dict | None = None, standalone_scenes: dict | None = None,
-                  finished_cut: bool = False, rerun_command: str | None = None) -> dict:
+                  finished_cut: bool = False, rerun_command: str | None = None, text_only: bool = False) -> dict:
     """Write the storyboard package and return its handoff manifest. Makes no provider calls."""
     brief_path = Path(brief_path).expanduser().resolve()
     root = Path(folder).expanduser().resolve()
@@ -288,6 +288,9 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
     assets = package / "assets"
     missing = _copy_assets(brief, root, assets)
     missing = [p for p in missing if p not in {relative for relative, _ in frame_sources or []}]
+    if text_only:
+        media = {p for scene in brief.script.scenes for p in (scene.still_path, scene.clip_path, scene.html_path) if p}
+        missing = [p for p in missing if p not in media]
     for relative, source in frame_sources or []:
         target = assets / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -313,7 +316,9 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
         "timing_basis": review["timing_basis"],
         "scenes": [
             {**scene.model_dump(exclude_none=True), "scene_type": scene.resolved_scene_type,
-             "start_s": round(float(t["start_s"]), 3), "end_s": round(float(t["end_s"]), 3)}
+             "start_s": round(float(t["start_s"]), 3), "end_s": round(float(t["end_s"]), 3),
+             "duration_s": round(float(t["end_s"]) - float(t["start_s"]), 3),
+             "min_usable_s": round(float(t["end_s"]) - float(t["start_s"]) + brief.timing.handle_s, 3)}
             for scene, t in zip(brief.script.scenes, timeline)
         ],
     }
@@ -321,12 +326,23 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
 
     # Files on disk carry placeholders instead of this machine's paths; the returned manifest has exact commands.
     portable = {**review, "gates": ([] if finished_cut else open_gates(brief, FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER))}
-    (package / "storyboard.html").write_text(render_storyboard(brief, assets, portable, link_base=package, source_video=video_metadata), encoding="utf-8")
+    (package / "storyboard.html").write_text(render_storyboard(brief, assets, portable, link_base=package, source_video=video_metadata, text_only=text_only, project_name=brief_path.parent.name), encoding="utf-8")
     pdf_created = False
+    pdf_renderer = None
     if pdf:
-        pdf_created = render_pdf(package / "storyboard.html", package / "storyboard.pdf")
-        if not pdf_created:
-            raise ValueError("PDF export needs Playwright Chromium or Chrome/Chromium. Install with `uv pip install playwright && playwright install chromium`, or install Chrome.")
+        (package / "storyboard.pdf").unlink(missing_ok=True)
+        renderer = None if text_only else find_pdf_renderer()
+        if renderer and render_pdf(package / "storyboard.html", package / "storyboard.pdf", renderer=renderer):
+            pdf_created = True
+            pdf_renderer = Path(renderer[0]).name
+        else:
+            try:
+                from .storyboard_pdf import render_builtin_pdf
+                render_builtin_pdf(brief, assets, review, package / "storyboard.pdf", brief_path.parent.name)
+                pdf_created = True
+                pdf_renderer = "builtin"
+            except Exception as exc:
+                raise ValueError("PDF export failed. Run `uv tool install --force --reinstall parallax` to restore the bundled PDF renderer; for HTML rendering, install Chrome or Chromium.") from exc
         if pdf_created and package == (root / "storyboard-package").resolve():
             shutil.copy2(package / "storyboard.pdf", root / "storyboard.pdf")
 
@@ -337,12 +353,16 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
     }
     portable_rerun = rerun_command.replace(str(root), FOLDER_PLACEHOLDER) if rerun_command else None
     on_disk = _manifest(brief, portable, files, contact, missing, FOLDER_PLACEHOLDER, BRIEF_PLACEHOLDER, portable_rerun)
+    on_disk["pdf_renderer"] = pdf_renderer
     if video_metadata:
         on_disk["source_video"] = video_metadata
     if not finished_cut or on_disk["gates"] or on_disk["advisories"] or missing:
         (package / "qa-notes.md").write_text(_qa_notes(on_disk), encoding="utf-8")
     (package / "handoff.json").write_text(json.dumps(on_disk, indent=2) + "\n", encoding="utf-8")
     result = _manifest(brief, review, files, contact, missing, str(root), str(brief_path), rerun_command)
+    result["pdf_renderer"] = pdf_renderer
+    if pdf_created:
+        result["pdf"] = str(package / "storyboard.pdf")
     if video_metadata:
         result["source_video"] = video_metadata
     return result

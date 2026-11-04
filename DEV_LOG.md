@@ -2,12 +2,25 @@
 
 Ground-up rewrite of the Parallax CLI. Newest-first. Captures intentional decisions, gotchas, and deferrals that git history and code alone will not preserve.
 
+## 2026-11-02 — [FIX] Voiceover verification trusts words.json; partial whisper transcripts are not script mismatches
+On the PA9 lip filler job, whisperx (base.en, cpu) intermittently returned 4 segments covering part of an 83 s supplied voiceover, so `cut --audio --words` failed with `vo_verify_failed` (max_missing_run 49) on audio that passed other runs. When `--words` is supplied, `verify_words_against_script` now diffs the words.json sequence against the script with the same normalization/ASR-equivalence rules and checks timings: start <= end, non-decreasing starts, no word past the probed duration + 0.25 s, first start and last end within `max(1.5 s, 5%)` of the audio edges, no inter-word gap over `max(5 s, 10%)`. No whisper call; `--process-audio` reuses the same result (trimming only removes silence between words.json boundaries, so the ASR trim-escalation check runs only on the whisper path). A words.json with `"estimated": true` is not trusted and falls back to whisper.
+On the whisper path (TTS chunks/final, `--audio` without `--words`), a failing diff whose transcript misses those coverage bounds re-runs whisper on the whole file, then in 25 s windows with 2 s overlap stitched on absolute time. Still short → `status`/`reason` `transcription_incomplete`, CutError status `vo_transcription_incomplete` with audio duration vs covered seconds. It never triggers a TTS regeneration, and strict eviction keeps the paid raw chunk so a re-run re-verifies it for free. Strict mode blocks on it (synthesized audio we cannot verify must not ship silently); the message says transcription failed, not the script. A genuine mismatch with full coverage stays `vo_verify_failed` / `script_mismatch`.
+**Breaks if:** `cut --audio X --words W` logs `whisper_backend: transcribing`; `voiceover.verify.json` lacks `source`; or a partial whisper transcript yields `vo_verify_failed` or a second TTS call.
+
+## 2026-10-29 — [FIX] Gemini defaults for plan and produce narration
+Plan/produce narration now shares the standalone and cut default: `tts-gemini` / `Charon`, including raw-dict settings, preflight cost estimates, generated plans, provider APIs, and test-mode scaffolding. An explicit `voice_model: tts-mini` still supplies `nova` when voice is omitted. For compatibility, a plan that names a known mini voice such as `nova` without a model infers `tts-mini`; all other omitted-model plans resolve to Gemini Charon. `parallax guide cut` now recommends `--vo-retries 0` with verification left on as the no-extra-regeneration spend cap.
+**Breaks if:** a no-voice/no-model plan does not resolve to Gemini Charon; an explicit mini model does not resolve to nova; or a legacy `voice: nova` plan fails validation because it was silently paired with Gemini.
+
+## 2026-10-29 — [FIX] Existing-footage cut routing and resilient voiceover checks
+Standalone `parallax audio voiceover` now defaults to `tts-gemini` / `Charon`; explicitly selecting `--voice-model tts-mini` without `--voice` still resolves to `nova`. `models list` presents Gemini as the default TTS choice. The guide and relevant command help now send a script plus existing clips to `parallax cut`, rather than the generated-footage pipeline or hand assembly. `cut` re-transcribes a failed raw or processed chunk once before a provider retry, cache eviction, or strict failure; `voiceover.verify.json` records `asr_retries` and `retranscribed` per chunk. A repeated transcript loss still fails closed.
+**Breaks if:** `parallax audio voiceover --help` names `tts-mini` as its default; `parallax guide` routes existing clips to intake/produce; or a one-off chunk ASR failure triggers another TTS call or deletes a passing cached take.
+
 ## 2026-10-19 — [FIX] Agent guide front door, recoverable paid runs, and end-frame estimates
 `parallax --help` and every Click usage error now direct agents to `parallax guide`, with targeted `single_shot` and `character_first` JSON topics. `single_shot` keeps multi-step moves out of still prompts, lists end-frame-capable models from the live catalog, and documents start/end interpolation; `character_first` formalizes eight-option selection, local `image crop-grid`, character-sheet generation, and locking. `produce` now skips captions when there is no voiceover and reports saved paid assets plus the run log pointer if a later stage fails. `video animate --out file.mp4` honors the exact target path. Seedance start+end estimates use a catalog-measured 2.1473x multiplier: the 2026-10-19 5 s 720x1280 call billed $0.45738 vs. $0.21300 base rate.
 **Breaks if:** an unknown command or bad option does not print the guide hint; a silent animated plan fails in captions; `video animate --out shot.mp4` creates a `shot.mp4/` directory; or a 5 s draft start+end estimate differs materially from ~$0.4574.
 
 ## 2026-10-14 — [CHANGED] Live-verified catalog, /images endpoint, billed-cost accounting, compact `models list`
-Measured on live OpenRouter (9:16, billed `usage.cost`). Images: GPT Image 2.5 Flare low $0.00375 / medium $0.00855, Sunburst high $0.0325 (all 864x1536); seedream-5-0-flash 1K $0.018; gemini-3.1-flash-lite 1K $0.0336; gemini-2.5-flash $0.0387; grok-image $0.05; gemini-3.1-flash 1K $0.0672 (was catalogued $0.039); gemini-3-pro 1K $0.1344 (was $0.080). `draft`/`mid`/`premium` image tiers are now GPT Image 2.5 (Flare low, Flare medium, Sunburst high). Video per second (4 s i2v): grok-1.5-lite $0.0225, veo-3.1-lite 720p no audio $0.03, seedance-mini $0.0355, seedance-fast $0.0426 (was $0.054), grok-video $0.0505. TTS per 1k chars: tts-mini $0.00374 (was $0.0002), tts-gemini $0.0421, tts-gemini-lite $0.0146.
+Measured on live OpenRouter (9:16, billed `usage.cost`). Images: GPT Image 2.5 Flare low $0.00375 / medium $0.00855, Sunburst high $0.0325 (all 864x1536); seedream-5-0-flash 1K $0.018; gemini-3.1-flash-lite 1K $0.0336; gemini-2.5-flash $0.0387; grok-image $0.05; gemini-3.1-flash 1K $0.0672 (was catalogued $0.039); gemini-3-pro 1K $0.1344 (was $0.080). `draft`/`mid`/`premium` image tiers are now GPT Image 2.5 (Flare low, Flare medium, Sunburst high). Video per second (4 s i2v): grok-1.5-lite $0.0225, veo-3.1-lite 720p without audio $0.03 (parallax now sends `resolution: 720p` by default; silent 1080p is about $0.05), seedance-mini $0.0355, seedance-fast $0.0426 (was $0.054), grok-video $0.0505. TTS per 1k chars: tts-mini $0.00374 (was $0.0002), tts-gemini $0.0421, tts-gemini-lite $0.0146.
 Image calls go through `/api/v1/images` (chat/completions 404s for gpt-image, flux, krea, qwen, hy). `request:` in the YAML is sent verbatim (quality / resolution); gemini 3.1 flash "512" returns 384x688 so 1K is the floor. Gemini 2.5 via chat returned 1024x1024 when only the legacy `aspect_ratio` body field was sent. `usage.ndjson` now carries OpenRouter's billed cost plus `cost_source` (billed | estimate | unknown). Animation used to request 5 s for every scene regardless of `duration_s`; it now requests the pinned length rounded up to the model's live `durations`, and pre-flight estimates that billed length plus voiceover cost. `sora` removed (not on OpenRouter's video list).
 **Breaks if:** `parallax models list` lines exceed 80 columns or show descriptions; a real `parallax produce` shows `cost_source: unknown` in `~/.parallax/usage.ndjson`; or an image alias's `request:` quality/resolution is rejected by `/api/v1/images` (re-check `/api/v1/images/models`).
 
@@ -1111,3 +1124,33 @@ During file creation, pyright flagged `from .sessions import …` etc. as unreso
 
 ## 2026-04-17 — [FUTURE] Real FAL client lands in commit 2
 `generate_image` raises `NotImplementedError` when `PARALLAX_TEST_MODE` is unset, so the only currently-usable path is the shim. Phase 2, commit 1: add the real FAL client behind the existing schema. Phase 2 subsequent commits: `reference_images`, `count`, character consistency, and context discipline for input images.
+
+## 2026-11-03 — [FEATURE] Front-half text-only storyboard
+
+Added an offline text-only review path, timing and footage handles, project checks,
+and external scene media import with source filename provenance. Plan is optional
+for the review path; media take ambiguity remains visible for human resolution.
+
+## 2026-11-03 — [FIX] Readable text-only storyboards and explicit brand references
+
+Text-only review uses portrait pages, prominent narration, and one shared visual style on the cover. Scene brand_ref status controls checks and visible review flags. Legacy paid reference gates remain in place. Verified against copied PA21 and PA25 projects without provider calls.
+
+## 2026-11-03 — [FIX] Storyboard scene frames and advisory brand references
+
+Restored landscape text-only scene pages with aspect-correct image placeholders, readable copy, and fitting above the footer. Missing brand references warn; supplied paths that do not exist remain invalid. Prompt keywords do not trigger brand warnings. Removed scene-level missing-reference flags and empty reference noise, and simplified front-half guidance. Re-rendered PA21 and PA25 offline; both checks exit 0. Focused tests passed. The full suite had 1 known Gemini TTS timeout (1277 passed, 9 skipped); its file passed on rerun with Hugging Face offline mode.
+
+## 2026-11-03 — [CHANGED] Light tool install and optional alignment
+
+Moved WhisperX to the align extra, with a default checkout dependency group for existing `uv run` workflows. Alignment loads on demand and reports how to install the extra. The human installers and `just install` retain full alignment support.
+
+### References list (0.7.3 release candidate)
+
+Adopted Method B: a short project references list and per-scene citations, with
+one missing-reference summary in check and text-only storyboard covers. Legacy
+per-scene brand_ref values are mapped on load and check suggests migration.
+Supplied reference paths are checked; missing assets stay non-blocking. The
+0.7.2 placeholder-frame layout and optional alignment dependencies are retained.
+
+### Built-in storyboard PDF renderer
+
+Bundled fpdf2 and DejaVu Sans fonts for offline, Unicode text-only PDF export without browser or system graphics libraries. Other storyboard exports fall back to the built-in renderer when an HTML renderer is unavailable; the manifest reports the renderer and PDF path.

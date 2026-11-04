@@ -103,4 +103,7 @@ def test_request_duration_rounds_up_to_supported_length():
 
 
 def test_veo_lite_does_not_pay_for_audio():
-    assert VIDEO_MODELS["veo-lite"].request_params == {"generate_audio": False}
+    assert VIDEO_MODELS["veo-lite"].request_params == {
+        "generate_audio": False,
+        "resolution": "720p",
+    }

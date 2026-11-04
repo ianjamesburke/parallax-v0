@@ -6,12 +6,13 @@ from typing import Optional
 import typer
 
 from .. import __version__
-from . import _audio, _export, _guide, _image, _log, _meta, _models, _produce, _reference, _schema, _validate, _video
+from . import _audio, _cut, _export, _guide, _image, _log, _meta, _models, _produce, _reference, _schema, _validate, _video
 
 
 app = typer.Typer(
     name="parallax",
     help=("Agentic creative production CLI.\n\n"
+          "For a script plus existing clips or footage, use `parallax cut` (read `parallax guide cut`), not intake/brief/produce or `audio voiceover` plus hand assembly.\n\n"
           "Agents: start with `parallax guide` (workflow map + topics). "
           "Single shot with start/end frames: `parallax guide single_shot`. "
           "Character design first: `parallax guide character_first`."),
@@ -55,8 +56,46 @@ app.add_typer(_models.models_app, name="models")
 app.add_typer(_reference.reference_app, name="reference")
 app.add_typer(_export.export_app, name="export")
 
+assets_app = typer.Typer(help="Import externally generated media.")
+
+@assets_app.command("import")
+def import_assets(folder: str = typer.Option(..., "--folder"), source: str = typer.Option(..., "--from")) -> int:
+    import json
+    from ..front_half import import_media
+    try:
+        print(json.dumps(import_media(folder, source), indent=2))
+        return 0
+    except (OSError, ValueError) as exc:
+        print(json.dumps({"error": str(exc)}))
+        raise typer.Exit(code=1)
+
+app.add_typer(assets_app, name="assets")
+
+@app.command("check")
+def check_project(folder: str = typer.Option(..., "--folder"), stage: str = typer.Option("draft", "--stage"), as_json: bool = typer.Option(False, "--json")) -> None:
+    """Check a project offline without changing its files."""
+    import json
+    from ..front_half import check_folder
+    if stage not in ("draft", "review", "media"):
+        typer.echo("Error: --stage must be draft, review, or media", err=True)
+        raise typer.Exit(code=2)
+    try:
+        result = check_folder(folder, stage)
+    except (OSError, ValueError, TypeError) as exc:
+        typer.echo(json.dumps({"status": "error", "message": str(exc), "exit_code": 1}) if as_json else f"Error reading project: {exc}")
+        raise typer.Exit(code=1)
+    if as_json:
+        typer.echo(json.dumps(result, indent=2))
+    else:
+        for f in result["findings"]:
+            typer.echo(f"{f['severity'].upper()} [{f['id']}]: {f['message']}\n  Fix: {f['fix']}")
+        typer.echo(f"Project check: {result['status']}.")
+    if result["exit_code"]: raise typer.Exit(code=result["exit_code"])
+
+
 # Register top-level commands from modules
 _produce.register_produce(app)
+_cut.register_cut(app)
 _log.register_log(app)
 _meta.register_meta(app)
 _schema.register_schema(app)

@@ -25,6 +25,23 @@ from .client import (
 # tests. This module reads it from the package namespace at runtime.
 _VIDEO_POLL_TIMEOUT_S = 600.0  # 10 min
 
+
+def _resolution_for_size(size: str | None, spec: ModelSpec) -> str | None:
+    """Return a declared provider tier when a pixel size would contradict it.
+
+    Catalog defaults are provider API tiers, while ``size`` is a WxH output
+    geometry. In particular, do not send Veo Lite's economical 720p default
+    alongside an explicit 1080-short-side size.
+    """
+    if not size:
+        return None
+    try:
+        width, height = (int(part) for part in size.lower().split("x"))
+    except ValueError:
+        return None
+    tier = f"{min(width, height)}p"
+    return tier if tier in spec.resolutions else None
+
 def resume_video_job(job_path: str | Path, out_dir: Path) -> Path:
     """Finish polling a previously accepted OpenRouter video job without resubmitting."""
     import httpx
@@ -50,6 +67,7 @@ def resume_video_job(job_path: str | Path, out_dir: Path) -> Path:
 def _video_real(
     prompt: str, spec: ModelSpec, image_path: Path | None, duration_s: float, out_dir: Path | None,
     *, size: str | None = None, aspect_ratio: str | None = None,
+    resolution: str | None = None,
     end_image_path: Path | None = None,
     input_references: list[Path] | None = None,
     on_submit=None,
@@ -88,6 +106,15 @@ def _video_real(
         body["size"] = size
     if aspect_ratio:
         body["aspect_ratio"] = aspect_ratio
+    # An explicit caller tier wins over the catalog default. Otherwise align a
+    # declared tier with a supplied WxH size (e.g. 1080x1920 -> 1080p).
+    # Only models with a catalog provider-tier default need automatic alignment;
+    # this leaves every other model's established payload unchanged.
+    requested_resolution = resolution or (
+        _resolution_for_size(size, spec) if "resolution" in spec.request_params else None
+    )
+    if requested_resolution:
+        body["resolution"] = requested_resolution
     if image_path is not None:
         ref_b64 = base64.b64encode(Path(image_path).read_bytes()).decode("ascii")
         suffix = Path(image_path).suffix.lstrip(".").lower() or "png"

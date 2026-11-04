@@ -99,6 +99,7 @@ def test_validate_plan_valid(tmp_path):
     result = validate_plan(plan, tmp_path)
     assert result["valid"] is True
     assert result["errors"] == []
+    assert result["errors"] == []
 
 
 def test_validate_plan_missing_still_path(tmp_path):
@@ -269,6 +270,18 @@ def test_validate_plan_voice_model_match_ok(tmp_path):
     _write_yaml(plan, {
         "voice": "Kore",
         "voice_model": "tts-gemini",
+        "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene"}],
+    })
+    from parallax.validate import validate_plan
+    result = validate_plan(plan, tmp_path)
+    assert result["valid"] is True
+
+
+def test_validate_legacy_named_tts_mini_voice_without_model(tmp_path):
+    """Known mini voices infer tts-mini rather than becoming Gemini mismatches."""
+    plan = tmp_path / "plan.yaml"
+    _write_yaml(plan, {
+        "voice": "nova",
         "scenes": [{"index": 0, "vo_text": "hi", "prompt": "scene"}],
     })
     from parallax.validate import validate_plan

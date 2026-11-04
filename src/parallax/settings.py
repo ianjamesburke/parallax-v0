@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 import shutil
 
 from .ffmpeg_utils import parse_resolution, probe_resolution
+from .voice_defaults import resolve_voice_defaults
 
 
 def _cache_provided_asset(resolved: Path, cache_dir: Path) -> Path:
@@ -389,8 +390,7 @@ def _resolve_settings_from_dict(
     """Legacy dict path — used by test_scene and any caller that hasn't migrated to Plan."""
     image_model = plan.get("image_model", "mid")
     video_model = plan.get("video_model", "draft")
-    voice = plan.get("voice", "nova")
-    voice_model = plan.get("voice_model", "tts-mini")
+    voice_model, voice = resolve_voice_defaults(plan.get("voice_model"), plan.get("voice"))
     # TTS pacing is controlled via `style` (e.g. rapid_fire); leave the
     # atempo speed knob neutral by default. Plans can still override.
     voice_speed = float(plan.get("voice_speed", 1.0))

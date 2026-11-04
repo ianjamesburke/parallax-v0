@@ -385,7 +385,7 @@ def _pacing(manifest):
 
 
 def test_pacing_advisories_have_remedies_and_locked_narration_acknowledges_them(tmp_path, capsys):
-    scenes = [{"vo_text": "one two three four five six seven eight", "image_refs": ["s.png"]}]
+    scenes = [{"vo_text": "one two three four five six seven eight nine ten", "image_refs": ["s.png"]}]
     _png(tmp_path / "s.png")
     declared = {"assets": {"provided": [{"path": "s.png", "kind": "style_ref"}]}}
     manifest = _storyboard(tmp_path, _scenes_brief(tmp_path, scenes, **declared), capsys)
@@ -517,7 +517,7 @@ def test_hand_authored_global_product_ref_still_covers_broll(tmp_path, capsys):
 
 def test_validate_pacing_warnings_carry_remedies(tmp_path, capsys):
     _png(tmp_path / "s.png")
-    brief = _scenes_brief(tmp_path, [{"vo_text": "one two three four five six seven eight", "image_refs": ["s.png"]}], narration_locked=True,
+    brief = _scenes_brief(tmp_path, [{"vo_text": "one two three four five six seven eight nine ten", "image_refs": ["s.png"]}], narration_locked=True,
                           assets={"provided": [{"path": "s.png", "kind": "style_ref"}]})
     assert cli.main(["validate", "--folder", str(tmp_path), "--brief", str(brief)]) in (0, 1)
     warnings = json.loads(capsys.readouterr().out)["warnings"]
@@ -696,7 +696,7 @@ def test_manifest_states_whether_produce_is_blocked_and_by_what(tmp_path, capsys
 
 
 def test_validate_reports_each_pacing_warning_once(tmp_path, capsys):
-    brief = _scenes_brief(tmp_path, [{"vo_text": "one two three four five six seven eight"}])
+    brief = _scenes_brief(tmp_path, [{"vo_text": "one two three four five six seven eight nine ten"}])
     cli.main(["validate", "--folder", str(tmp_path), "--brief", str(brief)])
     result = json.loads(capsys.readouterr().out)
     assert any(w["code"] == "opening_long_hold" for w in result["warnings"])
@@ -821,13 +821,15 @@ def test_write_package_with_no_pdf_skips_pdf_generation(tmp_path, capsys):
     assert "pdf" not in data
 
 
-def test_pdf_without_renderer_keeps_html_and_prints_install_hint(tmp_path, capsys, monkeypatch):
+def test_pdf_without_renderer_uses_builtin(tmp_path, capsys, monkeypatch):
     import parallax.storyboard_package as sbp
     folder, brief = _project(tmp_path)
-    monkeypatch.setattr(sbp, "find_pdf_renderer", lambda: None)
-    assert cli.main(["storyboard", "--folder", str(folder), "--brief", str(brief), "--pdf"]) == 2
-    assert (folder / "storyboard-package/storyboard.html").is_file()
-    assert "playwright install chromium" in capsys.readouterr().err
+    monkeypatch.setattr(sbp.shutil, "which", lambda _: None)
+    monkeypatch.setenv("PATH", "")
+    assert cli.main(["storyboard", "--folder", str(folder), "--brief", str(brief), "--pdf", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["pdf_renderer"] == "builtin"
+    assert Path(data["pdf"]).read_bytes().startswith(b"%PDF-")
 
 
 def test_write_package_registers_pdf_when_created(tmp_path, monkeypatch):

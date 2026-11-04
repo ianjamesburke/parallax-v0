@@ -92,6 +92,17 @@ def test_happy_path_writes_plan(tmp_path):
     assert len(plan["scenes"]) == 2
 
 
+def test_default_brief_voice_writes_gemini_charon_plan(tmp_path):
+    payload = _payload()
+    payload.pop("voice")
+    brief_path = _write_brief(tmp_path, payload)
+    _materialize_assets(tmp_path)
+
+    result = plan_from_brief(brief_path, folder=tmp_path)
+    plan = yaml.safe_load(result.plan_path.read_text())
+    assert (plan["voice_model"], plan["voice"]) == ("tts-gemini", "Charon")
+
+
 def test_missing_asset_writes_questions_and_skips_plan(tmp_path):
     brief_path = _write_brief(tmp_path, _payload())
     # Intentionally do NOT create the assets.
@@ -302,4 +313,3 @@ def test_wired_kinds_do_not_print_warning(tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert "WARNING" not in captured.out
-

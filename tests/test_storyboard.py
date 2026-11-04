@@ -210,7 +210,7 @@ def test_headline_is_opening_overlay_not_narration_or_reading_time(tmp_path):
     assert '<h2>Opening headline</h2>' in html
     assert brief.headline in html
     assert 'Not spoken; excluded from the reading estimate.' in html
-    assert 'Estimated reading time: 1.2s' in html
+    assert 'Estimated reading time: 1.0s' in html
     assert 'color-scheme:dark' in html
     assert '<nav' not in html
 

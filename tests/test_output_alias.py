@@ -14,12 +14,12 @@ def _out_commands() -> list[str]:
     found: list[str] = []
 
     def walk(cmd: click.Command, path: list[str]) -> None:
-        if isinstance(cmd, click.Group):
+        if getattr(cmd, "commands", None):
             for name, sub in cmd.commands.items():
                 walk(sub, path + [name])
             return
         for p in cmd.params:
-            if isinstance(p, click.Option) and "--out" in p.opts:
+            if getattr(p, "param_type_name", None) == "option" and "--out" in p.opts:
                 found.append(" ".join(path))
 
     walk(root, [])
@@ -39,7 +39,7 @@ def test_out_option_also_accepts_output(cmd):
     node: click.Command = root
     for part in cmd.split():
         node = node.commands[part]  # type: ignore[attr-defined]
-    opts = [p for p in node.params if isinstance(p, click.Option) and "--out" in p.opts]
+    opts = [p for p in node.params if getattr(p, "param_type_name", None) == "option" and "--out" in p.opts]
     assert len(opts) == 1
     assert "--output" in opts[0].opts
 

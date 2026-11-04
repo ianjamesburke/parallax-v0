@@ -14,8 +14,8 @@ Schema (informal):
 
     goal: "Promote the new Lion energy drink"
     aspect: 9:16          # 9:16 | 16:9 | 1:1 | 4:3 | 3:4
-    voice: nova            # TTS voice name (OpenAI: nova, shimmer, alloy, echo, fable, onyx)
-    voice_speed: 1.0
+    voice: Charon          # TTS voice name (Gemini default; choose nova with tts-mini)
+    voice_speed: 1.15
     success_criteria:
       - "Hook lands in <2s"
       - "Product visible in scene 1"
@@ -123,12 +123,47 @@ class Assets(BaseModel):
     generated: list[GeneratedAsset] = Field(default_factory=list)
 
 
+class BrandRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["supplied", "missing", "not_needed"] = "not_needed"
+    paths: list[str] = Field(default_factory=list)
+    note: str | None = None
+
+class Reference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=r"^[a-z0-9]+(?:[_-][a-z0-9]+)*$")
+    kind: Literal["logo", "packaging", "app_ui", "product", "other"]
+    description: str
+    status: Literal["supplied", "missing"] = "missing"
+    paths: list[str] = Field(default_factory=list)
+
+class Take(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    take_id: str
+    filename: str
+    source_filename: str | None = None
+    preferred: bool = False
+    required: bool = False
+
+class Timing(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    estimate_wps: float = Field(default=3.0, gt=0, allow_inf_nan=False)
+    speed: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    handle_s: float = Field(default=1.0, ge=0, allow_inf_nan=False)
+
 class BriefScene(BaseModel):
     """One scene as authored in the brief. The planner expands these into
     full plan-scene records (model alias, locked still paths, etc.)."""
     model_config = ConfigDict(extra="forbid")
 
     index: int
+    scene_id: str | None = None
+    purpose: Literal["establish", "action", "reaction", "product_ui", "proof", "transition", "cta"] | None = None
+    generation_method: Literal["still", "image_to_video", "direct_clip", "external", "local_graphic", "provided"] | None = None
+    brand_ref: BrandRef = Field(default_factory=BrandRef)
+    refs: list[str] = Field(default_factory=list)
+    takes: list[Take] = Field(default_factory=list)
+    pause_after_s: float = Field(default=0.0, ge=0, allow_inf_nan=False)
     shot_type: Literal["character", "broll", "screen"] = "broll"
     scene_type: Literal["still", "animation", "motion_graphic"] | None = None
     vo_text: str
@@ -149,6 +184,14 @@ class BriefScene(BaseModel):
     storyboard_title: str | None = None
     storyboard_kicker: str | None = None
     storyboard_treatment: str | None = None
+
+    @model_validator(mode="after")
+    def _identity(self):
+        if self.scene_id is None:
+            object.__setattr__(self, "scene_id", f"Scene_{self.index + 1:02d}")
+        if self.storyboard_id is None:
+            object.__setattr__(self, "storyboard_id", self.scene_id)
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -204,17 +247,26 @@ class Script(BaseModel):
 
 class Brief(BaseModel):
     """Top-level brief.yaml schema."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{
+        "goal": "Describe the story",
+        "references": [{"id": "wellybox_ui", "kind": "app_ui", "description": "WellyBox app UI", "status": "missing", "paths": []}],
+        "script": {"scenes": [{"index": 0, "vo_text": "Exact narration.", "prompt": "The WellyBox app receipt screen.", "refs": ["wellybox_ui"]}]},
+    }]})
 
     goal: str
+    visual_style: str | None = None
     concept_name: str | None = None
+    name: str | None = None
+    title: str | None = None
     concept_id: str | None = None
     headline: str | None = None  # opening overlay, never included in voiceover
     aspect: Literal["9:16", "16:9", "1:1", "4:3", "3:4"] = "9:16"
-    voice: str = "nova"
+    voice: str = "Charon"
     voice_prompt: str | None = None
     brand: dict[str, Any] | None = None
+    references: list[Reference] = Field(default_factory=list, description="Only the advertised product’s own logo, packaging, app UI or product photo counts. The character’s own phone, inbox, laptop and other apps are generic; VO mentioning the brand does not put it on screen. Jim scrolling his own email inbox is generic; the WellyBox app receipt screen cites wellybox_ui (app_ui). Keep one entry per real asset and reuse its id in scene refs.")
     voice_speed: float = 1.0
+    timing: Timing = Field(default_factory=Timing)
     # Video-gen resolution — upscaled to the output resolution during assembly.
     # Lower is cheaper. Seedance 2.0 Fast: 480p=$0.054/s, 720p=$0.121/s, 1080p=$0.272/s.
     # Defaults are aspect-aware (9:16→480x854, 16:9→854x480, 1:1→480x480).
@@ -232,6 +284,35 @@ class Brief(BaseModel):
     script: Script
 
     # ---------------------------------------------------------------- I/O
+
+    @model_validator(mode="after")
+    def _timing_speed(self):
+        if "timing" not in self.model_fields_set:
+            self.timing.speed = self.voice_speed
+        import re
+        for scene in self.script.scenes:
+            legacy = scene.brand_ref
+            if legacy.status == "not_needed":
+                continue
+            description = legacy.note or "Brand reference"
+            base = re.sub(r"[^a-z0-9]+", "_", description.lower()).strip("_") or "brand_reference"
+            ref_id = base
+            n = 2
+            while any(r.id == ref_id and (r.description, r.status, r.paths, r.kind) != (description, legacy.status, legacy.paths, "other") for r in self.references):
+                ref_id = f"{base}_{n}"
+                n += 1
+            if not any(r.id == ref_id for r in self.references):
+                self.references.append(Reference(id=ref_id, kind="other", description=description, status=legacy.status, paths=legacy.paths))
+            if ref_id not in scene.refs:
+                scene.refs.append(ref_id)
+        ids = [r.id for r in self.references]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Reference ids must be unique")
+        for scene in self.script.scenes:
+            for ref_id in scene.refs:
+                if ref_id not in ids:
+                    raise ValueError(f"{scene.scene_id} cites unknown reference '{ref_id}'")
+        return self
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "Brief":
@@ -298,14 +379,14 @@ class Brief(BaseModel):
                         f"scene {scene.index}: motion_graphic needs a locally rendered clip_path before planning. "
                         "Review the storyboard, render the graphic, then add its clip_path; AI generation is not supported for this scene type."
                     )
-        # Briefs have no measured timing yet.  Estimate at 2.5 words/s, which
+        # Briefs have no measured timing yet.  Estimate using the configured words/s and voice speed, which
         # is deliberately conservative: every beat beginning in this window is
         # animated unless the author explicitly wrote animate: false.
         cursor = 0.0
         scenes_out = []
         for s in self.script.scenes:
             explicit_false = "animate" in s.model_fields_set and not s.animate
-            auto = self.aspect == "9:16" and cursor < self.animate_opening_s and not explicit_false and s.resolved_scene_type == "still"
+            auto = self.aspect == "9:16" and cursor < self.animate_opening_s and not explicit_false and s.resolved_scene_type == "still" and s.generation_method not in ("direct_clip", "external")
             animate = s.animate or auto
             item = {
                 "index": s.index, "shot_type": s.shot_type,
@@ -320,7 +401,7 @@ class Brief(BaseModel):
                 **({"html_path": s.html_path} if s.html_path else {}),
                 **({"regenerate": True} if s.regenerate else {}),
             }
-            scenes_out.append(item); cursor += max(.5, len(s.vo_text.split()) / 2.5)
+            scenes_out.append(item); cursor += max(.5, len(s.vo_text.split()) / (self.timing.estimate_wps * self.timing.speed))
         return {
             "aspect": self.aspect,
             "voice": self.voice,

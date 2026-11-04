@@ -24,6 +24,9 @@ def _to_spec(entry: dict[str, Any], kind: Kind) -> ModelSpec:
     aspect_ratios = caps.get("aspect_ratios") or ()
     if isinstance(aspect_ratios, list):
         aspect_ratios = tuple(aspect_ratios)
+    resolutions = caps.get("resolutions") or ()
+    if isinstance(resolutions, list):
+        resolutions = tuple(resolutions)
     inputs = entry.get("inputs") or ()
     if isinstance(inputs, list):
         inputs = tuple(inputs)
@@ -54,6 +57,7 @@ def _to_spec(entry: dict[str, Any], kind: Kind) -> ModelSpec:
         voices=voices,
         tts_backend=entry.get("tts_backend", "chat_audio"),
         native_resolution=caps.get("native_resolution") or None,
+        resolutions=resolutions,
         request_params=dict(entry.get("request") or {}),
         native_size=caps.get("native_size") or None,
         durations=durations,

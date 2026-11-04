@@ -193,3 +193,68 @@ def _probe_fps(video_path: str) -> float:
         return 30.0
 
 
+ENCODE_PRESETS = ("drive-safe", "source")
+
+
+def even_dimensions(width: int, height: int) -> tuple[int, int]:
+    """Round width and height down to positive even integers (minimum 2x2)."""
+    w = max(2, int(width) - (int(width) % 2))
+    h = max(2, int(height) - (int(height) % 2))
+    return w, h
+
+
+def drive_safe_encode_args(*, fps: int | None = 24, include_audio: bool = True) -> list[str]:
+    """Return ffmpeg output encoding flags confirmed to preview cleanly on Google Drive.
+
+    Specs:
+      - Video: libx264, High profile, level 4.0, yuv420p, constant fps (default 24,
+        `-r <fps> -fps_mode cfr`), `-crf 22 -maxrate 8M -bufsize 16M`
+      - Audio (when `include_audio=True`): AAC-LC, 48 kHz, stereo (2 ch), 160 kbps
+      - Container: stripped metadata (`-map_metadata -1`, `+bitexact`), `-movflags +faststart`
+    """
+    args: list[str] = [
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "high",
+        "-level:v",
+        "4.0",
+        "-pix_fmt",
+        "yuv420p",
+        "-crf",
+        "22",
+        "-maxrate",
+        "8M",
+        "-bufsize",
+        "16M",
+    ]
+    if fps is not None and int(fps) > 0:
+        args += ["-r", str(int(fps)), "-fps_mode", "cfr"]
+    if include_audio:
+        args += [
+            "-c:a",
+            "aac",
+            "-profile:a",
+            "aac_low",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-b:a",
+            "160k",
+        ]
+    args += [
+        "-map_metadata",
+        "-1",
+        "-fflags",
+        "+bitexact",
+        "-flags:v",
+        "+bitexact",
+    ]
+    if include_audio:
+        args += ["-flags:a", "+bitexact"]
+    args += ["-movflags", "+faststart"]
+    return args
+
+
+

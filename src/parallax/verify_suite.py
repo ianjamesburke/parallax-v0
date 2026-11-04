@@ -484,7 +484,8 @@ def run_suite(suite_dir: Path, paid: bool = False,
 _STARTER_PLAN = """\
 # Starter plan.yaml — edit scenes, prompts, voice, resolution to taste.
 # Runs free in PARALLAX_TEST_MODE=1 against the test-mode mocks.
-voice: nova
+voice: Charon
+voice_model: tts-gemini
 voice_speed: 1.0
 image_model: mid
 video_model: mid

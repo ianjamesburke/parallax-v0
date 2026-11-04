@@ -19,6 +19,7 @@ from typing import Any
 from .log import get_logger
 from .models import DEFAULT_CLIP_DURATION_S, TTS_MODELS, resolve
 from .shim import is_mock_asset
+from .voice_defaults import DEFAULT_VOICE_MODEL, resolve_voice_defaults
 
 log = get_logger("preflight")
 
@@ -45,7 +46,7 @@ def _hash_vo_text(text: str) -> str:
 @dataclass
 class PreflightResult:
     scenes: list[PreflightScene] = field(default_factory=list)
-    voiceover_model: str = "tts-mini"
+    voiceover_model: str = DEFAULT_VOICE_MODEL
     voiceover_locked: bool = False
     voiceover_cost_usd: float = 0.0
     estimated_total_usd: float = 0.0
@@ -77,7 +78,7 @@ def compute_preflight(
     """
     image_model = plan.get("image_model", "mid")
     video_model = plan.get("video_model", "mid")
-    voice_model = plan.get("voice_model", "tts-mini")
+    voice_model, _voice = resolve_voice_defaults(plan.get("voice_model"), plan.get("voice"))
     stills_only = bool(plan.get("stills_only", False))
     output_resolution = output_resolution or plan.get("resolution") or None
 

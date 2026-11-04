@@ -63,5 +63,6 @@ def _expand_animation_keyframes(
                 "start": round(seg_start, 4),
                 "end": round(seg_end, 4),
                 "fontsize": max(1, int(round(fontsize * scale))),
+                **({"words": c["words"]} if "words" in c else {}),
             })
     return out

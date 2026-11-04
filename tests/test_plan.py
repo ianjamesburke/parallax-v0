@@ -53,13 +53,31 @@ def test_defaults_apply_when_optional_fields_omitted(tmp_path):
     })
     plan = Plan.from_yaml(p)
     assert plan.aspect == "9:16"
-    assert plan.voice == "nova"
+    assert plan.voice == "Charon"
     assert plan.voice_speed == 1.0
     assert plan.image_model == "mid"
     assert plan.video_model == "draft"
-    assert plan.voice_model == "tts-mini"
+    assert plan.voice_model == "tts-gemini"
     assert plan.scenes[0].shot_type == "broll"
     assert plan.scenes[0].animate is False
+
+
+def test_explicit_tts_mini_without_voice_uses_nova(tmp_path):
+    p = _write_plan(tmp_path, {
+        "voice_model": "tts-mini",
+        "scenes": [{"index": 0, "vo_text": "v", "prompt": "p"}],
+    })
+    plan = Plan.from_yaml(p)
+    assert (plan.voice_model, plan.voice) == ("tts-mini", "nova")
+
+
+def test_known_mini_voice_without_model_infers_tts_mini(tmp_path):
+    p = _write_plan(tmp_path, {
+        "voice": "nova",
+        "scenes": [{"index": 0, "vo_text": "v", "prompt": "p"}],
+    })
+    plan = Plan.from_yaml(p)
+    assert (plan.voice_model, plan.voice) == ("tts-mini", "nova")
 
 
 def test_unknown_top_level_field_rejected(tmp_path):
@@ -208,6 +226,15 @@ def test_resolve_settings_plan_defaults_match_dict_defaults(tmp_path):
     assert s_typed.resolution == s_dict.resolution
     assert s_typed.skip_captions == s_dict.skip_captions
     assert s_typed.stills_only == s_dict.stills_only
+
+
+def test_raw_plan_dict_defaults_to_gemini_charon(tmp_path):
+    settings = resolve_settings(
+        {"scenes": [{"index": 0, "vo_text": "v", "prompt": "p"}]},
+        tmp_path,
+        tmp_path / "plan.yaml",
+    )
+    assert (settings.voice_model, settings.voice) == ("tts-gemini", "Charon")
 
 
 def test_resolve_settings_plan_with_animate_resolution(tmp_path):

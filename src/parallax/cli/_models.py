@@ -76,7 +76,7 @@ def _print_models_list(models_pkg, kind: str | None, as_json: bool) -> int:
         print(_json.dumps(out, indent=2))
         return 0
 
-    _DEFAULT_ALIAS: dict[str, str] = {"image": "mid", "video": "draft", "tts": "tts-mini"}
+    _DEFAULT_ALIAS: dict[str, str] = {"image": "mid", "video": "draft", "tts": "tts-gemini"}
     _HQ_ALIAS: dict[str, str] = {"image": "premium", "video": "mid", "tts": "tts-gemini"}
 
     for k, table in tables:

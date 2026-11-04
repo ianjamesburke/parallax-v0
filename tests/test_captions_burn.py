@@ -124,7 +124,8 @@ def test_multiline_layout_is_emitted_as_real_per_line_drawtext_filters(tmp_path)
     v = tmp_path / "in.mp4"
     _make_video_with_audio(v, 0.2, w=1080, h=1920)
     out = tmp_path / "out.mp4"
-    style = resolve_caption_style("clean")
+    # Presets are single-line; multi-line stays available as an inline override.
+    style = resolve_caption_style({"base": "clean", "max_lines": 2})
     from parallax.captions.layout import layout_caption
     laid = layout_caption("absolutely exhausted all", 1080, 1920, 78, style, .78)
     assert "\n" in laid["text"]
@@ -154,7 +155,7 @@ def test_clean_multiline_boxes_do_not_cover_preceding_descenders(tmp_path):
 
     source = tmp_path / "solid.mp4"
     _make_video_with_audio(source, 0.2, w=1080, h=1920)
-    style = resolve_caption_style("clean")
+    style = resolve_caption_style({"base": "clean", "max_lines": 2})
     one = layout_caption("absolutely", 1080, 1920, 78, style, .78)
     two = layout_caption("absolutely exhausted all", 1080, 1920, 78, style, .78)
     assert two["text"] == "absolutely\nexhausted all"

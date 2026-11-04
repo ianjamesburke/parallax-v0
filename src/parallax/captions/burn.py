@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..log import get_logger
 from .animation import _expand_animation_keyframes
-from .chunker import _fixed_chunk_words, _smart_chunk_words
+from .chunker import chunk_words, split_chunks_to_fit
 from .drawtext import _burn_captions_drawtext
 from .styles import resolve_caption_style
 
@@ -42,10 +42,20 @@ def burn_captions(
     when ffmpeg lacks libfreetype (e.g. minimal Homebrew builds).
 
     words_json: JSON string of [{word, start, end}] or path to vo_words.json
-    words_per_chunk: int N for at most N-word chunks, or "smart" (default) to
-        group adjacent words while their combined letter count stays ≤4.
-        Both modes end chunks at sentence/phrase punctuation; punctuation is retained.
-    caption_style: preset name (bangers/impact/bebas/anton/clean), an inline
+    words_per_chunk: "smart" (default) or an int N. Captions are always ONE
+        line of 1-2 words (3 max): a 3rd word joins only when at most one word
+        of the chunk is a content word (the rest are small function words such
+        as a/is/of/what/here's; "Here's what a", "Filler is a") and the chunk
+        has ≤ `three_word_max_letters` (default 14) letters. 1 or 2 cap lower;
+        3 behaves like "smart"; larger N clamps to the style's `max_words`
+        (default 3). Style `three_word_rule` "letters" / "any" swaps the
+        function-word test. Chunks end at sentence/phrase punctuation, which is
+        retained. Any
+        multi-word chunk too wide for one line at `fontsize` is split into
+        more chunks, each timed from its own words. Only a lone over-wide word
+        shrinks. Inline styles may override `max_words` / `max_lines` / `three_word_rule`.
+    caption_style: preset name (bangers/impact/bebas/anton/clean/karaoke/soft;
+        unknown names raise ValueError listing the presets), an inline
         dict with optional `base: <preset>` for partial override, or a fully
         custom dict. Style carries its own animation profile — see
         `resolve_caption_style` and `CAPTION_STYLES`.
@@ -60,7 +70,7 @@ def burn_captions(
     Returns captioned video path.
     """
     from ..ffmpeg_utils import _ffmpeg_has_drawtext, _probe_fps, probe_resolution
-    from .layout import layout_caption
+    from .layout import fits_one_line, layout_caption
     if not _ffmpeg_has_drawtext():
         raise RuntimeError(
             "burn_captions: ffmpeg on PATH lacks drawtext support (libfreetype). "
@@ -83,11 +93,29 @@ def burn_captions(
     out = Path(output_path or str(Path(video_path).with_stem(Path(video_path).stem + "_captioned")))
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    # Group into chunks
-    if isinstance(words_per_chunk, str) and words_per_chunk.lower() == "smart":
-        chunks: list[dict] = _smart_chunk_words(words, max_letters=4)
+    style = resolve_caption_style(caption_style)
+    # Animation comes from the style preset by default. Plan-level
+    # `animation_override` can disable it (`"none"`) or replace it (dict).
+    if animation_override is not None:
+        if isinstance(animation_override, str) and animation_override.lower() == "none":
+            anim = {"type": "none"}
+        elif isinstance(animation_override, dict):
+            anim = animation_override
+        else:
+            raise ValueError(
+                f"animation_override must be 'none' or a dict — got {animation_override!r}"
+            )
     else:
-        chunks = _fixed_chunk_words(words, max_words=int(words_per_chunk))
+        anim = style.get("animation", {"type": "none"})
+    resolution = probe_resolution(video_path) or (720, 1280)
+
+    # Group into chunks, then split any multi-word chunk that would not fit on
+    # one line. Measure at the largest pop keyframe so the stamp never shrinks.
+    chunks: list[dict] = chunk_words(words, words_per_chunk, style)
+    if int(style.get("max_lines", 1)) == 1:
+        scale = max([1.0] + [float(k) for k in anim.get("scale_keys", [])]) if anim.get("type") == "pop" else 1.0
+        fit_size = max(1, int(round(fontsize * scale)))
+        chunks = split_chunks_to_fit(chunks, lambda text: fits_one_line(text, *resolution, fit_size, style))
 
     # Extend chunk end to the next chunk's start when the gap is smaller than
     # gap_hold_frames, so there's no blank flash between adjacent captions.
@@ -105,24 +133,11 @@ def burn_captions(
         for c in chunks:
             c["start"] = max(0.0, round(c["start"] + shift_s, 3))
             c["end"] = max(c["start"] + 0.05, round(c["end"] + shift_s, 3))
-
-    style = resolve_caption_style(caption_style)
-    # Animation comes from the style preset by default. Plan-level
-    # `animation_override` can disable it (`"none"`) or replace it (dict).
-    if animation_override is not None:
-        if isinstance(animation_override, str) and animation_override.lower() == "none":
-            anim = {"type": "none"}
-        elif isinstance(animation_override, dict):
-            anim = animation_override
-        else:
-            raise ValueError(
-                f"animation_override must be 'none' or a dict — got {animation_override!r}"
-            )
-    else:
-        anim = style.get("animation", {"type": "none"})
+            if c.get("words"):
+                c["words"] = [{**w, "start": max(0.0, round(w["start"] + shift_s, 3)),
+                               "end": max(0.0, round(w["end"] + shift_s, 3))} for w in c["words"]]
 
     keyed = _expand_animation_keyframes(chunks, fontsize, anim)
-    resolution = probe_resolution(video_path) or (720, 1280)
     boxes = []
     for c in keyed:
         layout = layout_caption(c["text"], *resolution, int(c.get("fontsize", fontsize)), style, center_y=caption_y)

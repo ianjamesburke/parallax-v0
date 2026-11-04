@@ -15,7 +15,7 @@ keys with a clear error.
 Field-rename guard: the v3 cleanup pass renamed:
   - `model:`         -> `image_model:`
   - `animate_model:` -> `video_model:`
-and added a new `voice_model:` (default `tts-mini`). A YAML using the
+and added a new `voice_model:` (default `tts-gemini` / `Charon`). A YAML using the
 old names is rejected at load with a "rename to <new>" message; old
 names do NOT silently work.
 """
@@ -28,6 +28,8 @@ from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from .voice_defaults import DEFAULT_VOICE, DEFAULT_VOICE_MODEL, resolve_voice_defaults
 
 _stills_only_ctx: contextvars.ContextVar[bool] = contextvars.ContextVar("_stills_only_ctx", default=False)
 
@@ -213,14 +215,24 @@ class Plan(BaseModel):
     resolution: str | None = None
 
     # Voice
-    voice: str = "nova"
+    voice: str = DEFAULT_VOICE
     voice_speed: float = 1.0
-    voice_model: str = "tts-mini"
+    voice_model: str = DEFAULT_VOICE_MODEL
     voice_prompt: str | None = None
     brand: dict[str, Any] | None = None
     style: str | None = None
     style_hint: str | None = None
     pronunciations: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_voice_defaults(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            model, voice = resolve_voice_defaults(data.get("voice_model"), data.get("voice"))
+            data["voice_model"] = model
+            data["voice"] = voice
+        return data
 
     # Models
     image_model: str = "mid"
