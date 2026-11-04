@@ -342,7 +342,7 @@ def write_package(brief_path: str | Path, folder: str | Path, package_dir: str |
                 pdf_created = True
                 pdf_renderer = "builtin"
             except Exception as exc:
-                raise ValueError("PDF export failed. Run `uv tool install --force --reinstall parallax` to restore the bundled PDF renderer; for HTML rendering, install Chrome or Chromium.") from exc
+                raise ValueError('PDF export failed. Run `uv tool install --python 3.11 --force "git+https://github.com/ianjamesburke/parallax-v0"` to restore the bundled PDF renderer; for HTML rendering, install Chrome or Chromium.') from exc
         if pdf_created and package == (root / "storyboard-package").resolve():
             shutil.copy2(package / "storyboard.pdf", root / "storyboard.pdf")
 

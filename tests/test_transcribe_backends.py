@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 import parallax.whisper_backend as wb_mod
 import parallax.forced_align as fa_mod
@@ -43,6 +46,16 @@ def _mock_whisperx(word_segments: list[dict]) -> MagicMock:
 
 
 class TestWhisperBackendWhisperX:
+    def test_missing_whisperx_shows_install_command(self, monkeypatch) -> None:
+        monkeypatch.setattr(wb_mod, "_whisperx", None)
+        monkeypatch.setitem(sys.modules, "whisperx", None)
+        with pytest.raises(wb_mod.AlignmentUnavailable) as exc:
+            wb_mod._require_whisperx()
+        assert str(exc.value) == (
+            "Word alignment needs the optional 'align' extra. Install it with: "
+            'uv tool install --python 3.11 --force "parallax[align] @ git+https://github.com/ianjamesburke/parallax-v0"'
+        )
+
     def test_transcribe_wav_calls_whisperx(self, tmp_path: Path) -> None:
         wav = _make_wav(tmp_path)
         mock_wx = _mock_whisperx([
