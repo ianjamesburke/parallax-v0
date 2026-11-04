@@ -131,10 +131,7 @@ def _storyboard_cmd(
             manifest = (write_package_from_video(from_video, scenes, folder, destination, cut_threshold=cut_threshold, pdf=pdf)
                         if from_video else write_package(brief_resolved, folder, destination, timing_path=timing, pdf=pdf, text_only=text_only))
     except (ValueError, OSError) as exc:
-        if as_json:
-            typer.echo(json.dumps({"pdf": {"error": str(exc)}, "valid": False}))
-        else:
-            typer.echo(f"Error: {exc}", err=True)
+        typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=2)
     package = destination.expanduser().resolve()
     manifest = {"package_dir": str(package), "html": str(package / "storyboard.html"), **manifest}
