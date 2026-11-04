@@ -2,6 +2,16 @@
 
 Agentic creative production CLI. A brief goes in, a finished short-form video comes out — stills, voiceover, animated clips, captions, headline, all routed through OpenRouter.
 
+## For agents (Muse, Claude, Codex, etc.)
+
+```sh
+command -v uv || curl -LsSf https://astral.sh/uv/install.sh | sh
+uv tool install --python 3.11 --force "git+https://github.com/ianjamesburke/parallax-v0"
+parallax --version
+```
+
+Start with `parallax guide`. For a storyboard, run `parallax guide front_half`, write the brief, run `parallax check`, then `parallax storyboard --text-only --pdf`, and send the PDF for approval before generating media.
+
 ## Start here (agents)
 
 Run `parallax guide` first. It explains the front-half workflow and review boundary.
