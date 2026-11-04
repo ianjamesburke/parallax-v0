@@ -233,7 +233,7 @@ Writes `./my-project/storyboard-package/` (override with `--package-dir`), plain
 
 No provider calls, no `.parallax` directory, no job or approval state. Assets must live under `--folder`. The package records proposals, never approval.
 
-Style A is the standard editorial package: a letter-landscape cover, then one scene per page with its uncropped 9:16 frame, narration, copy, timing, treatment, position bar, and footer. HTML is always written. PDF is opt-in (`--pdf`); it needs Chrome/Chromium or Playwright Chromium. If no renderer is found, HTML remains written and the command exits with: `uv pip install playwright && playwright install chromium` (or install Chrome).
+Style A is the standard editorial package: a letter-landscape cover, then one scene per page with its uncropped 9:16 frame, narration, copy, timing, treatment, position bar, and footer. HTML is always written. PDF is opt-in (`--pdf`). Text-only PDFs use the bundled renderer without a browser or system graphics libraries. Other PDFs use Chrome/Chromium, wkhtmltopdf or WeasyPrint when available, and otherwise fall back to the bundled storyboard renderer. JSON output identifies `pdf_renderer` and the PDF path.
 
 To re-storyboard a finished cut without any provider calls, use `--from-video` and ffmpeg:
 

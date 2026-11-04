@@ -18,14 +18,15 @@ def make_project(tmp_path):
 
 def test_text_only_timing_and_pdf(tmp_path, monkeypatch):
     make_project(tmp_path)
-    def render(html, pdf):
-        Path(pdf).write_bytes(b'pdf')
-        return True
-    monkeypatch.setattr('parallax.storyboard_package.render_pdf', render)
+    def no_renderer():
+        raise AssertionError("text-only must not look for an HTML renderer")
+    monkeypatch.setattr('parallax.storyboard_package.find_pdf_renderer', no_renderer)
     result = write_package(tmp_path / 'brief.yaml', tmp_path, tmp_path / 'storyboard-package', pdf=True, text_only=True)
     scene = yaml.safe_load((tmp_path / 'storyboard-package/scenes.yaml').read_text())['scenes'][0]
     assert scene['scene_id'] == 'Scene_01'
     assert scene['duration_s'] == 1 and scene['min_usable_s'] == 2
+    assert result['pdf_renderer'] == 'builtin'
+    assert Path(result['pdf']).read_bytes().startswith(b'%PDF-')
     assert not result['missing_assets']
     assert 'Generation prompt' in (tmp_path / 'storyboard-package/storyboard.html').read_text()
 
@@ -176,3 +177,28 @@ def test_text_only_frame_uses_still_and_scene_aspect(tmp_path):
     html = (tmp_path / 'storyboard-package/storyboard.html').read_text()
     assert 'aspect-ratio: 16 / 9' in html
     assert '<img ' in html and 'Scene 01 · no image yet' not in html
+
+
+def test_builtin_pdf_unicode_and_one_page_per_scene(tmp_path, monkeypatch):
+    import builtins
+    import re
+    make_project(tmp_path)
+    path = tmp_path / 'brief.yaml'
+    data = yaml.safe_load(path.read_text())
+    data['script']['scenes'][0]['vo_text'] = '“Café” — déjà vu'
+    data['script']['scenes'].append({'index': 1, 'vo_text': 'Second scene', 'prompt': 'A view', 'generation_method': 'external'})
+    path.write_text(yaml.safe_dump(data, allow_unicode=True))
+    real_import = builtins.__import__
+    def guarded_import(name, *args, **kwargs):
+        if name.startswith('weasyprint'):
+            raise AssertionError('WeasyPrint must not be imported')
+        return real_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, '__import__', guarded_import)
+    monkeypatch.setattr('shutil.which', lambda _: None)
+    monkeypatch.setenv('PATH', '')
+    result = write_package(path, tmp_path, tmp_path / 'storyboard-package', pdf=True, text_only=True)
+    pdf = Path(result['pdf']).read_bytes()
+    assert result['pdf_renderer'] == 'builtin'
+    assert len(pdf) > 1000 and pdf.startswith(b'%PDF-')
+    assert len(re.findall(rb'/Type\s*/Page\b', pdf)) == 3
+    assert b'/FontFile2' in pdf

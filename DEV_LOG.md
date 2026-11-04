@@ -1150,3 +1150,7 @@ one missing-reference summary in check and text-only storyboard covers. Legacy
 per-scene brand_ref values are mapped on load and check suggests migration.
 Supplied reference paths are checked; missing assets stay non-blocking. The
 0.7.2 placeholder-frame layout and optional alignment dependencies are retained.
+
+### Built-in storyboard PDF renderer
+
+Bundled fpdf2 and DejaVu Sans fonts for offline, Unicode text-only PDF export without browser or system graphics libraries. Other storyboard exports fall back to the built-in renderer when an HTML renderer is unavailable; the manifest reports the renderer and PDF path.
