@@ -2,6 +2,13 @@
 
 Newest releases appear first.
 
+## [0.7.7] — 2026-11-04
+
+### Changes
+- docs: default to storyboard PDF and stills review in chat, no upload unless asked, and still generation before the first review; approval gates animated scene/video generation and other paid video spend. After approval, use the requester’s animation tool or configured Parallax, import scenes, and follow the footage workflow.
+- docs: clarify paid still generation, the no-key agent-tool fallback, and image import plus explicit brief still_path fields. Final delivery mirrors the whole project folder to Google Drive as-is using the agent’s connection and returns folder and MP4 links.
+- tests: pin these defaults in the guide start map, front_half, footage_job, and README.
+
 ## [0.7.6] — 2026-11-04
 
 ### Changes

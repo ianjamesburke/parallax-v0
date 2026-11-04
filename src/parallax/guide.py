@@ -113,7 +113,7 @@ _STAGES = [
         "goal": "Write the portable storyboard package and detect open reference gates. No provider calls.",
         "commands": [{
             "command": "storyboard",
-            "use": "For review before external generation use --text-only --pdf; read `status`, `gates`, `advisories`, `next_steps` from the JSON.",
+            "use": "For review with stills before animation use --text-only --pdf; read `status`, `gates`, `advisories`, `next_steps` from the JSON.",
             "pass": ["--folder", "--brief", "--json"],
             "json_fields": ["status", "package_dir", "html", "files", "gates", "produce_blocked", "blocked_by", "advisories", "next_steps"],
             "check_only": "Add --check (instead of writing a package) to preview status, gates, and advisories as JSON without writing files.",
@@ -237,7 +237,8 @@ def build_guide(group: Any, topic: str | None = None) -> dict:
         return {**header, "topic": topic, "stage": stage, **({"brief": _BRIEF} if topic == "brief" else {})}
     return {
         **header,
-        "start_here": "For text-only storyboard approval before external media, read `parallax guide front_half`. For supplied footage and voiceover, read `parallax guide footage_job`.",
+        "start_here": "For storyboard and stills review before animated scene/video generation, read `parallax guide front_half`. For supplied footage and voiceover, read `parallax guide footage_job`.",
+        "agent_defaults": TOPICS["front_half"]["agent_defaults"],
         "front_half_workflow": TOPICS["front_half"],
         "invocation": "`parallax` stands for however you run this checkout or install, e.g. `uv run parallax`.",
         "discovery": ["parallax --help", "parallax <command> --help", "parallax schema brief", "parallax schema plan", "parallax schema cli", "parallax guide", "parallax guide <topic>"],

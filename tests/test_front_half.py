@@ -50,7 +50,7 @@ def test_import_and_validation(tmp_path):
 def test_guide_teaches_front_half():
     result = CliRunner().invoke(app, ['guide'])
     text = result.stdout
-    for phrase in ('brief.yaml', 'parallax check --folder PROJECT', 'storyboard --folder PROJECT --text-only --pdf', 'human for approval BEFORE any media generation', 'assets import', '--stage media', 'before handoff'):
+    for phrase in ('brief.yaml', 'parallax check --folder PROJECT', 'storyboard --folder PROJECT --text-only --pdf', 'human for approval BEFORE any animated scene/video generation or other paid video spend', 'assets import', '--stage media', 'before handoff'):
         assert phrase in text
 
 

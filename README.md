@@ -19,11 +19,17 @@ For a job with supplied footage (numbered `Scene_NN` clips, a script, and a reco
 4. `parallax assets import --folder P --from clips/`. For duplicate takes of a scene the brief uses, set `preferred: true` on exactly one in `P/parallax/assets/import-manifest.json`.
 5. `parallax check --folder P --stage media` and fix every error.
 6. `parallax plan --folder P`, then `parallax produce --folder P --plan P/parallax/scratch/plan.yaml --aspect 9:16`. The cost estimate must show $0.00; stop if it does not. The supplied voiceover is sped to 1.15x once and aligned; captions are burned in.
-7. Watch the MP4 in `P/parallax/output/` to verify scene order, captions, audio, and 9:16 framing. Upload it with your Drive connection to the folder the requester names, or a new subfolder there (in Muse: `/opt/hatch/bin/hatch_gws_cli drive +upload ...`), and reply with the file link.
+7. Watch the MP4 in `P/parallax/output/` to verify scene order, captions, audio, and 9:16 framing. After watching the final MP4, use your own Google Drive connection to mirror the whole local Parallax project folder as-is, without restructuring it. Use the requester's named folder, or a new folder named after the concept. Reply with the folder link and the final MP4 link. This final delivery does not upload review materials before approval. In Muse, use `/opt/hatch/bin/hatch_gws_cli drive +upload ...`, preserving all files and relative paths.
 
 If a model download fails with a transient network or proxy error, rerun the same command. If no voiceover is supplied, ask the requester; use configured TTS only when its API key is set.
 
-For a storyboard, run `parallax guide front_half`, write the brief, run `parallax check`, then `parallax storyboard --text-only --pdf`, and send the PDF for approval before generating media.
+For a script-to-video job, run `parallax guide front_half`, write the brief, and run `parallax check --folder P`.
+
+Before the first review, make the stills with Parallax if OPENROUTER_API_KEY is set. Parallax still generation (`parallax plan --folder P --stills-only`, then `parallax produce --folder P --plan P/parallax/scratch/plan.yaml --stills-only`) needs OPENROUTER_API_KEY and spends money; plan itself is local. Without a key, generate stills with your own image tools before the first review and import them as each scene's still_path. Never stall asking for a key. Name images Scene_NN.jpg or Scene_NN.png and run `parallax assets import --folder P --from STILLS_DIR`. Import copies files to P/parallax/assets/ but does not set still_path. Set each scene's still_path in P/brief.yaml, e.g. still_path: parallax/assets/Scene_01.png. Use the actual filename from import-manifest.json (collisions become Scene_NN_take02 etc.); paths are relative to P. Before the first review, run `parallax storyboard --folder P --text-only --pdf` to render the storyboard PDF with the stills. For Parallax-generated stills, set each brief scene’s still_path to its generated file relative to P; no extra import copy is needed.
+
+Show the storyboard PDF and stills to the requester in chat for review. Do not upload them anywhere unless asked. Stop at storyboard approval, before any animated scene/video generation or other paid video spend.
+
+After approval, generate animated scenes with the requester's tool (e.g. Google Flow), or with Parallax if a key is set. Name the clips Scene_NN.mp4 and bring them in with `parallax assets import --folder P --from MEDIA_DIR`; then update the brief and run brief → check → plan → produce via `parallax guide footage_job`, supplying voiceover for the zero-provider-cost footage flow. Follow the footage steps above to watch the MP4, mirror the project folder to Drive, and reply with both links.
 
 ## Start here (agents)
 
@@ -331,7 +337,7 @@ just e2e-agent \
 
 This isolates the fixture data. It does not stop an agent that deliberately reads absolute paths outside the fixture. Use a container or VM when the test also needs a hard host-filesystem boundary.
 
-For a text-only storyboard before external media generation, run `parallax guide front_half`.
+For storyboard and stills review before animated scene/video generation, run `parallax guide front_half`.
 Author `brief.yaml`, create `references/` and `storyboard-package/`, and optionally
 place the narration in `script.txt`. Run `parallax check --folder PROJECT`, then
 `parallax storyboard --folder PROJECT --text-only --pdf --json` and present the PDF

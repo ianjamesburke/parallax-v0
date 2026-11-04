@@ -318,3 +318,81 @@ def test_footage_guide_and_readme_allow_unused_clips(capsys):
     assert "preferred: true" in agents
     assert "exactly one preferred take" in topic["steps"][2]
     assert "a scene the brief uses" in topic["steps"][2]
+
+
+def _assert_agent_delivery_defaults(text):
+    text = text.replace('`', '')
+    for required in (
+        'Show the storyboard PDF and stills to the requester in chat for review',
+        'Do not upload them anywhere unless asked',
+        'Stop at storyboard approval, before any animated scene/video generation or other paid video spend',
+        'Before the first review, make the stills with Parallax if OPENROUTER_API_KEY is set',
+        'render the storyboard PDF with the stills',
+        "After approval, generate animated scenes with the requester's tool (e.g. Google Flow)",
+        'or with Parallax if a key is set',
+        'parallax assets import --folder P --from MEDIA_DIR',
+        'brief → check → plan → produce',
+        'parallax guide footage_job',
+        'your own Google Drive connection',
+        'mirror the whole local Parallax project folder as-is, without restructuring it',
+        "requester's named folder, or a new folder named after the concept",
+        'Reply with the folder link and the final MP4 link',
+        'parallax plan --folder P --stills-only',
+        'parallax produce --folder P --plan P/parallax/scratch/plan.yaml --stills-only',
+        'needs OPENROUTER_API_KEY and spends money; plan itself is local',
+        'Without a key, generate stills with your own image tools before the first review',
+        "import them as each scene's still_path",
+        'Never stall asking for a key',
+        'Scene_NN.jpg or Scene_NN.png',
+        'parallax assets import --folder P --from STILLS_DIR',
+        'does not set still_path',
+        "Set each scene's still_path in P/brief.yaml",
+        'still_path: parallax/assets/Scene_01.png',
+        'actual filename from import-manifest.json',
+        'Scene_NN_take02',
+        'paths are relative to P',
+    ):
+        assert required in text
+    for outdated in (
+        'if new stills require generation',
+        'generate stills with your own tools after approval',
+        'before any paid or external media generation',
+    ):
+        assert outdated not in text
+
+
+def test_start_map_pins_agent_delivery_defaults(capsys):
+    assert cli.main(['guide']) == 0
+    guide = json.loads(capsys.readouterr().out)
+    _assert_agent_delivery_defaults(' '.join(guide['agent_defaults'].values()))
+
+
+def test_front_half_pins_agent_delivery_defaults(capsys):
+    topic = _topic(capsys, 'front_half')
+    _assert_agent_delivery_defaults(' '.join(topic['agent_defaults'].values()))
+    steps = topic['steps']
+    positions = [next(i for i, step in enumerate(steps) if phrase in step) for phrase in (
+        'Before the first review, make stills',
+        'render the PDF with the stills',
+        'After approval, generate animated scenes',
+    )]
+    assert positions == sorted(set(positions))
+    assert 'After approval, generate stills' not in ' '.join(steps)
+
+
+def test_footage_job_pins_agent_delivery_defaults(capsys):
+    topic = _topic(capsys, 'footage_job')
+    _assert_agent_delivery_defaults(' '.join(topic['agent_defaults'].values()))
+
+
+def test_readme_pins_agent_delivery_defaults():
+    from pathlib import Path
+
+    readme = (Path(__file__).resolve().parents[1] / 'README.md').read_text()
+    agents = readme.split('## For agents', 1)[1].split('## Start here', 1)[0]
+    _assert_agent_delivery_defaults(agents)
+    assert 'uv tool install --python 3.11 --force' in agents
+    assert '/opt/hatch/bin/hatch_gws_cli drive +upload' in agents
+    assert 'Watch the MP4' in agents
+
+    assert agents.index('Before the first review, make the stills') < agents.index('render the storyboard PDF with the stills') < agents.index('Show the storyboard PDF and stills') < agents.index('After approval, generate animated scenes')
