@@ -7,7 +7,7 @@ Agentic creative production CLI. A brief goes in, a finished short-form video co
 ```sh
 command -v uv || curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
-uv tool install --force "parallax[align] @ git+https://github.com/ianjamesburke/parallax-v0"
+uv tool install --python 3.11 --force "parallax[align] @ git+https://github.com/ianjamesburke/parallax-v0"
 parallax --version
 ```
 
