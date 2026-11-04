@@ -1,6 +1,10 @@
 # Changelog
 
 Newest releases appear first.
+## [0.7.0] — 2026-11-03
+
+### Changes
+- feat: front half for outside agents. `parallax storyboard --text-only --pdf` builds a review PDF with no media or provider calls (one page per scene: Scene_NN, VO, estimated interval, min usable footage, generation prompt, brand-ref status). New read-only `parallax check` lists what does not "compile" in a project with a fix for each (`--json`, `--stage draft|review|media`). New `parallax assets import` renames incoming clips to Scene_NN.mp4 / Scene_NN_takeNN.mp4 and keeps `source_filename`. Brief gains scene_id, purpose, generation_method, brand_ref, takes, timing {estimate_wps 3.0, speed 1.0, handle_s 1.0}; estimates move from 150 wpm to 3.0 words/s x speed; min usable = duration + 1s. `parallax guide` leads with the front-half workflow and tells agents to run `parallax check` before handoff (#219)
 ## [0.6.3] — 2026-11-02
 
 ### Changes
