@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import hashlib
 import re
 import shlex
@@ -31,6 +32,7 @@ from PIL import Image, ImageOps
 from .brief import Brief
 from .reference_gates import _arg, open_gates, undeclared_image_refs, undeclared_message
 from .storyboard import render_storyboard, review_storyboard
+from .chrome import chrome_launch_args
 
 _FILES = {
     "brief.yaml": "Authored brief, verbatim. Source of truth for every other file.",
@@ -68,7 +70,8 @@ def find_pdf_renderer() -> list[str] | None:
     ]
     for c in candidates:
         if c and Path(c).is_file() and os.access(c, os.X_OK):
-            return [str(c), "--headless", "--no-sandbox", "--disable-gpu", "--no-pdf-header-footer", "--print-to-pdf={output}", "{input}"]
+            # Shared builder: sandboxed unless PARALLAX_CHROME_NO_SANDBOX=1 (warns).
+            return chrome_launch_args(str(c), "--headless", "--disable-gpu", "--no-pdf-header-footer", "--print-to-pdf={output}", "{input}")
 
     if wk := shutil.which("wkhtmltopdf"):
         return [wk, "--enable-local-file-access", "--quiet", "{input}", "{output}"]
@@ -89,7 +92,12 @@ def render_pdf(html_path: str | Path, pdf_path: str | Path, *, renderer: list[st
     cmd = [arg.replace("{input}", str(html_target)).replace("{output}", str(pdf_target)) for arg in cmd_template]
     try:
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=45)
-        return res.returncode == 0 and pdf_target.is_file() and pdf_target.stat().st_size > 0
+        ok = res.returncode == 0 and pdf_target.is_file() and pdf_target.stat().st_size > 0
+        if not ok and any(a.startswith("--print-to-pdf") for a in cmd_template):
+            from .chrome import SANDBOX_HINT, chrome_sandbox_disabled
+            hint = "" if chrome_sandbox_disabled() else f" {SANDBOX_HINT}"
+            print(f"WARNING: Chrome PDF render failed (exit {res.returncode}).{hint}", file=sys.stderr)
+        return ok
     except (subprocess.SubprocessError, OSError):
         return False
 

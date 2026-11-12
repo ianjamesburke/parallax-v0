@@ -21,6 +21,7 @@ from typing import Any, Sequence
 import yaml
 
 from parallax import runlog, usage
+from parallax.chrome import chrome_launch_args
 from parallax.motion_graphics import BRAND_DEFAULT, CAPTION_TOP, SAFE_X
 from parallax.motion_primitives import (
     BG_VARIANTS,
@@ -1373,6 +1374,12 @@ def _cleanup_chrome_stray_dirs(
             continue
 
 
+def _chrome_exit_hint() -> str:
+    """Point at the explicit sandbox opt-out when a sandboxed Chrome dies early."""
+    from .chrome import SANDBOX_HINT, chrome_sandbox_disabled
+    return "" if chrome_sandbox_disabled() else SANDBOX_HINT
+
+
 class _CDPPipeSession:
     """Lightweight Chrome DevTools Protocol client over `--remote-debugging-pipe` (fds 3 & 4).
 
@@ -1420,10 +1427,11 @@ class _CDPPipeSession:
                 os.set_inheritable(3, True)
                 os.set_inheritable(4, True)
 
-            args = [
+            # Shared builder: sandboxed by default; --no-sandbox only via the
+            # explicit PARALLAX_CHROME_NO_SANDBOX opt-out (warns every launch).
+            args = chrome_launch_args(
                 self.chrome_bin,
                 "--headless=new",
-                "--no-sandbox",
                 "--disable-gpu",
                 "--disable-dev-shm-usage",
                 "--hide-scrollbars",
@@ -1437,7 +1445,7 @@ class _CDPPipeSession:
                 f"--window-size={self.width},{self.height}",
                 "--remote-debugging-pipe",
                 "about:blank",
-            ]
+            )
             self._proc = subprocess.Popen(
                 args,
                 stdin=subprocess.DEVNULL,
@@ -1573,7 +1581,10 @@ class _CDPPipeSession:
         if sid:
             payload["sessionId"] = sid
         raw = json.dumps(payload).encode("utf-8") + b"\x00"
-        os.write(self._c2b_w, raw)
+        try:
+            os.write(self._c2b_w, raw)
+        except BrokenPipeError:
+            raise RuntimeError(f"Chrome exited before CDP {method}. {_chrome_exit_hint()}") from None
 
         while True:
             while b"\x00" in self._buf:
@@ -1592,7 +1603,7 @@ class _CDPPipeSession:
                 raise TimeoutError(f"Timed out waiting for CDP response to {method}")
             chunk = os.read(self._b2c_r, 65536)
             if not chunk:
-                raise RuntimeError(f"Chrome closed CDP pipe unexpectedly during {method}")
+                raise RuntimeError(f"Chrome closed CDP pipe unexpectedly during {method}. {_chrome_exit_hint()}")
             self._buf += chunk
 
     def _open_page_once(self, html_path: Path) -> None:

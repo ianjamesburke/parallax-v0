@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import time as _time
 from pathlib import Path
@@ -9,11 +10,15 @@ from typing import Any
 
 from ..models import ModelSpec
 from .client import (
-    _auth_headers,
     _check_key,
+    _download_url,
+    _openrouter_get,
     _post,
     _raise_for_credits_or_status,
+    _safe_url_for_message,
     _strip_or_prefix,
+    UntrustedURLError,
+    is_openrouter_url,
     note_billed_cost,
     note_generation_id,
 )
@@ -42,26 +47,132 @@ def _resolution_for_size(size: str | None, spec: ModelSpec) -> str | None:
     tier = f"{min(width, height)}p"
     return tier if tier in spec.resolutions else None
 
-def resume_video_job(job_path: str | Path, out_dir: Path) -> Path:
-    """Finish polling a previously accepted OpenRouter video job without resubmitting."""
-    import httpx
-    job = __import__("json").loads(Path(job_path).read_text())
-    polling_url = job.get("polling_url")
-    if not polling_url: raise ValueError(f"job receipt has no polling_url: {job_path}")
-    headers = {"Authorization": _auth_headers()["Authorization"]}
+# ---------------------------------------------------------------------------
+# Job receipts
+# ---------------------------------------------------------------------------
+# A receipt is written right after OpenRouter accepts a submit so an
+# interrupted run can resume polling without paying twice. Receipts live in
+# project folders that may be shared (Drive mirrors), so a receipt is untrusted
+# input: it is only honoured if it carries Parallax's marker/schema, sits
+# inside the expected root, names an OpenRouter polling URL, and its `out`
+# stays inside that root.
+
+JOB_RECEIPT_MARKER = "parallax.openrouter.video_job"
+JOB_RECEIPT_SCHEMA = 1
+_SAFE_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+class JobReceiptError(ValueError):
+    """A job receipt was not created by Parallax, is malformed, or points outside its root."""
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        return path.resolve().is_relative_to(root.resolve())
+    except (OSError, RuntimeError):
+        return False
+
+
+def write_job_receipt(job_path: Path, job: dict[str, Any], *, out: Path, estimate_usd: float | None = None) -> dict[str, Any]:
+    """Write a Parallax-marked receipt for an accepted OpenRouter video job."""
+    payload: dict[str, Any] = {
+        "parallax": JOB_RECEIPT_MARKER,
+        "schema": JOB_RECEIPT_SCHEMA,
+        "id": job.get("id"),
+        "polling_url": job.get("polling_url"),
+        "model": job.get("model"),
+        "out": str(Path(out).resolve()),
+        "created_at": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+    }
+    if estimate_usd is not None:
+        payload["estimate_usd"] = estimate_usd
+    Path(job_path).write_text(__import__("json").dumps(payload, indent=2))
+    return payload
+
+
+def load_job_receipt(job_path: str | Path, *, root: str | Path) -> dict[str, Any]:
+    """Load and validate a receipt; raise JobReceiptError unless it is safe to resume.
+
+    `root` is the project / output directory the receipt must live in and
+    whose subtree its `out` must stay inside. Relative `out` values resolve
+    against `root`. The returned dict has `out` normalised to an absolute path.
+    """
+    import json
+
+    path, root_path = Path(job_path), Path(root)
+    if not path.is_file():
+        raise JobReceiptError(f"job receipt not found: {path}")
+    if not _is_within(path, root_path):
+        raise JobReceiptError(f"job receipt {path} is outside the project directory {root_path.resolve()}; refusing to resume it")
+    try:
+        job = json.loads(path.read_text())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise JobReceiptError(f"job receipt {path} is not valid JSON: {exc}") from None
+    if not isinstance(job, dict) or job.get("parallax") != JOB_RECEIPT_MARKER:
+        raise JobReceiptError(f"{path} is not a Parallax video job receipt (missing marker); refusing to resume it")
+    if job.get("schema") != JOB_RECEIPT_SCHEMA:
+        raise JobReceiptError(f"job receipt {path} has unsupported schema {job.get('schema')!r}; refusing to resume it")
+    for key in ("id", "polling_url", "model", "out"):
+        if not isinstance(job.get(key), str) or not job[key]:
+            raise JobReceiptError(f"job receipt {path} is missing or has an invalid {key!r}; refusing to resume it")
+    if not is_openrouter_url(job["polling_url"]):
+        raise JobReceiptError(
+            f"job receipt {path} polls a non-OpenRouter URL ({_safe_url_for_message(job['polling_url'])}); "
+            "refusing to resume it or send credentials there"
+        )
+    if not _SAFE_MODEL_RE.match(job["model"]):
+        raise JobReceiptError(f"job receipt {path} has an invalid model name; refusing to resume it")
+    out = Path(job["out"])
+    out = out if out.is_absolute() else root_path / out
+    if not _is_within(out, root_path):
+        raise JobReceiptError(f"job receipt {path} writes outside the project directory {root_path.resolve()}; refusing to resume it")
+    return {**job, "out": str(out.resolve())}
+
+
+def _poll_and_download(polling_url: str, out_path: Path, *, label: str, first: dict[str, Any] | None = None) -> Path:
+    """Poll an OpenRouter job to completion and download the first result.
+
+    All network I/O goes through `_openrouter_get` (key only for OpenRouter
+    hosts, refused otherwise) and `_download_url` (no key off-allowlist).
+    """
+    poll_interval = getattr(sys.modules.get("parallax.openrouter"), "_VIDEO_POLL_INTERVAL_S", 5.0)
     deadline = _time.monotonic() + _VIDEO_POLL_TIMEOUT_S
-    last = job
+    last: dict[str, Any] = first or {}
     while _time.monotonic() < deadline:
-        _time.sleep(getattr(sys.modules.get("parallax.openrouter"), "_VIDEO_POLL_INTERVAL_S", 5.0))
-        response=httpx.get(polling_url, headers=headers, timeout=30.0); _raise_for_credits_or_status(response); last=response.json()
-        if last.get("status") == "completed": break
-        if last.get("status") in ("failed", "error"): raise RuntimeError(f"OpenRouter video job failed: {last!r}")
-    else: raise RuntimeError(f"OpenRouter video poll timed out for {job.get('id')}")
-    note_billed_cost(last); urls=last.get("unsigned_urls") or []
-    if not urls: raise RuntimeError(f"completed job returned no unsigned_urls: {last!r}")
-    download=httpx.get(urls[0],headers=headers,timeout=120.0); download.raise_for_status()
-    out_dir.mkdir(parents=True,exist_ok=True); path=out_dir/f"openrouter_{job.get('model','video')}_{int(_time.time()*1000)}.mp4"; path.write_bytes(download.content)
-    return path
+        _time.sleep(poll_interval)
+        poll = _openrouter_get(polling_url, timeout=30.0)
+        _raise_for_credits_or_status(poll)
+        last = poll.json()
+        status = last.get("status")
+        if status == "completed":
+            break
+        if status in ("failed", "error"):
+            raise RuntimeError(f"OpenRouter video generation failed for {label}: {last!r}")
+    else:
+        raise RuntimeError(
+            f"OpenRouter video poll timed out after {_VIDEO_POLL_TIMEOUT_S}s for {label} "
+            f"(last status: {last.get('status')!r})"
+        )
+    note_billed_cost(last)
+    urls = last.get("unsigned_urls") or []
+    if not urls:
+        raise RuntimeError(f"OpenRouter video {label} completed but returned no unsigned_urls: {last!r}")
+    download = _download_url(urls[0], timeout=120.0)
+    download.raise_for_status()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(download.content)
+    return out_path
+
+
+def resume_video_job(job_path: str | Path, out_dir: Path, *, root: str | Path) -> Path:
+    """Finish polling a previously accepted OpenRouter video job without resubmitting.
+
+    The receipt is validated with `load_job_receipt(job_path, root=root)` first;
+    an untrusted receipt raises JobReceiptError before any network request.
+    """
+    job = load_job_receipt(job_path, root=root)
+    out_path = Path(out_dir) / f"openrouter_{job['model']}_{int(_time.time()*1000)}.mp4"
+    return _poll_and_download(job["polling_url"], out_path, label=job["id"], first=job)
 
 
 def _video_real(
@@ -158,46 +269,15 @@ def _video_real(
     polling_url = job.get("polling_url")
     if not polling_url:
         raise RuntimeError(f"OpenRouter video submit returned no polling_url: {job!r}")
+    if not is_openrouter_url(polling_url):
+        raise UntrustedURLError(
+            f"OpenRouter video submit returned a non-OpenRouter polling_url "
+            f"({_safe_url_for_message(polling_url)}); refusing to send credentials there"
+        )
     if on_submit:
         on_submit({"id": job.get("id"), "polling_url": polling_url, "model": spec.alias})
 
-    # Polling URLs are absolute (the server returns them); they are signed
-    # off the same OpenRouter backend so we send the auth header but not
-    # Content-Type. Same for the unsigned download URLs below.
-    poll_headers = {"Authorization": _auth_headers()["Authorization"]}
-
-    # Read poll interval from the package namespace so monkeypatch works in tests.
-    pkg = sys.modules.get("parallax.openrouter")
-    poll_interval = getattr(pkg, "_VIDEO_POLL_INTERVAL_S", 5.0)
-
-    deadline = _time.monotonic() + _VIDEO_POLL_TIMEOUT_S
-    last_status: dict[str, Any] = job
-    while _time.monotonic() < deadline:
-        _time.sleep(poll_interval)
-        poll = httpx.get(polling_url, headers=poll_headers, timeout=30.0)
-        _raise_for_credits_or_status(poll)
-        last_status = poll.json()
-        status = last_status.get("status")
-        if status == "completed":
-            break
-        if status in ("failed", "error"):
-            raise RuntimeError(
-                f"OpenRouter video generation failed for {model_id}: {last_status!r}"
-            )
-    else:
-        raise RuntimeError(
-            f"OpenRouter video poll timed out after {_VIDEO_POLL_TIMEOUT_S}s for {model_id} "
-            f"(last status: {last_status.get('status')!r})"
-        )
-
-    note_billed_cost(last_status)
-    urls = last_status.get("unsigned_urls") or []
-    if not urls:
-        raise RuntimeError(
-            f"OpenRouter video {model_id} completed but returned no unsigned_urls: {last_status!r}"
-        )
-    download = httpx.get(urls[0], headers=poll_headers, timeout=120.0)
-    download.raise_for_status()
+    # Polling URLs are absolute (the server returns them). The shared helper
+    # sends the key only to OpenRouter hosts and downloads CDN URLs without it.
     out_path = out / f"openrouter_{spec.alias}_{int(_time.time()*1000)}.mp4"
-    out_path.write_bytes(download.content)
-    return out_path
+    return _poll_and_download(polling_url, out_path, label=model_id, first=job)

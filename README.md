@@ -110,6 +110,10 @@ Anything that generates with a provider (`produce`, `image generate`, `video ani
 
 For dry runs of the paid pipeline without spending: `export PARALLAX_TEST_MODE=1` — the pipeline produces stub PNGs / mp4s / mp3s end-to-end with no network calls.
 
+Headless Chrome (motion rendering, storyboard PDF) runs with its sandbox on, even as root. If Chrome cannot start sandboxed (typically root inside a container), set `PARALLAX_CHROME_NO_SANDBOX=1` to opt out explicitly; Parallax prints a warning on every launch while it is set.
+
+`video animate` and `video resume` only resume `*.job.json` receipts that Parallax wrote (receipts from 0.7.7 and older are refused: inspect and delete one before rerunning, and note a rerun submits a new paid job), that sit inside the output folder or current project, and that poll an `openrouter.ai` URL. The OpenRouter key is only ever sent to `https://openrouter.ai` hosts.
+
 ## Use
 
 The two iteration artifacts are `brief.yaml` (human spec) and `plan.yaml` (engine spec). Author the brief once with all your creative intent — goal, voice, aspect ratio, scene scripts — and let the planner materialize it into a plan.yaml.
