@@ -104,6 +104,78 @@ def _get(path: str, *, timeout: float = 30.0, auth_only: bool = False) -> "httpx
     return httpx.get(f"{_BASE}{path}", headers=headers, timeout=timeout)
 
 
+_OPENROUTER_HOST = "openrouter.ai"
+
+
+class UntrustedURLError(RuntimeError):
+    """Raised instead of sending the OpenRouter key to a non-OpenRouter URL."""
+
+
+def _safe_url_for_message(url: object) -> str:
+    """Scheme + host + path only: never echo query strings (signed tokens) or userinfo."""
+    try:
+        import httpx
+        parsed = httpx.URL(str(url))
+        return f"{parsed.scheme}://{parsed.host}{parsed.path}"
+    except Exception:
+        return "<unparseable url>"
+
+
+def is_openrouter_url(url: object) -> bool:
+    """True only for ``https://openrouter.ai/...`` or ``https://<sub>.openrouter.ai/...``.
+
+    This is the single gate for attaching the bearer token to an absolute URL
+    that came from a server response or a job receipt. Parsed with httpx (the
+    same parser that sends the request) so the checked host is the contacted host.
+    Rejects http, userinfo (``https://openrouter.ai@evil.com``), non-default
+    ports, look-alikes (``openrouter.ai.evil.com``) and query-string tricks.
+    """
+    if not isinstance(url, str) or not url or any(c.isspace() or c == "\\" for c in url):
+        return False
+    try:
+        import httpx
+        parsed = httpx.URL(url)
+    except Exception:
+        return False
+    if parsed.scheme != "https" or parsed.userinfo or parsed.port not in (None, 443):
+        return False
+    host = (parsed.host or "").lower().rstrip(".")
+    return host == _OPENROUTER_HOST or host.endswith("." + _OPENROUTER_HOST)
+
+
+def _openrouter_get(url: str, *, timeout: float) -> "httpx.Response":
+    """GET an absolute OpenRouter URL with the bearer token (no Content-Type).
+
+    Refuses (UntrustedURLError) before any request if the URL is not on the
+    OpenRouter allowlist, so a call site cannot leak the key by forgetting a check.
+    """
+    import httpx
+    if not is_openrouter_url(url):
+        raise UntrustedURLError(
+            f"refusing to send OpenRouter credentials to non-OpenRouter URL {_safe_url_for_message(url)}"
+        )
+    return httpx.get(url, headers={"Authorization": _auth_headers()["Authorization"]}, timeout=timeout)
+
+
+def _download_url(url: str, *, timeout: float) -> "httpx.Response":
+    """Download a provider result URL, attaching the key only for OpenRouter hosts.
+
+    CDN / signed URLs elsewhere are fetched with no Authorization header. If such
+    a URL answers 401/403 (i.e. claims it needs credentials) we refuse rather
+    than retry with the OpenRouter key.
+    """
+    import httpx
+    if is_openrouter_url(url):
+        return _openrouter_get(url, timeout=timeout)
+    response = httpx.get(url, headers={}, timeout=timeout)
+    if response.status_code in (401, 403):
+        raise UntrustedURLError(
+            f"download URL {_safe_url_for_message(url)} requires credentials but is not an "
+            "OpenRouter host; refusing to send the OpenRouter key"
+        )
+    return response
+
+
 def _stream_post(path: str, body: dict, *, timeout: float = 300.0):
     """Stream a POST to <_BASE>/<path>. Caller uses it as a context manager
     (`with _stream_post(...) as resp: ...`) and iterates resp.iter_lines()."""

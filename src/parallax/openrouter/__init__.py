@@ -62,6 +62,10 @@ from .client import (  # noqa: F401
     note_estimated_cost,
     CreditsBalance,
     InsufficientCreditsError,
+    UntrustedURLError,
+    _download_url,
+    _openrouter_get,
+    is_openrouter_url,
     check_credits,
 )
 
@@ -96,7 +100,12 @@ from .tts import (  # noqa: F401
 from .video import (  # noqa: F401
     _VIDEO_POLL_TIMEOUT_S,
     _video_real,
+    JOB_RECEIPT_MARKER,
+    JOB_RECEIPT_SCHEMA,
+    JobReceiptError,
+    load_job_receipt,
     resume_video_job,
+    write_job_receipt,
 )
 
 from .retry import (  # noqa: F401
@@ -174,9 +183,11 @@ def _with_fallback(*, kind: Kind, alias: str, primary_call, allow_fallback: bool
         try:
             result = _call_with_transient_retry(kind=kind, spec=spec, primary_call=primary_call)
             return result
-        except InsufficientCreditsError:
+        except (InsufficientCreditsError, UntrustedURLError):
             # 402 hits the wallet, not the model — every fallback is on the same
             # wallet, so trying alternates is a guaranteed waste. Re-raise loud.
+            # An untrusted provider URL is a security refusal, not a model
+            # failure: never resubmit (and re-pay) on another model.
             raise
         except Exception as e:
             last_error = e
@@ -237,7 +248,7 @@ def _call_with_transient_retry(*, kind: Kind, spec, primary_call):
                           cost_usd=cost_usd, test=False, cost_source=cost_source,
                           generation_ids=cost.generation_ids)
             return result
-        except InsufficientCreditsError:
+        except (InsufficientCreditsError, UntrustedURLError):
             raise
         except Exception as e:
             duration_ms = int((time.monotonic() - t0) * 1000)

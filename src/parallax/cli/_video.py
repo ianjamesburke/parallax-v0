@@ -84,13 +84,22 @@ def video_frame(
 
 @video_app.command("resume")
 def video_resume(job: str = typer.Option(..., "--job"), out: Optional[str] = typer.Option(None, "--out", "--output")) -> int:
-    """Resume polling an accepted animation job; never submits a new request."""
+    """Resume polling an accepted animation job; never submits a new request.
+
+    The receipt must be a Parallax-written job file inside the current
+    directory (the project), poll an OpenRouter URL, and (without --out)
+    name an output inside the project. Anything else is refused.
+    """
     from pathlib import Path
-    from ..openrouter import resume_video_job
-    receipt = Path(job); payload = json.loads(receipt.read_text())
-    target = Path(out) if out else Path(payload.get("out", receipt.parent))
+    from ..openrouter import JobReceiptError, load_job_receipt, resume_video_job
+    root = Path.cwd()
+    try:
+        payload = load_job_receipt(job, root=root)
+    except JobReceiptError as exc:
+        print(f"Error: {exc}", file=sys.stderr); return 1
+    target = Path(out) if out else Path(payload["out"])
     directory = target.parent if target.suffix else target
-    path = resume_video_job(receipt, directory)
+    path = resume_video_job(job, directory, root=root)
     if target.suffix: Path(path).replace(target); path = target
     print(path); return 0
 
@@ -163,16 +172,23 @@ def video_animate(
     def persist_job(job: dict) -> None:
         # This callback is invoked immediately after the provider's accepted submit,
         # before the first poll, so an interrupted process leaves a recoverable receipt.
-        payload = {**job, "out": str(out_file or out_dir), "estimate_usd": spec.estimate_video_usd(duration, image_conditioned=start_path is not None or end_path is not None)}
-        job_path.write_text(json.dumps(payload, indent=2))
+        from ..openrouter import write_job_receipt
+        payload = write_job_receipt(job_path, job, out=out_file or out_dir, estimate_usd=spec.estimate_video_usd(duration, image_conditioned=start_path is not None or end_path is not None))
         try:
             from .. import runlog
             runlog.event("video.animate.submitted", generation_id=job.get("id"), polling_url=job.get("polling_url"), model=spec.alias, out_path=payload["out"], estimate_usd=payload["estimate_usd"])
         except Exception: pass
     try:
         if job_path.exists():
-            from ..openrouter import resume_video_job
-            path = resume_video_job(job_path, out_dir)
+            # Only resume receipts Parallax wrote for this output directory; a
+            # planted or tampered receipt is refused before any network call.
+            from ..openrouter import JobReceiptError, load_job_receipt, resume_video_job
+            try:
+                load_job_receipt(job_path, root=out_dir)
+            except JobReceiptError as exc:
+                print(f"Error: {exc}. Inspect or delete {job_path} before re-running; nothing was submitted.", file=sys.stderr)
+                return 1
+            path = resume_video_job(job_path, out_dir, root=out_dir)
         else:
             path = generate_video(
                 prompt, model, image_path=start_path, end_image_path=end_path,

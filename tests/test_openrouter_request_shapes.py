@@ -161,7 +161,7 @@ def test_video_real_submits_correct_frame_images_array_shape(monkeypatch, tmp_pa
 
     def fake_post(url, *, headers, json, timeout):
         rec.posts.append((url, json))
-        return _FakeResponse(202, {"id": "abc", "polling_url": "https://example.com/abc", "status": "pending"})
+        return _FakeResponse(202, {"id": "abc", "polling_url": "https://openrouter.ai/api/v1/videos/abc", "status": "pending"})
 
     def fake_get(url, *, headers, timeout):
         rec.gets.append(url)
@@ -204,7 +204,7 @@ def test_video_real_passes_size_and_aspect_ratio_only_when_specified(monkeypatch
 
     def fake_post(url, *, headers, json, timeout):
         rec.posts.append((url, json))
-        return _FakeResponse(202, {"id": "x", "polling_url": "https://example.com/x", "status": "pending"})
+        return _FakeResponse(202, {"id": "x", "polling_url": "https://openrouter.ai/api/v1/videos/x", "status": "pending"})
 
     state = {"calls": 0}
     def stateful_get(url, *, headers, timeout):
@@ -241,7 +241,7 @@ def test_veo_lite_sends_default_or_requested_resolution(monkeypatch, tmp_path):
 
     def fake_post(url, *, headers, json, timeout):
         rec.posts.append((url, json))
-        return _FakeResponse(202, {"id": "x", "polling_url": "https://example.com/x", "status": "pending"})
+        return _FakeResponse(202, {"id": "x", "polling_url": "https://openrouter.ai/api/v1/videos/x", "status": "pending"})
 
     state = {"calls": 0}
     def stateful_get(url, *, headers, timeout):
@@ -273,7 +273,7 @@ def test_video_real_strips_openrouter_prefix_from_model_id(monkeypatch, tmp_path
 
     def fake_post(url, *, headers, json, timeout):
         rec.posts.append((url, json))
-        return _FakeResponse(202, {"id": "x", "polling_url": "https://example.com/x", "status": "pending"})
+        return _FakeResponse(202, {"id": "x", "polling_url": "https://openrouter.ai/api/v1/videos/x", "status": "pending"})
 
     state = {"calls": 0}
     def stateful_get(url, *, headers, timeout):
@@ -304,7 +304,7 @@ def test_video_real_raises_when_submit_returns_no_polling_url(monkeypatch, tmp_p
 
 def test_video_real_raises_on_failed_status(monkeypatch, tmp_path):
     def fake_post(url, *, headers, json, timeout):
-        return _FakeResponse(202, {"id": "x", "polling_url": "https://example.com/x", "status": "pending"})
+        return _FakeResponse(202, {"id": "x", "polling_url": "https://openrouter.ai/api/v1/videos/x", "status": "pending"})
     def fake_get(url, *, headers, timeout):
         return _FakeResponse(200, {"status": "failed", "error": "model returned no output"})
 
